@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Aleksandr Ptakhin
 
 use crate::models::crawler::{CrawlRequest, CrawlResult};
-use texting_robots::{Robot, get_robots_url};
+use texting_robots::{get_robots_url, Robot};
 
 /// Crawl a URL, respecting robots.txt rules
 pub async fn crawl_url(request: CrawlRequest) -> Result<CrawlResult, Box<dyn std::error::Error>> {

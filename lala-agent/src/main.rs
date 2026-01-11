@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Aleksandr Ptakhin
 
-use axum::{Json, Router, routing::get};
+use axum::{routing::get, Json, Router};
 use lala_agent::models::version::VersionResponse;
 use std::net::SocketAddr;
 
@@ -20,7 +20,8 @@ async fn version_handler() -> Json<VersionResponse> {
 async fn main() {
     let app = create_app();
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    // Bind to 0.0.0.0 to accept connections from any network interface (required for Docker)
+    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
 
     println!("lala-agent v{} listening on {}", VERSION, addr);
