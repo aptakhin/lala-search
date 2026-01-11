@@ -41,7 +41,7 @@ mod tests {
     use tower::ServiceExt;
 
     #[tokio::test]
-    async fn test_version_endpoint_returns_200() {
+    async fn test_version_endpoint_response() {
         let app = create_app();
 
         let response = app
@@ -54,46 +54,18 @@ mod tests {
             .await
             .unwrap();
 
+        // Check status code
         assert_eq!(response.status(), StatusCode::OK);
-    }
 
-    #[tokio::test]
-    async fn test_version_endpoint_returns_json_content_type() {
-        let app = create_app();
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/version")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
+        // Check content-type header
         let content_type = response.headers().get("content-type").unwrap();
         assert_eq!(content_type, "application/json");
-    }
 
-    #[tokio::test]
-    async fn test_version_endpoint_returns_correct_structure() {
-        let app = create_app();
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/version")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
+        // Parse and validate response structure
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
-
         let version_response: VersionResponse = serde_json::from_str(&body_str).unwrap();
 
         assert_eq!(version_response.agent, "lala-agent");

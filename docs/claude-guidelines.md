@@ -199,13 +199,16 @@ struct VersionResponse {
 ### Best Practices
 
 1. **Write tests first**: No production code without a failing test
-2. **One test, one behavior**: Keep tests focused
-3. **Descriptive names**: Tests should document behavior
-4. **Fast feedback**: Run tests frequently during development
-5. **Refactor with confidence**: Tests protect against regressions
-6. **Commit working code**: All tests pass before committing
-7. **Document assumptions**: Use comments for non-obvious decisions
-8. **Always finish with commit**: Run pre-commit.sh and commit before moving to next feature
+2. **One test, one behavior**: Keep tests focused on a single concern
+3. **Merge tests with identical inputs**: When multiple assertions test the same request/input without variations, combine them into one test to reduce redundancy
+   - ✅ Good: One test that checks status code, content-type, and structure of the same response
+   - ❌ Avoid: Three separate tests making identical requests just to check different response aspects
+4. **Descriptive names**: Tests should document behavior
+5. **Fast feedback**: Run tests frequently during development
+6. **Refactor with confidence**: Tests protect against regressions
+7. **Commit working code**: All tests pass before committing
+8. **Document assumptions**: Use comments for non-obvious decisions
+9. **Always finish with commit**: Run pre-commit.sh and commit before moving to next feature
 
 ### Commands Reference
 
