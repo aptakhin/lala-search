@@ -38,6 +38,70 @@ Ask clarifying questions when:
 
 **Balance**: Ask questions when they add value, but don't over-question trivial decisions.
 
+## Technology Choices: Open Source Solutions Only
+
+**CRITICAL**: LalaSearch is a fully open source project. All dependencies and technical solutions must be open source.
+
+### Why Open Source
+
+1. **Transparency**: Anyone can audit the code and security
+2. **Community support**: Active communities provide better long-term support
+3. **No vendor lock-in**: Freedom to modify, fork, or migrate
+4. **Cost**: No licensing fees or proprietary restrictions
+5. **Licensing compliance**: Ensures the project remains distributable under its open source license
+
+### Making Technology Decisions
+
+When choosing a solution (database, library, service, etc.), **always prioritize open source alternatives**:
+
+#### ✅ GOOD - Open Source Solutions
+- **PostgreSQL** - Open source relational database
+- **Redis** - Open source in-memory data store
+- **Elasticsearch** - Open source search and analytics engine
+- **Apache Kafka** - Open source event streaming platform
+- **Meilisearch** - Open source search engine
+- **MinIO** - Open source object storage (S3-compatible)
+- **Docker** - Open source containerization platform
+- **Prometheus** - Open source monitoring and metrics
+
+#### ❌ AVOID - Proprietary/Closed Source Solutions
+- **ScyllaDB** - Proprietary NoSQL database (even if "source-available")
+- **DataStax Astra** - Proprietary managed database service
+- **Splunk** - Proprietary log aggregation and analysis
+- **New Relic** - Proprietary application monitoring
+- **Datadog** - Proprietary infrastructure monitoring
+
+### When Open Source Isn't Available
+
+If no viable open source solution exists:
+1. **Ask first**: Before choosing a proprietary tool, discuss with the team
+2. **Document the decision**: Add a comment explaining why open source wasn't suitable
+3. **Minimize impact**: Keep proprietary tools isolated to specific components
+4. **Plan migration path**: Document how to eventually switch to an open source alternative
+
+### Example
+
+**Bad decision**:
+```rust
+// ❌ Using proprietary ScyllaDB
+// No discussion, breaks open source principle
+use scylla_client::Session;
+```
+
+**Good decision**:
+```rust
+// ✅ Using open source PostgreSQL
+use sqlx::postgres::PgPool;
+
+// If we needed ScyllaDB (not open source), we'd discuss first:
+// > We considered PostgreSQL, but our extremely high throughput 
+// > requirements (1M+ ops/sec) make the open source PostgreSQL approach
+// > impractical. We propose evaluating Apache Cassandra (open source)
+// > as an alternative before considering proprietary options.
+```
+
+**Key principle**: Open source decisions ensure LalaSearch remains free, transparent, and maintainable by the community long-term.
+
 ## Test-Driven Development (TDD) Workflow
 
 All features in LalaSearch follow a strict TDD cycle to ensure code quality, maintainability, and correctness.

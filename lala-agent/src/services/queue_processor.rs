@@ -9,6 +9,7 @@ use crate::services::db::ScyllaClient;
 use crate::services::search::SearchClient;
 use anyhow::Result;
 use chrono::Utc;
+use scraper::Html;
 use scylla::frame::value::CqlTimestamp;
 use std::sync::Arc;
 use std::time::Duration;
@@ -192,8 +193,8 @@ impl QueueProcessor {
             return Ok(());
         }
 
-        let meet_links = extract_meet_links(content, &entry.url);
-        for link in meet_links {
+        let links = extract_links(content, &entry.url);
+        for link in links {
             self.enqueue_link(&link, entry).await;
         }
 
@@ -312,36 +313,25 @@ impl QueueProcessor {
     }
 }
 
-/// Simple HTML tag removal for content indexing
+/// Remove HTML tags and extract text content safely using the scraper crate.
+/// Handles UTF-8 correctly and properly parses HTML structure.
 fn remove_html_tags(html: &str) -> String {
-    let mut result = String::new();
-    let mut in_tag = false;
-    let mut in_script = false;
-    let mut in_style = false;
+    let document = Html::parse_document(html);
 
-    for ch in html.chars() {
-        if ch == '<' {
-            in_tag = true;
-            let tag_lower = html[result.len()..].to_lowercase();
-            if tag_lower.starts_with("<script") {
-                in_script = true;
-            } else if tag_lower.starts_with("<style") {
-                in_style = true;
+    // Collect all text nodes from the document
+    let mut text = String::new();
+    for node in document.root_element().descendants() {
+        if node.value().as_text().is_some() {
+            let content = node.value().as_text().unwrap().trim();
+            if !content.is_empty() {
+                text.push(' ');
+                text.push_str(content);
             }
-        } else if ch == '>' {
-            in_tag = false;
-            if html[result.len()..].to_lowercase().starts_with("</script>") {
-                in_script = false;
-            } else if html[result.len()..].to_lowercase().starts_with("</style>") {
-                in_style = false;
-            }
-        } else if !in_tag && !in_script && !in_style {
-            result.push(ch);
         }
     }
 
     // Clean up whitespace
-    result.split_whitespace().collect::<Vec<_>>().join(" ")
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Extract title from HTML content (simple extraction)
@@ -377,42 +367,34 @@ fn extract_title(html: &str) -> Option<String> {
     None
 }
 
-/// Extract links that look like meeting URLs from HTML content.
-/// It finds href attributes, resolves relative URLs against `base_url`, and
-/// returns absolute URLs that contain the substring "meet" (case-insensitive).
-fn extract_meet_links(html: &str, base_url: &str) -> Vec<String> {
+/// Extract all links from HTML content.
+/// Uses the `scraper` crate for safe HTML parsing with proper UTF-8 handling.
+/// Resolves relative URLs against `base_url` and returns absolute URLs.
+fn extract_links(html: &str, base_url: &str) -> Vec<String> {
     let mut links = Vec::new();
 
-    let lower = html.to_lowercase();
-    let mut idx = 0usize;
+    // Parse HTML safely
+    let document = Html::parse_document(html);
 
-    while let Some(href_pos) = lower[idx..].find("href=") {
-        idx += href_pos;
-        // Move to the '=' sign
-        if let Some(start_quote_pos) = lower[idx..].find(['"', '\'']) {
-            let quote = lower.as_bytes()[idx + start_quote_pos] as char;
-            let value_start = idx + start_quote_pos + 1;
-            if let Some(value_end_rel) = lower[value_start..].find(quote) {
-                let value_end = value_start + value_end_rel;
-                let raw = html[value_start..value_end].trim();
-                // Only consider URLs containing 'meet' (case-insensitive)
-                if raw.to_lowercase().contains("meet") {
+    // Select all <a> tags with href attribute
+    if let Ok(selector) = scraper::Selector::parse("a[href]") {
+        for element in document.select(&selector) {
+            if let Some(href) = element.value().attr("href") {
+                let href = href.trim();
+                if !href.is_empty() {
                     // Resolve relative URLs
                     if let Ok(base) = url::Url::parse(base_url) {
-                        if let Ok(resolved) = base.join(raw) {
+                        if let Ok(resolved) = base.join(href) {
                             links.push(resolved.to_string());
                         } else {
-                            links.push(raw.to_string());
+                            links.push(href.to_string());
                         }
                     } else {
-                        links.push(raw.to_string());
+                        links.push(href.to_string());
                     }
                 }
-                idx = value_end + 1;
-                continue;
             }
         }
-        idx += 5; // skip past 'href=' to continue searching
     }
 
     // Deduplicate
@@ -450,5 +432,74 @@ mod tests {
     fn test_create_crawled_page_success() {
         // This test verifies the logic of creating a CrawledPage from a CrawlResult
         // Note: This is a unit test and doesn't require a database connection
+    }
+
+    #[test]
+    fn test_extract_all_links() {
+        let html = r#"
+            <html>
+                <body>
+                    <a href="/page1">Page 1</a>
+                    <a href="https://example.com/page2">Page 2</a>
+                    <a href="https://meet.example.com/room123">Meet Room</a>
+                    <a href="relative/path">Relative</a>
+                </body>
+            </html>
+        "#;
+        let base_url = "https://example.com/";
+        let links = extract_links(html, base_url);
+
+        // Should extract all 4 links
+        assert_eq!(links.len(), 4);
+        assert!(links.iter().any(|l| l.contains("page1")));
+        assert!(links.iter().any(|l| l.contains("page2")));
+        assert!(links.iter().any(|l| l.contains("meet.example.com")));
+        assert!(links.iter().any(|l| l.contains("relative/path")));
+    }
+
+    #[test]
+    fn test_extract_links_deduplication() {
+        let html = r#"
+            <a href="https://example.com/page">Link 1</a>
+            <a href="https://example.com/page">Link 2</a>
+            <a href="https://example.com/page">Link 3</a>
+        "#;
+        let links = extract_links(html, "https://example.com/");
+
+        // Should deduplicate to 1 link
+        assert_eq!(links.len(), 1);
+    }
+
+    #[test]
+    fn test_extract_links_relative_urls() {
+        let html = r#"
+            <a href="/absolute">Absolute Path</a>
+            <a href="relative">Relative Path</a>
+        "#;
+        let base_url = "https://example.com/base/";
+        let links = extract_links(html, base_url);
+
+        // Should resolve both
+        assert_eq!(links.len(), 2);
+        assert!(links.iter().any(|l| l == "https://example.com/absolute"));
+        assert!(links
+            .iter()
+            .any(|l| l == "https://example.com/base/relative"));
+    }
+
+    #[test]
+    fn test_extract_links_with_non_ascii() {
+        let html = r#"
+            <p>Привет мир</p>
+            <a href="/page1">Link 1</a>
+            <p>здравствуй мир</p>
+            <a href="/page2">Link 2</a>
+        "#;
+        let links = extract_links(html, "https://example.com/");
+
+        // Should extract both links despite non-ASCII content
+        assert_eq!(links.len(), 2);
+        assert!(links.iter().any(|l| l.contains("page1")));
+        assert!(links.iter().any(|l| l.contains("page2")));
     }
 }
