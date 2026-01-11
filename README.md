@@ -102,11 +102,20 @@ cargo clippy -- -D warnings
 cargo test
 ```
 
+## Versioning
+
+LalaSearch uses semantic versioning with a hybrid approach:
+- **MAJOR.MINOR**: Manually set in `lala-agent/Cargo.toml`
+- **PATCH**: Auto-generated from CI/CD pipeline run number (future)
+
+See [docs/versioning.md](docs/versioning.md) for detailed version management.
+
 ## Current Status
 
 - HTTP server with version endpoint
 - Test-driven development workflow established
 - Code quality tooling configured
+- Build-time version extraction from Cargo.toml
 
 ## License
 

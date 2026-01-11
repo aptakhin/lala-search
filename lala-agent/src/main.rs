@@ -2,6 +2,10 @@ use axum::{Json, Router, routing::get};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
+// Version is extracted from Cargo.toml at compile time via build.rs
+// In CI/CD, the patch version can be overridden via LALA_PATCH_VERSION env var
+const VERSION: &str = env!("LALA_VERSION");
+
 #[derive(Serialize, Deserialize)]
 struct VersionResponse {
     agent: String,
@@ -11,7 +15,7 @@ struct VersionResponse {
 async fn version_handler() -> Json<VersionResponse> {
     Json(VersionResponse {
         agent: "lala-agent".to_string(),
-        version: "0.1.0".to_string(),
+        version: VERSION.to_string(),
     })
 }
 
@@ -22,7 +26,7 @@ async fn main() {
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
 
-    println!("lala-agent v0.1.0 listening on {}", addr);
+    println!("lala-agent v{} listening on {}", VERSION, addr);
 
     axum::serve(listener, app).await.unwrap();
 }
@@ -96,7 +100,7 @@ mod tests {
         let version_response: VersionResponse = serde_json::from_str(&body_str).unwrap();
 
         assert_eq!(version_response.agent, "lala-agent");
-        assert_eq!(version_response.version, "0.1.0");
+        assert_eq!(version_response.version, VERSION);
     }
 
     #[tokio::test]
