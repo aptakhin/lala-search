@@ -8,6 +8,7 @@ use axum::{
     Json, Router,
 };
 use chrono::Utc;
+use lala_agent::models::agent::AgentMode;
 use lala_agent::models::db::CrawlQueueEntry;
 use lala_agent::models::queue::{AddToQueueRequest, AddToQueueResponse};
 use lala_agent::models::search::{SearchRequest, SearchResponse};
@@ -115,7 +116,7 @@ async fn main() {
 
     let scylla_keyspace = env::var("SCYLLA_KEYSPACE").unwrap_or_else(|_| "lalasearch".to_string());
 
-    let agent_mode = env::var("AGENT_MODE").unwrap_or_else(|_| "all".to_string());
+    let agent_mode = AgentMode::from_env();
 
     let poll_interval_secs = env::var("QUEUE_POLL_INTERVAL_SECS")
         .unwrap_or_else(|_| "5".to_string())
@@ -163,8 +164,8 @@ async fn main() {
         }
     };
 
-    // Start queue processor if agent mode is "worker" or "all"
-    if agent_mode == "worker" || agent_mode == "all" {
+    // Start queue processor if agent mode should process queue
+    if agent_mode.should_process_queue() {
         let processor = if let Some(ref search_client) = search_client {
             QueueProcessor::with_search(
                 db_client.clone(),

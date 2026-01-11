@@ -210,6 +210,57 @@ struct VersionResponse {
 8. **Document assumptions**: Use comments for non-obvious decisions
 9. **Always finish with commit**: Run pre-commit.sh and commit before moving to next feature
 
+### Type Safety: Avoid Magic Strings
+
+**IMPORTANT**: Never use raw string comparisons for configuration values or enum-like states.
+
+Instead of:
+```rust
+// ❌ BAD: Magic strings, error-prone, no compile-time checking
+let agent_mode = env::var("AGENT_MODE").unwrap_or_else(|_| "all".to_string());
+if agent_mode == "worker" || agent_mode == "all" {
+    // start worker
+}
+```
+
+Use enums:
+```rust
+// ✅ GOOD: Type-safe, compiler enforces valid values, exhaustive matching
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum AgentMode {
+    Worker,
+    Manager,
+    All,
+}
+
+impl AgentMode {
+    fn from_env() -> Self {
+        match env::var("AGENT_MODE").as_deref().unwrap_or("all") {
+            "worker" => AgentMode::Worker,
+            "manager" => AgentMode::Manager,
+            _ => AgentMode::All,
+        }
+    }
+    
+    fn should_process_queue(&self) -> bool {
+        matches!(self, AgentMode::Worker | AgentMode::All)
+    }
+}
+
+// Usage: Type-safe, self-documenting
+let mode = AgentMode::from_env();
+if mode.should_process_queue() {
+    // start worker
+}
+```
+
+**Benefits**:
+- Compiler enforces exhaustiveness checking
+- No runtime typos or invalid values
+- Self-documenting code
+- Easy refactoring (compiler catches all usages)
+- Enables custom methods with domain logic
+
 ### Commands Reference
 
 ```bash
