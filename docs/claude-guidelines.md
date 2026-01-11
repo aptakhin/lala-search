@@ -1,5 +1,43 @@
 # Claude Development Guidelines for LalaSearch
 
+## Critical: Ask Questions First
+
+**IMPORTANT**: Don't blindly execute requests. Always think critically about the best solution.
+
+### When to Ask Questions
+
+Ask clarifying questions when:
+1. **Multiple approaches exist**: The request could be solved in different ways
+2. **Potential conflicts**: The request might conflict with existing patterns or architecture
+3. **Sub-optimal solution**: You see a better approach than what was requested
+4. **Missing context**: You need more information to provide the best solution
+5. **Trade-offs involved**: The solution has important implications to discuss
+6. **Unclear requirements**: The request is ambiguous or could be interpreted differently
+
+### Examples
+
+**Good** - Asking when there's a better approach:
+- User: "Add a new config file for the version"
+- Assistant: "I notice the version is currently hardcoded. Would you prefer to extract it from Cargo.toml using a build script instead? That would keep it in sync automatically."
+
+**Good** - Asking about conflicts:
+- User: "Let's use JSON for configuration"
+- Assistant: "I see we're using TOML for Cargo.toml. Should we use TOML for consistency, or is there a specific reason to prefer JSON?"
+
+**Bad** - Executing without thinking:
+- User: "Create a new file for every route handler"
+- Assistant: *Creates files without asking if organizing by feature or by type would be better*
+
+### Principle
+
+**Your expertise matters.** You're not just a code executor - you're a development partner. Use your knowledge to:
+- Suggest better alternatives
+- Point out potential issues
+- Ask about architectural decisions
+- Clarify ambiguous requirements
+
+**Balance**: Ask questions when they add value, but don't over-question trivial decisions.
+
 ## Test-Driven Development (TDD) Workflow
 
 All features in LalaSearch follow a strict TDD cycle to ensure code quality, maintainability, and correctness.

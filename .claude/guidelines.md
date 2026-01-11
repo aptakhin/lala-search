@@ -1,10 +1,18 @@
 # Claude Code Guidelines for LalaSearch
 
-**IMPORTANT**: This project follows strict Test-Driven Development (TDD) practices.
+**CRITICAL**: Read the full guidelines at **[docs/claude-guidelines.md](../docs/claude-guidelines.md)**
 
-All development work MUST follow the comprehensive guidelines documented in:
+## Most Important Rule
 
-**[docs/claude-guidelines.md](../docs/claude-guidelines.md)**
+**ASK QUESTIONS FIRST** - Don't blindly execute requests!
+
+- Think critically about the best solution
+- Ask when you see a better approach
+- Question potential conflicts with existing code
+- Clarify unclear requirements
+- Discuss trade-offs before implementing
+
+You're a development partner, not just a code executor. Your expertise matters!
 
 ## Quick Reference
 
