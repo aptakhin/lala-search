@@ -7,14 +7,14 @@ This guide explains how to run LalaSearch using Docker and Docker Compose.
 The Docker setup includes:
 
 - **lala-agent**: Web crawler and search agent (Rust application)
-- **ScyllaDB**: High-performance NoSQL database for storing crawl metadata
-- **scylla-init**: One-time initialization service for database schema
+- **Apache Cassandra**: High-performance NoSQL database for storing crawl metadata
+- **cassandra-init**: One-time initialization service for database schema
 
 ## Prerequisites
 
 - Docker Engine 20.10+
 - Docker Compose 2.0+
-- 2GB+ available RAM (1GB for ScyllaDB, rest for agent and overhead)
+- 2GB+ available RAM (Apache Cassandra needs ~1GB, rest for agent and overhead)
 
 ## Quick Start
 
@@ -26,7 +26,7 @@ docker-compose up -d
 
 This will:
 1. Build the lala-agent Docker image
-2. Start ScyllaDB container
+2. Start Apache Cassandra container
 3. Initialize the database schema
 4. Start the lala-agent service
 
@@ -40,8 +40,8 @@ Expected output:
 ```
 NAME                     STATUS    PORTS
 lalasearch-agent         Up        0.0.0.0:3000->3000/tcp
-lalasearch-scylla        Up        0.0.0.0:9042->9042/tcp, ...
-lalasearch-scylla-init   Exited (0)
+lalasearch-cassandra        Up        0.0.0.0:9042->9042/tcp, ...
+lalasearch-cassandra-init   Exited (0)
 ```
 
 ### 3. View Logs
@@ -75,30 +75,28 @@ curl http://localhost:3000/version
 **Environment Variables:**
 - `RUST_LOG=info`: Log level (debug, info, warn, error)
 - `AGENT_MODE=all`: Agent mode (all, manager, serve, worker)
-- `SCYLLA_HOSTS=scylla:9042`: ScyllaDB connection
-- `SCYLLA_KEYSPACE=lalasearch`: Database keyspace name
+- `CASSANDRA_HOSTS=cassandra:9042`: Apache Cassandra connection
+- `CASSANDRA_KEYSPACE=lalasearch`: Database keyspace name
 
 **Volumes:**
 - Source code mounted for hot-reload (development)
 
-### ScyllaDB
+### Apache Cassandra
 
 **Exposed Ports:**
 - `9042`: CQL native protocol (client connections)
-- `9160`: Thrift (legacy)
-- `10000`: REST API
 
 **Data Persistence:**
-- Volume `scylla-data` stores database data
+- Volume `cassandra-data` stores database data
 - Survives container restarts
 
 **Resource Limits:**
-- 1 CPU core (`--smp 1`)
-- 1GB memory (`--memory 1G`)
+- MAX_HEAP_SIZE=512M
+- HEAP_NEWSIZE=100M
 
 ## Database Schema
 
-The ScyllaDB schema includes:
+The Apache Cassandra schema includes:
 
 ### Tables
 
@@ -121,8 +119,8 @@ The ScyllaDB schema includes:
 ### Accessing the Database
 
 ```bash
-# Connect to ScyllaDB with cqlsh
-docker exec -it lalasearch-scylla cqlsh
+# Connect to Apache Cassandra with cqlsh
+docker exec -it lalasearch-cassandra cqlsh
 
 # Example queries
 cqlsh> USE lalasearch;
@@ -206,33 +204,33 @@ docker-compose up -d --scale lala-agent=3
 
 ## Troubleshooting
 
-### ScyllaDB Not Starting
+### Apache Cassandra Not Starting
 
-**Symptom**: scylla-init fails with connection refused
+**Symptom**: cassandra-init fails with connection refused
 
 **Solution**:
 ```bash
-# Wait for ScyllaDB to fully start (can take 60-90 seconds)
+# Wait for Apache Cassandra to fully start (can take 60-90 seconds)
 docker-compose logs -f scylla
 
 # Look for: "Starting listening for CQL clients"
 ```
 
-### Agent Cannot Connect to ScyllaDB
+### Agent Cannot Connect to Apache Cassandra
 
 **Check network connectivity:**
 ```bash
 docker-compose exec lala-agent ping scylla
 ```
 
-**Check ScyllaDB health:**
+**Check Apache Cassandra health:**
 ```bash
 docker-compose exec scylla nodetool status
 ```
 
 ### Out of Memory
 
-**Symptom**: ScyllaDB crashes or becomes unresponsive
+**Symptom**: Apache Cassandra crashes or becomes unresponsive
 
 **Solution**: Increase Docker Desktop memory limit:
 - Docker Desktop → Settings → Resources → Memory
@@ -259,12 +257,12 @@ lsof -i :3000
 For production deployment:
 
 1. **Multi-stage Dockerfile**: Use smaller runtime image
-2. **ScyllaDB Cluster**: Multiple nodes with proper replication
+2. **Cassandra Cluster**: Multiple nodes with proper replication
 3. **Resource Limits**: Set memory/CPU limits in docker-compose
 4. **Monitoring**: Add Prometheus and Grafana
 5. **Secrets Management**: Use Docker secrets or external vault
 6. **Reverse Proxy**: Add nginx or traefik for HTTPS
-7. **Backup**: Regular ScyllaDB snapshots
+7. **Backup**: Regular Cassandra snapshots using nodetool
 
 ## Next Steps
 

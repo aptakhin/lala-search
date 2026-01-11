@@ -3,22 +3,22 @@
 
 use chrono::Utc;
 use lala_agent::models::db::{CrawlQueueEntry, CrawledPage};
-use lala_agent::services::db::ScyllaClient;
+use lala_agent::services::db::CassandraClient;
 use scylla::frame::value::CqlTimestamp;
 use std::sync::Arc;
 
 // Integration tests for queue processor
-// These tests require a running ScyllaDB instance
+// These tests require a running Cassandra instance
 // Run with: cargo test --test queue_processor_integration_test -- --ignored
 
 #[tokio::test]
 #[ignore]
 async fn test_queue_processor_workflow() {
-    // Connect to ScyllaDB
+    // Connect to Cassandra
     let db_client = Arc::new(
-        ScyllaClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
+        CassandraClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
             .await
-            .expect("Failed to connect to ScyllaDB"),
+            .expect("Failed to connect to Cassandra"),
     );
 
     // Create a test queue entry
@@ -63,11 +63,11 @@ async fn test_queue_processor_workflow() {
 #[tokio::test]
 #[ignore]
 async fn test_upsert_crawled_page() {
-    // Connect to ScyllaDB
+    // Connect to Cassandra
     let db_client = Arc::new(
-        ScyllaClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
+        CassandraClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
             .await
-            .expect("Failed to connect to ScyllaDB"),
+            .expect("Failed to connect to Cassandra"),
     );
 
     let now = Utc::now();

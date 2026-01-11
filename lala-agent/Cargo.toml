@@ -12,8 +12,8 @@ futures = "0.3"
 md5 = "0.7.0"
 meilisearch-sdk = "0.29"
 reqwest = { version = "0.13.1", default-features = false, features = ["native-tls", "http2"] }
-scylla = "0.15.1"
-scylla-cql = "0.4.0"
+scylla = "0.15.1"  # Apache Cassandra driver (also works with ScyllaDB)
+scylla-cql = "0.4.0"  # CQL types and utilities
 scraper = "0.20"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"

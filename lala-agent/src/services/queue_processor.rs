@@ -5,7 +5,7 @@ use crate::models::crawler::{CrawlRequest, CrawlResult};
 use crate::models::db::{CrawlQueueEntry, CrawledPage};
 use crate::models::search::IndexedDocument;
 use crate::services::crawler::crawl_url;
-use crate::services::db::ScyllaClient;
+use crate::services::db::CassandraClient;
 use crate::services::search::SearchClient;
 use anyhow::Result;
 use chrono::Utc;
@@ -17,7 +17,7 @@ use tokio::time::sleep;
 
 /// Queue processor that continuously processes crawl queue entries
 pub struct QueueProcessor {
-    db_client: Arc<ScyllaClient>,
+    db_client: Arc<CassandraClient>,
     search_client: Option<Arc<SearchClient>>,
     user_agent: String,
     poll_interval: Duration,
@@ -25,7 +25,11 @@ pub struct QueueProcessor {
 
 impl QueueProcessor {
     /// Create a new queue processor
-    pub fn new(db_client: Arc<ScyllaClient>, user_agent: String, poll_interval: Duration) -> Self {
+    pub fn new(
+        db_client: Arc<CassandraClient>,
+        user_agent: String,
+        poll_interval: Duration,
+    ) -> Self {
         Self {
             db_client,
             search_client: None,
@@ -36,7 +40,7 @@ impl QueueProcessor {
 
     /// Create a new queue processor with Meilisearch support
     pub fn with_search(
-        db_client: Arc<ScyllaClient>,
+        db_client: Arc<CassandraClient>,
         search_client: Arc<SearchClient>,
         user_agent: String,
         poll_interval: Duration,

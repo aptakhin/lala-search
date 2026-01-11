@@ -13,7 +13,7 @@ use lala_agent::models::db::CrawlQueueEntry;
 use lala_agent::models::queue::{AddToQueueRequest, AddToQueueResponse};
 use lala_agent::models::search::{SearchRequest, SearchResponse};
 use lala_agent::models::version::VersionResponse;
-use lala_agent::services::db::ScyllaClient;
+use lala_agent::services::db::CassandraClient;
 use lala_agent::services::queue_processor::QueueProcessor;
 use lala_agent::services::search::SearchClient;
 use scylla::frame::value::CqlTimestamp;
@@ -28,7 +28,7 @@ const VERSION: &str = env!("LALA_VERSION");
 
 #[derive(Clone)]
 struct AppState {
-    db_client: Arc<ScyllaClient>,
+    db_client: Arc<CassandraClient>,
     search_client: Option<Arc<SearchClient>>,
 }
 
@@ -108,13 +108,17 @@ async fn search_handler(
 #[tokio::main]
 async fn main() {
     // Get configuration from environment variables
-    let scylla_hosts = env::var("SCYLLA_HOSTS")
+    // Support both CASSANDRA_HOSTS and legacy SCYLLA_HOSTS for backward compatibility
+    let cassandra_hosts = env::var("CASSANDRA_HOSTS")
+        .or_else(|_| env::var("SCYLLA_HOSTS"))
         .unwrap_or_else(|_| "127.0.0.1:9042".to_string())
         .split(',')
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
 
-    let scylla_keyspace = env::var("SCYLLA_KEYSPACE").unwrap_or_else(|_| "lalasearch".to_string());
+    let cassandra_keyspace = env::var("CASSANDRA_KEYSPACE")
+        .or_else(|_| env::var("SCYLLA_KEYSPACE"))
+        .unwrap_or_else(|_| "lalasearch".to_string());
 
     let agent_mode = AgentMode::from_env();
 
@@ -128,24 +132,25 @@ async fn main() {
     let meilisearch_host =
         env::var("MEILISEARCH_HOST").unwrap_or_else(|_| "127.0.0.1:7700".to_string());
 
-    // Initialize ScyllaDB client
-    let db_client = match ScyllaClient::new(scylla_hosts.clone(), scylla_keyspace.clone()).await {
-        Ok(client) => {
-            println!("Connected to ScyllaDB at {:?}", scylla_hosts);
-            Arc::new(client)
-        }
-        Err(e) => {
-            eprintln!("Failed to connect to ScyllaDB: {}", e);
-            eprintln!("Continuing without database connection");
-            // In production, you might want to exit here
-            // For now, we'll continue to allow the HTTP server to run
-            Arc::new(
-                ScyllaClient::new(vec!["127.0.0.1:9042".to_string()], scylla_keyspace)
-                    .await
-                    .unwrap(),
-            )
-        }
-    };
+    // Initialize Cassandra client
+    let db_client =
+        match CassandraClient::new(cassandra_hosts.clone(), cassandra_keyspace.clone()).await {
+            Ok(client) => {
+                println!("Connected to Cassandra at {:?}", cassandra_hosts);
+                Arc::new(client)
+            }
+            Err(e) => {
+                eprintln!("Failed to connect to Cassandra: {}", e);
+                eprintln!("Continuing without database connection");
+                // In production, you might want to exit here
+                // For now, we'll continue to allow the HTTP server to run
+                Arc::new(
+                    CassandraClient::new(vec!["127.0.0.1:9042".to_string()], cassandra_keyspace)
+                        .await
+                        .unwrap(),
+                )
+            }
+        };
 
     // Initialize Meilisearch client
     let search_client = match SearchClient::new(&meilisearch_host).await {
@@ -223,7 +228,7 @@ mod tests {
     async fn create_test_app() -> Router {
         // For unit tests, try to connect to test database, but fallback to main keyspace
         // Tests that require database should be marked with #[ignore]
-        let db_client = match ScyllaClient::new(
+        let db_client = match CassandraClient::new(
             vec!["127.0.0.1:9042".to_string()],
             "lalasearch_test".to_string(),
         )
@@ -233,9 +238,12 @@ mod tests {
             Err(_) => {
                 // If test database is not available, use main keyspace
                 Arc::new(
-                    ScyllaClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
-                        .await
-                        .expect("Failed to connect to database"),
+                    CassandraClient::new(
+                        vec!["127.0.0.1:9042".to_string()],
+                        "lalasearch".to_string(),
+                    )
+                    .await
+                    .expect("Failed to connect to database"),
                 )
             }
         };
@@ -354,7 +362,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires ScyllaDB connection
+    #[ignore] // Requires Cassandra connection
     async fn test_add_to_queue_valid_url() {
         let app = create_test_app().await;
 
@@ -388,7 +396,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires ScyllaDB connection
+    #[ignore] // Requires Cassandra connection
     async fn test_add_to_queue_invalid_url() {
         let app = create_test_app().await;
 

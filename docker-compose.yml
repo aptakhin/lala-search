@@ -2,22 +2,22 @@
 # Copyright (c) 2026 Aleksandr Ptakhin
 
 services:
-  # ScyllaDB - Fast NoSQL database compatible with Cassandra
-  scylla:
-    image: scylladb/scylla:6.2
-    container_name: lalasearch-scylla
+  # Apache Cassandra - Open source distributed NoSQL database
+  cassandra:
+    image: cassandra:5.0
+    container_name: lalasearch-cassandra
     ports:
       - "9042:9042"  # CQL native transport
-      - "9160:9160"  # Thrift
-      - "10000:10000" # REST API
     volumes:
-      - scylla-data:/var/lib/scylla
-      - ./docker/scylla/init:/docker-entrypoint-initdb.d
+      - cassandra-data:/var/lib/cassandra
     environment:
-      - SCYLLA_CLUSTER_NAME=lalasearch
-    command: --smp 1 --memory 1G --overprovisioned 1
+      - CASSANDRA_CLUSTER_NAME=lalasearch
+      - CASSANDRA_DC=datacenter1
+      - CASSANDRA_ENDPOINT_SNITCH=SimpleSnitch
+      - MAX_HEAP_SIZE=512M
+      - HEAP_NEWSIZE=100M
     healthcheck:
-      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      test: ["CMD-SHELL", "cqlsh -e 'SELECT now() FROM system.local'"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -61,11 +61,11 @@ services:
     environment:
       - RUST_LOG=info
       - AGENT_MODE=all
-      - SCYLLA_HOSTS=scylla:9042
-      - SCYLLA_KEYSPACE=lalasearch
+      - CASSANDRA_HOSTS=cassandra:9042
+      - CASSANDRA_KEYSPACE=lalasearch
       - MEILISEARCH_HOST=meilisearch:7700
     depends_on:
-      scylla:
+      cassandra:
         condition: service_healthy
       meilisearch:
         condition: service_healthy
@@ -80,22 +80,22 @@ services:
     # For development, you can override to run in debug mode:
     # command: cargo run
 
-  # ScyllaDB initialization service (runs once to create schema)
-  scylla-init:
-    image: scylladb/scylla:6.2
-    container_name: lalasearch-scylla-init
+  # Cassandra initialization service (runs once to create schema)
+  cassandra-init:
+    image: cassandra:5.0
+    container_name: lalasearch-cassandra-init
     depends_on:
-      scylla:
+      cassandra:
         condition: service_healthy
     volumes:
-      - ./docker/scylla/schema.cql:/schema.cql:ro
+      - ./docker/cassandra/schema.cql:/schema.cql:ro
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
-        echo 'Waiting for ScyllaDB to be ready...'
+        echo 'Waiting for Cassandra to be ready...'
         sleep 10
-        echo 'Initializing ScyllaDB schema...'
-        cqlsh scylla -f /schema.cql
+        echo 'Initializing Cassandra schema...'
+        cqlsh cassandra -f /schema.cql
         echo 'Schema initialized successfully!'
     networks:
       - lalasearch-network
@@ -122,7 +122,7 @@ services:
       - lalasearch-network
 
 volumes:
-  scylla-data:
+  cassandra-data:
     driver: local
   meilisearch-data:
     driver: local

@@ -7,15 +7,15 @@ use scylla::transport::errors::{NewSessionError, QueryError};
 use scylla::{Session, SessionBuilder};
 use std::sync::Arc;
 
-/// ScyllaDB client for managing crawl queue and crawled pages
+/// Apache Cassandra client for managing crawl queue and crawled pages
 #[derive(Clone)]
-pub struct ScyllaClient {
+pub struct CassandraClient {
     session: Arc<Session>,
     _keyspace: String,
 }
 
-impl ScyllaClient {
-    /// Create a new ScyllaDB client
+impl CassandraClient {
+    /// Create a new Apache Cassandra client
     pub async fn new(hosts: Vec<String>, keyspace: String) -> Result<Self, NewSessionError> {
         let session = SessionBuilder::new().known_nodes(&hosts).build().await?;
 
@@ -155,7 +155,7 @@ impl ScyllaClient {
     }
 
     /// Delete an entry from the crawl queue
-    /// In ScyllaDB, we use DELETE rather than optimistic locking since the queue is designed
+    /// In Cassandra, we use DELETE rather than optimistic locking since the queue is designed
     /// for multiple workers. If the entry was already processed by another worker, the DELETE
     /// will simply affect 0 rows.
     pub async fn delete_queue_entry(&self, entry: &CrawlQueueEntry) -> Result<(), QueryError> {
@@ -299,15 +299,16 @@ impl ScyllaClient {
 mod tests {
     use super::*;
 
-    // Note: These tests require a running ScyllaDB instance
+    // Note: These tests require a running Cassandra instance
     // They are integration tests and should be run with:
     // cargo test --test '*' -- --ignored
 
     #[tokio::test]
     #[ignore]
-    async fn test_scylla_connection() {
+    async fn test_cassandra_connection() {
         let client =
-            ScyllaClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string()).await;
+            CassandraClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
+                .await;
 
         assert!(client.is_ok());
     }
@@ -316,7 +317,7 @@ mod tests {
     #[ignore]
     async fn test_get_next_queue_entry() {
         let client =
-            ScyllaClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
+            CassandraClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
                 .await
                 .unwrap();
 

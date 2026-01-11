@@ -65,7 +65,7 @@ When choosing a solution (database, library, service, etc.), **always prioritize
 - **Prometheus** - Open source monitoring and metrics
 
 #### ❌ AVOID - Proprietary/Closed Source Solutions
-- **ScyllaDB** - Proprietary NoSQL database (even if "source-available")
+- **ScyllaDB** - Changed from AGPL to proprietary "source-available" license in Dec 2024 (use Apache Cassandra instead)
 - **DataStax Astra** - Proprietary managed database service
 - **Splunk** - Proprietary log aggregation and analysis
 - **New Relic** - Proprietary application monitoring
@@ -83,21 +83,23 @@ If no viable open source solution exists:
 
 **Bad decision**:
 ```rust
-// ❌ Using proprietary ScyllaDB
+// ❌ Using proprietary tools without justification
 // No discussion, breaks open source principle
-use scylla_client::Session;
+use proprietary_service::Client;
 ```
 
 **Good decision**:
 ```rust
-// ✅ Using open source PostgreSQL
+// ✅ Using open source Apache Cassandra for distributed NoSQL
+use scylla::Session;  // scylla driver works with both Cassandra and ScyllaDB
+
+// ✅ Using open source PostgreSQL for relational data
 use sqlx::postgres::PgPool;
 
-// If we needed ScyllaDB (not open source), we'd discuss first:
-// > We considered PostgreSQL, but our extremely high throughput 
-// > requirements (1M+ ops/sec) make the open source PostgreSQL approach
-// > impractical. We propose evaluating Apache Cassandra (open source)
-// > as an alternative before considering proprietary options.
+// If no open source option exists, we'd discuss first:
+// > We considered all open source alternatives (X, Y, Z), but
+// > [specific technical requirement] cannot be met. We propose
+// > using [proprietary tool] with [migration path to OSS].
 ```
 
 **Key principle**: Open source decisions ensure LalaSearch remains free, transparent, and maintainable by the community long-term.

@@ -13,6 +13,6 @@ agent --mode worker
 
 Need crawler which familiar with rules. Even if we start with a few internet websites, might be not good to be banned and do this properly
 
-We'll need to choose database for crawled/indexed information. No need in transactions support. Need possible massive scaling and fast insertion/updating/querying. scylladb?
+We'll need to choose database for crawled/indexed information. No need in transactions support. Need possible massive scaling and fast insertion/updating/querying. **Apache Cassandra** - open source, CQL-compatible, horizontal scaling.
 
 crawl statistics. clickhouse?

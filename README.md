@@ -30,8 +30,8 @@ lalasearch/
 │   ├── Cargo.toml                 # Rust dependencies
 │   └── build.rs                   # Build-time version extraction
 ├── docker/                        # Docker configuration
-│   └── scylla/
-│       └── schema.cql             # ScyllaDB database schema
+│   └── cassandra/
+│       └── schema.cql             # Apache Cassandra database schema
 ├── docker-compose.yml             # Multi-container setup
 └── scripts/
     └── pre-commit.sh              # Pre-commit validation script
@@ -41,7 +41,7 @@ lalasearch/
 
 ### Option 1: Docker (Recommended)
 
-Run LalaSearch with Docker Compose (includes ScyllaDB):
+Run LalaSearch with Docker Compose (includes Apache Cassandra):
 
 ```bash
 # Start all services
@@ -130,8 +130,8 @@ docker-compose logs -f lala-agent
 You can also query the database directly to see queue and crawled page status:
 
 ```bash
-# Connect to ScyllaDB via Docker
-docker exec -it lalasearch-scylla cqlsh
+# Connect to Cassandra via Docker
+docker exec -it lalasearch-cassandra cqlsh
 
 # Switch to lalasearch keyspace
 USE lalasearch;
@@ -207,13 +207,13 @@ See [docs/versioning.md](docs/versioning.md) for detailed version management.
 - Web crawler with robots.txt compliance
 - Modular architecture (models, services, handlers)
 - Docker and Docker Compose setup
-- ScyllaDB integration for crawl metadata
+- Apache Cassandra for crawl metadata storage
 - Test-driven development workflow
 - Code quality tooling and pre-commit hooks
 - Build-time version extraction
 
 🚧 **In Progress:**
-- ScyllaDB client integration in Rust
+- Apache Cassandra client integration in Rust
 - Crawl queue management
 - Distributed worker coordination
 
