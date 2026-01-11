@@ -119,5 +119,7 @@ See [docs/versioning.md](docs/versioning.md) for detailed version management.
 
 ## License
 
-To be determined
+BSD 3-Clause License - see [LICENSE](LICENSE) file for details.
+
+Copyright (c) 2026, Aleksandr Ptakhin
 

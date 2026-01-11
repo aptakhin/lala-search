@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Aleksandr Ptakhin
+
 use axum::{Json, Router, routing::get};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;

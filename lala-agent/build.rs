@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Aleksandr Ptakhin
+
 // Build script to extract version from Cargo.toml
 // and optionally override patch version from CI/CD pipeline
 

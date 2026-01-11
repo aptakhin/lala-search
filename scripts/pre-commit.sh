@@ -1,4 +1,7 @@
 #!/bin/sh
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Aleksandr Ptakhin
+
 # Pre-commit check script for LalaSearch
 # Runs formatting checks, linting, and tests
 # Run this manually before committing: ./scripts/pre-commit.sh
