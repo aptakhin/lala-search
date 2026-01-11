@@ -110,6 +110,9 @@ services:
     container_name: lalasearch-web
     ports:
       - "8080:80"  # Frontend on port 8080
+    volumes:
+      # Mount index.html for live updates
+      - ./lala-web/index.html:/usr/share/nginx/html/index.html:ro
     depends_on:
       lala-agent:
         condition: service_healthy
