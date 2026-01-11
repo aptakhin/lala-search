@@ -279,6 +279,13 @@ impl CassandraClient {
             Err(_) => return Ok(None),
         };
 
+        Self::parse_crawled_page_row(rows_result)
+    }
+
+    /// Parse a single crawled page from query result rows
+    fn parse_crawled_page_row(
+        rows_result: scylla::QueryRowsResult,
+    ) -> Result<Option<CrawledPage>, QueryError> {
         let rows_vec = rows_result
             .rows::<(
                 String,
@@ -303,48 +310,48 @@ impl CassandraClient {
                 )
             })?;
 
-        if let Some(row_result) = rows_vec.into_iter().next() {
-            let (
-                domain,
-                url_path,
-                url,
-                last_crawled_at,
-                next_crawl_at,
-                crawl_frequency_hours,
-                http_status,
-                content_hash,
-                content_length,
-                robots_allowed,
-                error_message,
-                crawl_count,
-                created_at,
-                updated_at,
-            ) = row_result.map_err(|e| {
-                QueryError::DbError(
-                    scylla::transport::errors::DbError::Other(0),
-                    format!("Failed to parse crawled page: {}", e),
-                )
-            })?;
+        let Some(row_result) = rows_vec.into_iter().next() else {
+            return Ok(None);
+        };
 
-            return Ok(Some(CrawledPage {
-                domain,
-                url_path,
-                url,
-                last_crawled_at,
-                next_crawl_at,
-                crawl_frequency_hours,
-                http_status,
-                content_hash,
-                content_length,
-                robots_allowed,
-                error_message,
-                crawl_count,
-                created_at,
-                updated_at,
-            }));
-        }
+        let (
+            domain,
+            url_path,
+            url,
+            last_crawled_at,
+            next_crawl_at,
+            crawl_frequency_hours,
+            http_status,
+            content_hash,
+            content_length,
+            robots_allowed,
+            error_message,
+            crawl_count,
+            created_at,
+            updated_at,
+        ) = row_result.map_err(|e| {
+            QueryError::DbError(
+                scylla::transport::errors::DbError::Other(0),
+                format!("Failed to parse crawled page: {}", e),
+            )
+        })?;
 
-        Ok(None)
+        Ok(Some(CrawledPage {
+            domain,
+            url_path,
+            url,
+            last_crawled_at,
+            next_crawl_at,
+            crawl_frequency_hours,
+            http_status,
+            content_hash,
+            content_length,
+            robots_allowed,
+            error_message,
+            crawl_count,
+            created_at,
+            updated_at,
+        }))
     }
 }
 

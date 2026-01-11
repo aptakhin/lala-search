@@ -4,6 +4,13 @@ version = "0.1.0"
 edition = "2021"
 license = "BSD-3-Clause"
 
+[lints.clippy]
+# Complexity lints (cognitive-complexity was removed, use these instead)
+too_many_lines = "deny"
+too_many_arguments = "deny"
+type_complexity = "deny"
+cognitive_complexity = "deny"
+
 [dependencies]
 anyhow = "1.0"
 axum = "0.8.8"

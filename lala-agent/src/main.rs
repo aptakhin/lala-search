@@ -148,31 +148,47 @@ async fn main() {
     let meilisearch_host =
         env::var("MEILISEARCH_HOST").expect("MEILISEARCH_HOST environment variable must be set");
 
-    // Initialize Cassandra client
-    let db_client =
-        match CassandraClient::new(cassandra_hosts.clone(), cassandra_keyspace.clone()).await {
-            Ok(client) => {
-                println!("Connected to Cassandra at {:?}", cassandra_hosts);
-                Arc::new(client)
-            }
-            Err(e) => {
-                eprintln!("Failed to connect to Cassandra: {}", e);
-                eprintln!("Continuing without database connection");
-                // In production, you might want to exit here
-                // For now, we'll continue to allow the HTTP server to run
-                Arc::new(
-                    CassandraClient::new(vec!["127.0.0.1:9042".to_string()], cassandra_keyspace)
-                        .await
-                        .unwrap(),
-                )
-            }
-        };
+    // Initialize database and search clients
+    let db_client = init_cassandra_client(&cassandra_hosts, &cassandra_keyspace).await;
+    let search_client = init_search_client(&meilisearch_host).await;
 
-    // Initialize Meilisearch client
-    let search_client = match SearchClient::new(&meilisearch_host).await {
+    // Start queue processor if needed
+    start_queue_processor_if_needed(
+        agent_mode,
+        &db_client,
+        &search_client,
+        user_agent,
+        poll_interval_secs,
+    );
+
+    // Start HTTP server
+    start_http_server(db_client, search_client).await;
+}
+
+/// Initialize Cassandra database client
+async fn init_cassandra_client(hosts: &[String], keyspace: &str) -> Arc<CassandraClient> {
+    match CassandraClient::new(hosts.to_vec(), keyspace.to_string()).await {
+        Ok(client) => {
+            println!("Connected to Cassandra at {:?}", hosts);
+            Arc::new(client)
+        }
+        Err(e) => {
+            eprintln!("Failed to connect to Cassandra: {}", e);
+            eprintln!("Continuing without database connection");
+            Arc::new(
+                CassandraClient::new(vec!["127.0.0.1:9042".to_string()], keyspace.to_string())
+                    .await
+                    .unwrap(),
+            )
+        }
+    }
+}
+
+/// Initialize Meilisearch client
+async fn init_search_client(host: &str) -> Option<Arc<SearchClient>> {
+    match SearchClient::new(host).await {
         Ok(client) => {
             let client = Arc::new(client);
-            // Initialize the documents index
             if let Err(e) = client.init_index().await {
                 eprintln!("Failed to initialize Meilisearch index: {}", e);
             }
@@ -183,40 +199,55 @@ async fn main() {
             eprintln!("Continuing without search functionality");
             None
         }
-    };
+    }
+}
 
-    // Start queue processor if agent mode should process queue
-    if agent_mode.should_process_queue() {
-        let processor = if let Some(ref search_client) = search_client {
-            QueueProcessor::with_search(
-                db_client.clone(),
-                search_client.clone(),
-                user_agent,
-                Duration::from_secs(poll_interval_secs),
-            )
-        } else {
-            QueueProcessor::new(
-                db_client.clone(),
-                user_agent,
-                Duration::from_secs(poll_interval_secs),
-            )
-        };
-
-        tokio::spawn(async move {
-            processor.start().await;
-        });
-
-        println!("Queue processor started in background");
+/// Start queue processor if agent mode requires it
+fn start_queue_processor_if_needed(
+    agent_mode: AgentMode,
+    db_client: &Arc<CassandraClient>,
+    search_client: &Option<Arc<SearchClient>>,
+    user_agent: String,
+    poll_interval_secs: u64,
+) {
+    if !agent_mode.should_process_queue() {
+        return;
     }
 
+    let processor = if let Some(ref search_client) = search_client {
+        QueueProcessor::with_search(
+            db_client.clone(),
+            search_client.clone(),
+            user_agent,
+            Duration::from_secs(poll_interval_secs),
+        )
+    } else {
+        QueueProcessor::new(
+            db_client.clone(),
+            user_agent,
+            Duration::from_secs(poll_interval_secs),
+        )
+    };
+
+    tokio::spawn(async move {
+        processor.start().await;
+    });
+
+    println!("Queue processor started in background");
+}
+
+/// Start the HTTP server
+async fn start_http_server(
+    db_client: Arc<CassandraClient>,
+    search_client: Option<Arc<SearchClient>>,
+) {
     let state = AppState {
-        db_client: db_client.clone(),
+        db_client,
         search_client,
     };
 
     let app = create_app(state);
 
-    // Bind to 0.0.0.0 to accept connections from any network interface (required for Docker)
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
 

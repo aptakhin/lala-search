@@ -404,22 +404,16 @@ fn extract_links(html: &str, base_url: &str) -> Vec<String> {
     let document = Html::parse_document(html);
 
     // Select all <a> tags with href attribute
-    if let Ok(selector) = scraper::Selector::parse("a[href]") {
-        for element in document.select(&selector) {
-            if let Some(href) = element.value().attr("href") {
-                let href = href.trim();
-                if !href.is_empty() {
-                    // Resolve relative URLs
-                    if let Ok(base) = url::Url::parse(base_url) {
-                        if let Ok(resolved) = base.join(href) {
-                            links.push(resolved.to_string());
-                        } else {
-                            links.push(href.to_string());
-                        }
-                    } else {
-                        links.push(href.to_string());
-                    }
-                }
+    let Ok(selector) = scraper::Selector::parse("a[href]") else {
+        return links;
+    };
+
+    for element in document.select(&selector) {
+        if let Some(href) = element.value().attr("href") {
+            let href = href.trim();
+            if !href.is_empty() {
+                let resolved_link = resolve_url(base_url, href);
+                links.push(resolved_link);
             }
         }
     }
@@ -428,6 +422,17 @@ fn extract_links(html: &str, base_url: &str) -> Vec<String> {
     links.sort();
     links.dedup();
     links
+}
+
+/// Resolve a relative URL against a base URL
+fn resolve_url(base_url: &str, href: &str) -> String {
+    let Ok(base) = url::Url::parse(base_url) else {
+        return href.to_string();
+    };
+
+    base.join(href)
+        .map(|url| url.to_string())
+        .unwrap_or_else(|_| href.to_string())
 }
 
 #[cfg(test)]
