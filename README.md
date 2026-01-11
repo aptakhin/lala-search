@@ -56,6 +56,18 @@ Expected response:
 
 This project follows Test-Driven Development (TDD). See [docs/claude-guidelines.md](docs/claude-guidelines.md) for detailed development workflow.
 
+### First-Time Setup
+
+After cloning, install the git pre-commit hook to automatically run quality checks:
+
+```bash
+# Copy the pre-commit hook
+cp scripts/pre-commit.sh .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
+This hook will automatically run before every commit to ensure code quality.
+
 ### Running Tests
 
 ```bash
@@ -65,7 +77,7 @@ cargo test
 
 ### Code Quality Checks
 
-Before committing, run the pre-commit script:
+The pre-commit hook automatically runs before each commit. To run manually:
 
 ```bash
 # From repository root

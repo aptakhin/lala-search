@@ -59,8 +59,15 @@ Before writing any code, identify and document:
 
 ### Pre-Commit Workflow
 
-Before every commit, the following checks run automatically:
+A git pre-commit hook runs automatically before every commit to ensure code quality.
 
+**First-Time Setup** (after cloning):
+```bash
+cp scripts/pre-commit.sh .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
+The hook runs these checks automatically:
 ```bash
 1. cargo fmt --check      # Verify formatting
 2. cargo clippy -- -D warnings  # Lint for issues
