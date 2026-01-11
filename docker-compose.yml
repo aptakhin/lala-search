@@ -25,6 +25,25 @@ services:
     networks:
       - lalasearch-network
 
+  # Meilisearch - Full-text search engine for indexed documents
+  meilisearch:
+    image: getmeili/meilisearch:v1.11.3
+    container_name: lalasearch-meilisearch
+    ports:
+      - "7700:7700"  # HTTP API and web interface
+    volumes:
+      - meilisearch-data:/meili_data
+    environment:
+      - MEILI_NO_ANALYTICS=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - lalasearch-network
+
   # LalaSearch Agent - Web crawler and search agent
   lala-agent:
     build:
@@ -44,8 +63,11 @@ services:
       - AGENT_MODE=all
       - SCYLLA_HOSTS=scylla:9042
       - SCYLLA_KEYSPACE=lalasearch
+      - MEILISEARCH_HOST=meilisearch:7700
     depends_on:
       scylla:
+        condition: service_healthy
+      meilisearch:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/version"]
@@ -81,6 +103,8 @@ services:
 
 volumes:
   scylla-data:
+    driver: local
+  meilisearch-data:
     driver: local
 
 networks:

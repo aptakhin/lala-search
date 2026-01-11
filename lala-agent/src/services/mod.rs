@@ -4,3 +4,4 @@
 pub mod crawler;
 pub mod db;
 pub mod queue_processor;
+pub mod search;

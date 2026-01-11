@@ -4,4 +4,5 @@
 pub mod crawler;
 pub mod db;
 pub mod queue;
+pub mod search;
 pub mod version;

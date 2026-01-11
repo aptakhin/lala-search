@@ -10,9 +10,11 @@ use axum::{
 use chrono::Utc;
 use lala_agent::models::db::CrawlQueueEntry;
 use lala_agent::models::queue::{AddToQueueRequest, AddToQueueResponse};
+use lala_agent::models::search::{SearchRequest, SearchResponse};
 use lala_agent::models::version::VersionResponse;
 use lala_agent::services::db::ScyllaClient;
 use lala_agent::services::queue_processor::QueueProcessor;
+use lala_agent::services::search::SearchClient;
 use scylla::frame::value::CqlTimestamp;
 use std::env;
 use std::net::SocketAddr;
@@ -26,6 +28,7 @@ const VERSION: &str = env!("LALA_VERSION");
 #[derive(Clone)]
 struct AppState {
     db_client: Arc<ScyllaClient>,
+    search_client: Option<Arc<SearchClient>>,
 }
 
 async fn version_handler() -> Json<VersionResponse> {
@@ -82,6 +85,25 @@ async fn add_to_queue_handler(
     }))
 }
 
+async fn search_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<SearchRequest>,
+) -> Result<Json<SearchResponse>, (StatusCode, String)> {
+    if let Some(search_client) = &state.search_client {
+        search_client.search(payload).await.map(Json).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Search error: {}", e),
+            )
+        })
+    } else {
+        Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Search service is not available".to_string(),
+        ))
+    }
+}
+
 #[tokio::main]
 async fn main() {
     // Get configuration from environment variables
@@ -102,6 +124,9 @@ async fn main() {
 
     let user_agent = env::var("USER_AGENT").unwrap_or_else(|_| "LalaSearchBot/0.1".to_string());
 
+    let meilisearch_host =
+        env::var("MEILISEARCH_HOST").unwrap_or_else(|_| "127.0.0.1:7700".to_string());
+
     // Initialize ScyllaDB client
     let db_client = match ScyllaClient::new(scylla_hosts.clone(), scylla_keyspace.clone()).await {
         Ok(client) => {
@@ -121,13 +146,39 @@ async fn main() {
         }
     };
 
+    // Initialize Meilisearch client
+    let search_client = match SearchClient::new(&meilisearch_host).await {
+        Ok(client) => {
+            let client = Arc::new(client);
+            // Initialize the documents index
+            if let Err(e) = client.init_index().await {
+                eprintln!("Failed to initialize Meilisearch index: {}", e);
+            }
+            Some(client)
+        }
+        Err(e) => {
+            eprintln!("Failed to connect to Meilisearch: {}", e);
+            eprintln!("Continuing without search functionality");
+            None
+        }
+    };
+
     // Start queue processor if agent mode is "worker" or "all"
     if agent_mode == "worker" || agent_mode == "all" {
-        let processor = QueueProcessor::new(
-            db_client.clone(),
-            user_agent,
-            Duration::from_secs(poll_interval_secs),
-        );
+        let processor = if let Some(ref search_client) = search_client {
+            QueueProcessor::with_search(
+                db_client.clone(),
+                search_client.clone(),
+                user_agent,
+                Duration::from_secs(poll_interval_secs),
+            )
+        } else {
+            QueueProcessor::new(
+                db_client.clone(),
+                user_agent,
+                Duration::from_secs(poll_interval_secs),
+            )
+        };
 
         tokio::spawn(async move {
             processor.start().await;
@@ -138,6 +189,7 @@ async fn main() {
 
     let state = AppState {
         db_client: db_client.clone(),
+        search_client,
     };
 
     let app = create_app(state);
@@ -155,6 +207,7 @@ fn create_app(state: AppState) -> Router {
     Router::new()
         .route("/version", get(version_handler))
         .route("/queue/add", post(add_to_queue_handler))
+        .route("/search", post(search_handler))
         .with_state(state)
 }
 
@@ -186,7 +239,10 @@ mod tests {
             }
         };
 
-        let state = AppState { db_client };
+        let state = AppState {
+            db_client,
+            search_client: None,
+        };
         create_app(state)
     }
 
