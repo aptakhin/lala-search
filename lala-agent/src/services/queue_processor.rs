@@ -221,6 +221,20 @@ impl QueueProcessor {
                 let domain = parsed.host_str().unwrap_or("").to_string();
                 let url_path = parsed.path().to_string();
 
+                // Check if domain is allowed
+                match self.db_client.is_domain_allowed(&domain).await {
+                    Ok(is_allowed) => {
+                        if !is_allowed {
+                            // Silently skip domains that are not in the allowlist
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to check domain allowlist for {}: {}", domain, e);
+                        return;
+                    }
+                }
+
                 match self.db_client.crawled_page_exists(&domain, &url_path).await {
                     Ok(exists) => {
                         if exists {

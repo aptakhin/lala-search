@@ -3,7 +3,7 @@
 
 use crate::models::db::{CrawlQueueEntry, CrawledPage};
 use chrono::Timelike;
-use scylla::frame::value::CqlTimestamp;
+use scylla::frame::value::{Counter, CqlTimestamp};
 use scylla::transport::errors::{NewSessionError, QueryError};
 use scylla::{Session, SessionBuilder};
 use std::sync::Arc;
@@ -105,7 +105,7 @@ impl CassandraClient {
         };
 
         // Sum up all the counter values across domains
-        let rows = rows_result.rows::<(i64,)>().map_err(|e| {
+        let rows = rows_result.rows::<(Counter,)>().map_err(|e| {
             QueryError::DbError(
                 scylla::transport::errors::DbError::Other(0),
                 format!("Failed to deserialize count rows: {}", e),
@@ -120,7 +120,7 @@ impl CassandraClient {
                     format!("Failed to parse count row: {}", e),
                 )
             })?;
-            total_count += count;
+            total_count += count.0;
         }
 
         Ok(total_count)

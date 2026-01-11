@@ -28,7 +28,7 @@ services:
 
   # Meilisearch - Full-text search engine for indexed documents
   meilisearch:
-    image: getmeili/meilisearch:v1.11.3
+    image: getmeili/meilisearch:v1.31.0
     container_name: lalasearch-meilisearch
     ports:
       - "7700:7700"  # HTTP API and web interface
