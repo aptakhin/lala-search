@@ -14,6 +14,7 @@ services:
       - CASSANDRA_CLUSTER_NAME=lalasearch
       - CASSANDRA_DC=datacenter1
       - CASSANDRA_ENDPOINT_SNITCH=SimpleSnitch
+      - CASSANDRA_BROADCAST_RPC_ADDRESS=cassandra
       - MAX_HEAP_SIZE=512M
       - HEAP_NEWSIZE=100M
     healthcheck:
