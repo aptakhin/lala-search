@@ -24,9 +24,6 @@ impl SearchClient {
 
         let client = Client::new(&url, None::<String>)?;
 
-        // Test connection
-        let _ = client.get_stats().await?;
-
         println!("Connected to Meilisearch at {}", url);
 
         Ok(Self { client })

@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LalaSearch - The Open Search Engine</title>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #ffffff;
+            color: #000000;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        /* Header */
+        header {
+            background-color: #cccccc;
+            border-bottom: 3px solid #999999;
+            padding: 20px;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 32px;
+            font-weight: bold;
+            color: #000066;
+            text-shadow: 2px 2px 0px #ffff00;
+            margin-bottom: 10px;
+        }
+
+        .tagline {
+            font-size: 12px;
+            color: #666666;
+            font-style: italic;
+        }
+
+        /* Main container */
+        .container {
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+
+        /* Search section */
+        .search-section {
+            background-color: #ffffcc;
+            border: 2px solid #999999;
+            padding: 20px;
+            margin-bottom: 30px;
+            box-shadow: 3px 3px 0px #cccccc;
+        }
+
+        .search-label {
+            display: block;
+            margin-bottom: 10px;
+            font-weight: bold;
+            color: #000066;
+        }
+
+        .search-input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        textarea {
+            flex: 1;
+            padding: 8px;
+            border: 2px solid #999999;
+            font-family: "Courier New", monospace;
+            font-size: 12px;
+            background-color: #ffffff;
+            color: #000000;
+            resize: vertical;
+            min-height: 40px;
+        }
+
+        button {
+            padding: 10px 20px;
+            background-color: #cccccc;
+            border: 3px outset #ffffff;
+            border-left-color: #ffffff;
+            border-top-color: #ffffff;
+            border-right-color: #999999;
+            border-bottom-color: #999999;
+            color: #000000;
+            font-weight: bold;
+            font-size: 14px;
+            cursor: pointer;
+            font-family: Arial, sans-serif;
+        }
+
+        button:active {
+            border-style: inset;
+            border-left-color: #999999;
+            border-top-color: #999999;
+            border-right-color: #ffffff;
+            border-bottom-color: #ffffff;
+        }
+
+        button:hover {
+            background-color: #dddddd;
+        }
+
+        /* Results section */
+        .results-section {
+            margin-top: 20px;
+        }
+
+        .results-header {
+            background-color: #cccccc;
+            border-bottom: 2px solid #999999;
+            padding: 10px;
+            font-weight: bold;
+            color: #000066;
+            margin-bottom: 15px;
+        }
+
+        .results-info {
+            background-color: #ffffcc;
+            border: 1px solid #999999;
+            padding: 10px;
+            margin-bottom: 15px;
+            font-size: 12px;
+        }
+
+        .search-result {
+            background-color: #ffffff;
+            border: 1px solid #999999;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 2px 2px 0px #e6e6e6;
+        }
+
+        .result-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #0066cc;
+            text-decoration: underline;
+            margin-bottom: 5px;
+            word-break: break-word;
+        }
+
+        .result-title:hover {
+            color: #ff0000;
+            cursor: pointer;
+        }
+
+        .result-url {
+            font-size: 12px;
+            color: #008000;
+            font-family: "Courier New", monospace;
+            margin-bottom: 8px;
+            word-break: break-all;
+        }
+
+        .result-excerpt {
+            font-size: 12px;
+            color: #333333;
+            margin-bottom: 8px;
+            line-height: 1.5;
+        }
+
+        .result-meta {
+            font-size: 11px;
+            color: #666666;
+            border-top: 1px solid #cccccc;
+            padding-top: 8px;
+        }
+
+        /* Loading indicator */
+        .loading {
+            background-color: #ffffcc;
+            border: 1px solid #999999;
+            padding: 15px;
+            text-align: center;
+            font-weight: bold;
+            color: #000066;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #cccccc;
+            border-top: 3px solid #000066;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Error message */
+        .error {
+            background-color: #ffcccc;
+            border: 2px solid #ff0000;
+            padding: 15px;
+            margin-bottom: 15px;
+            color: #cc0000;
+            font-weight: bold;
+        }
+
+        /* No results */
+        .no-results {
+            background-color: #ffffcc;
+            border: 1px solid #999999;
+            padding: 20px;
+            text-align: center;
+            color: #666666;
+        }
+
+        /* Footer */
+        footer {
+            background-color: #cccccc;
+            border-top: 3px solid #999999;
+            padding: 15px;
+            text-align: center;
+            margin-top: 40px;
+            font-size: 12px;
+            color: #666666;
+        }
+
+        .footer-link {
+            color: #0066cc;
+            text-decoration: underline;
+        }
+
+        /* Pagination */
+        .pagination {
+            text-align: center;
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #ffffcc;
+            border: 1px solid #999999;
+        }
+
+        .pagination button {
+            margin: 0 5px;
+        }
+
+        .pagination button:disabled {
+            background-color: #e6e6e6;
+            color: #999999;
+            cursor: not-allowed;
+            border-style: outset;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🔍 LALASEARCH</h1>
+        <p class="tagline">The Open Source Search Engine - Retro Edition</p>
+    </header>
+
+    <div class="container" x-data="searchApp()" x-init="init()">
+        <!-- Search Section -->
+        <div class="search-section">
+            <label class="search-label">Enter your search query:</label>
+            <div class="search-input-group">
+                <textarea 
+                    x-model="query" 
+                    @keydown.enter="search()"
+                    placeholder="Type something to search..."
+                ></textarea>
+                <button @click="search()" :disabled="isLoading">
+                    <span x-show="!isLoading">SEARCH</span>
+                    <span x-show="isLoading">
+                        <span class="spinner"></span>
+                        WAIT...
+                    </span>
+                </button>
+            </div>
+            <button @click="clearSearch()" style="width: 100%; margin-bottom: 10px;">CLEAR</button>
+        </div>
+
+        <!-- Error Message -->
+        <div x-show="error" class="error" @click="error = null" style="cursor: pointer;">
+            <strong>ERROR:</strong> <span x-text="error"></span>
+            <br><small>(Click to dismiss)</small>
+        </div>
+
+        <!-- Results Section -->
+        <div class="results-section" x-show="hasSearched">
+            <div class="results-header">
+                SEARCH RESULTS
+                <span x-show="totalResults > 0">
+                    — Found <span x-text="totalResults"></span> 
+                    <span x-show="totalResults === 1">result</span>
+                    <span x-show="totalResults !== 1">results</span>
+                </span>
+            </div>
+
+            <!-- Loading State -->
+            <div x-show="isLoading" class="loading">
+                <span class="spinner"></span>
+                Searching...
+            </div>
+
+            <!-- Results Info -->
+            <div x-show="!isLoading && totalResults > 0" class="results-info">
+                <span x-show="currentOffset === 0">Showing results 1-<span x-text="Math.min(limit, totalResults)"></span></span>
+                <span x-show="currentOffset > 0">
+                    Showing results <span x-text="currentOffset + 1"></span>-<span x-text="Math.min(currentOffset + limit, totalResults)"></span>
+                </span>
+                of <span x-text="totalResults"></span>
+            </div>
+
+            <!-- No Results -->
+            <div x-show="!isLoading && totalResults === 0" class="no-results">
+                <p><strong>No results found.</strong></p>
+                <p style="margin-top: 10px; font-size: 12px;">Try a different search query!</p>
+            </div>
+
+            <!-- Results List -->
+            <template x-for="(result, index) in results" :key="index">
+                <div class="search-result">
+                    <div class="result-title" @click="openUrl(result.document.url)">
+                        <span x-show="result.document.title" x-text="result.document.title"></span>
+                        <span x-show="!result.document.title">[No Title]</span>
+                    </div>
+                    <div class="result-url" @click="copyToClipboard(result.document.url)" style="cursor: pointer;" title="Click to copy">
+                        <span x-text="result.document.url"></span>
+                    </div>
+                    <div class="result-excerpt" x-text="result.document.excerpt"></div>
+                    <div class="result-meta">
+                        <strong>Domain:</strong> <span x-text="result.document.domain"></span>
+                        | <strong>Status:</strong> <span x-text="result.document.http_status"></span>
+                        <span x-show="result.score">
+                            | <strong>Score:</strong> <span x-text="(result.score * 100).toFixed(0)"></span>%
+                        </span>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Pagination -->
+            <div x-show="!isLoading && totalResults > limit" class="pagination">
+                <button @click="previousPage()" :disabled="currentOffset === 0">← PREVIOUS</button>
+                <span style="margin: 0 10px; font-weight: bold;">
+                    Page <span x-text="Math.floor(currentOffset / limit) + 1"></span> of <span x-text="Math.ceil(totalResults / limit)"></span>
+                </span>
+                <button @click="nextPage()" :disabled="currentOffset + limit >= totalResults">NEXT →</button>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>LalaSearch © 2026 | Open Source Distributed Search Engine</p>
+        <p><span class="footer-link">Home</span> | <span class="footer-link">About</span> | <span class="footer-link">GitHub</span></p>
+        <p style="margin-top: 10px; font-size: 11px; color: #999999;">Designed in retro 1990s style with ❤️</p>
+    </footer>
+
+    <script>
+        function searchApp() {
+            return {
+                query: '',
+                results: [],
+                totalResults: 0,
+                isLoading: false,
+                hasSearched: false,
+                error: null,
+                currentOffset: 0,
+                limit: 10,
+
+                init() {
+                    // Check for query in URL params
+                    const params = new URLSearchParams(window.location.search);
+                    const q = params.get('q');
+                    if (q) {
+                        this.query = q;
+                        this.search();
+                    }
+                },
+
+                async search() {
+                    if (!this.query.trim()) {
+                        this.error = 'Please enter a search query!';
+                        return;
+                    }
+
+                    this.isLoading = true;
+                    this.error = null;
+                    this.currentOffset = 0;
+                    this.hasSearched = true;
+
+                    try {
+                        const response = await fetch('/api/search', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                query: this.query,
+                                limit: this.limit,
+                                offset: this.currentOffset,
+                            }),
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`Server error: ${response.status}`);
+                        }
+
+                        const data = await response.json();
+                        this.results = data.results || [];
+                        this.totalResults = data.total || 0;
+                    } catch (err) {
+                        this.error = err.message || 'Failed to fetch results. Is the backend running?';
+                        this.results = [];
+                        this.totalResults = 0;
+                    } finally {
+                        this.isLoading = false;
+                    }
+                },
+
+                clearSearch() {
+                    this.query = '';
+                    this.results = [];
+                    this.totalResults = 0;
+                    this.hasSearched = false;
+                    this.error = null;
+                    this.currentOffset = 0;
+                    window.history.replaceState({}, document.title, window.location.pathname);
+                },
+
+                nextPage() {
+                    this.currentOffset += this.limit;
+                    this.performPaginatedSearch();
+                },
+
+                previousPage() {
+                    this.currentOffset = Math.max(0, this.currentOffset - this.limit);
+                    this.performPaginatedSearch();
+                },
+
+                async performPaginatedSearch() {
+                    this.isLoading = true;
+                    this.error = null;
+
+                    try {
+                        const response = await fetch('/api/search', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                query: this.query,
+                                limit: this.limit,
+                                offset: this.currentOffset,
+                            }),
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`Server error: ${response.status}`);
+                        }
+
+                        const data = await response.json();
+                        this.results = data.results || [];
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                    } catch (err) {
+                        this.error = err.message || 'Failed to fetch results.';
+                        this.results = [];
+                    } finally {
+                        this.isLoading = false;
+                    }
+                },
+
+                openUrl(url) {
+                    window.open(url, '_blank');
+                },
+
+                copyToClipboard(text) {
+                    navigator.clipboard.writeText(text).then(() => {
+                        // Show brief feedback
+                        const originalText = text;
+                        // Simple alert would work but let's keep it silent for UX
+                    });
+                },
+            };
+        }
+    </script>
+</body>
+</html>
