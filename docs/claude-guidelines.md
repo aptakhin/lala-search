@@ -261,6 +261,66 @@ if mode.should_process_queue() {
 - Easy refactoring (compiler catches all usages)
 - Enables custom methods with domain logic
 
+### Cross-Platform Compatibility
+
+**CRITICAL**: Code must work across all major platforms and architectures.
+
+When debugging issues, **never** apply platform-specific or machine-specific workarounds:
+
+❌ **BAD** - Local-only fixes:
+```rust
+// Windows-only path hack
+#[cfg(target_os = "windows")]
+let config_path = "C:\\Users\\aptak\\...";
+
+// Hard-coded absolute paths
+let db_host = "127.0.0.1:9042";  // Fails in Docker
+
+// Binary-specific checks
+if std::env::consts::ARCH == "x86_64" {
+    // Different behavior for different architectures
+}
+```
+
+✅ **GOOD** - Cross-platform solutions:
+```rust
+// Use environment variables (works everywhere)
+let config_path = env::var("CONFIG_PATH")
+    .unwrap_or_else(|_| "config.toml".to_string());
+
+// Use environment variables for network config
+let db_host = env::var("SCYLLA_HOSTS")
+    .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
+// Use conditional compilation for abstractions, not behaviors
+#[cfg(unix)]
+fn set_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_permissions(_path: &Path) -> Result<()> {
+    Ok(()) // No-op on non-Unix
+}
+```
+
+**Target Platforms**:
+- ✅ Linux (x86_64, ARM64)
+- ✅ macOS (Intel, Apple Silicon)
+- ✅ Windows (x86_64, ARM64)
+- ✅ Docker containers (Alpine, Debian base images)
+
+**When debugging**:
+1. If it fails locally, don't hardcode a fix for your machine
+2. Think about why it fails in Docker or on different OS/arch
+3. Use environment variables for configuration
+4. Use standard library functions that are cross-platform
+5. Test the fix works in Docker before considering it done
+
+**Example**: The Meilisearch health check failed due to SDK JSON parsing, not platform differences. The fix (removing the health check) works on all platforms, not just Windows.
+
 ### Commands Reference
 
 ```bash
