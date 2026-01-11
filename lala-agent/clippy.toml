@@ -1,0 +1,4 @@
+# Clippy configuration for lala-agent
+
+# Warn on all clippy lints by default
+warn-on-all-wildcard-imports = true

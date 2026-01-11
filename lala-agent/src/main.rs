@@ -1,0 +1,175 @@
+use axum::{Json, Router, routing::get};
+use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
+
+#[derive(Serialize, Deserialize)]
+struct VersionResponse {
+    agent: String,
+    version: String,
+}
+
+async fn version_handler() -> Json<VersionResponse> {
+    Json(VersionResponse {
+        agent: "lala-agent".to_string(),
+        version: "0.1.0".to_string(),
+    })
+}
+
+#[tokio::main]
+async fn main() {
+    let app = create_app();
+
+    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+
+    println!("lala-agent v0.1.0 listening on {}", addr);
+
+    axum::serve(listener, app).await.unwrap();
+}
+
+fn create_app() -> Router {
+    Router::new().route("/version", get(version_handler))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use axum::http::StatusCode;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn test_version_endpoint_returns_200() {
+        let app = create_app();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/version")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_version_endpoint_returns_json_content_type() {
+        let app = create_app();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/version")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let content_type = response.headers().get("content-type").unwrap();
+        assert_eq!(content_type, "application/json");
+    }
+
+    #[tokio::test]
+    async fn test_version_endpoint_returns_correct_structure() {
+        let app = create_app();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/version")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        let version_response: VersionResponse = serde_json::from_str(&body_str).unwrap();
+
+        assert_eq!(version_response.agent, "lala-agent");
+        assert_eq!(version_response.version, "0.1.0");
+    }
+
+    #[tokio::test]
+    async fn test_version_follows_semver_format() {
+        let app = create_app();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/version")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        let version_response: VersionResponse = serde_json::from_str(&body_str).unwrap();
+
+        // Check semver format: MAJOR.MINOR.PATCH
+        let parts: Vec<&str> = version_response.version.split('.').collect();
+        assert_eq!(parts.len(), 3);
+        assert!(parts[0].parse::<u32>().is_ok());
+        assert!(parts[1].parse::<u32>().is_ok());
+        assert!(parts[2].parse::<u32>().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_invalid_route_returns_404() {
+        let app = create_app();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/invalid")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_requests_succeed() {
+        let app = create_app();
+
+        let handles: Vec<_> = (0..10)
+            .map(|_| {
+                let app_clone = app.clone();
+                tokio::spawn(async move {
+                    let response = app_clone
+                        .oneshot(
+                            Request::builder()
+                                .uri("/version")
+                                .body(Body::empty())
+                                .unwrap(),
+                        )
+                        .await
+                        .unwrap();
+                    response.status()
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            let status = handle.await.unwrap();
+            assert_eq!(status, StatusCode::OK);
+        }
+    }
+}
