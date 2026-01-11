@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Aleksandr Ptakhin
 
 use crate::models::db::{CrawlQueueEntry, CrawledPage};
+use chrono::Timelike;
 use scylla::frame::value::CqlTimestamp;
 use scylla::transport::errors::{NewSessionError, QueryError};
 use scylla::{Session, SessionBuilder};
@@ -84,17 +85,26 @@ impl CassandraClient {
         Ok(None)
     }
 
-    /// Return total number of rows in `crawled_pages`.
+    /// Return total number of crawled pages from crawl_stats.
+    /// This queries the counter table instead of doing a full table scan.
+    /// Returns the sum of pages_crawled across all domains for today.
     pub async fn count_crawled_pages(&self) -> Result<i64, QueryError> {
-        let query = "SELECT COUNT(*) FROM crawled_pages";
+        // Get current date and hour for the partition key
+        let now = chrono::Utc::now();
+        let date = now.date_naive();
+        let hour = now.hour() as i32;
 
-        let result = self.session.query_unpaged(query, &[]).await?;
+        // Query crawl_stats for the current hour
+        let query = "SELECT pages_crawled FROM crawl_stats
+                     WHERE date = ? AND hour = ?";
+
+        let result = self.session.query_unpaged(query, (date, hour)).await?;
         let rows_result = match result.into_rows_result() {
             Ok(r) => r,
             Err(_) => return Ok(0),
         };
 
-        // Expect a single row with a single bigint column
+        // Sum up all the counter values across domains
         let rows = rows_result.rows::<(i64,)>().map_err(|e| {
             QueryError::DbError(
                 scylla::transport::errors::DbError::Other(0),
@@ -102,18 +112,18 @@ impl CassandraClient {
             )
         })?;
 
-        if let Some(row_res) = rows.into_iter().next() {
+        let mut total_count = 0i64;
+        for row_res in rows {
             let (count,) = row_res.map_err(|e| {
                 QueryError::DbError(
                     scylla::transport::errors::DbError::Other(0),
                     format!("Failed to parse count row: {}", e),
                 )
             })?;
-
-            return Ok(count);
+            total_count += count;
         }
 
-        Ok(0)
+        Ok(total_count)
     }
 
     /// Convenience method to check if a crawled page exists by domain + url_path
@@ -200,6 +210,27 @@ impl CassandraClient {
                     page.updated_at,
                 ),
             )
+            .await?;
+
+        // Increment crawl_stats counter
+        self.increment_crawl_stats(&page.domain).await?;
+
+        Ok(())
+    }
+
+    /// Increment the crawl_stats counter for pages_crawled
+    async fn increment_crawl_stats(&self, domain: &str) -> Result<(), QueryError> {
+        // Get current date and hour for partitioning
+        let now = chrono::Utc::now();
+        let date = now.date_naive();
+        let hour = now.hour() as i32;
+
+        let query = "UPDATE crawl_stats
+                     SET pages_crawled = pages_crawled + 1
+                     WHERE date = ? AND hour = ? AND domain = ?";
+
+        self.session
+            .query_unpaged(query, (date, hour, domain))
             .await?;
 
         Ok(())

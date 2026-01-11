@@ -16,12 +16,23 @@ pub enum AgentMode {
 
 impl AgentMode {
     /// Parse agent mode from environment variable
-    /// Defaults to AgentMode::All if not set or invalid
+    /// Panics if AGENT_MODE is not set or invalid
     pub fn from_env() -> Self {
-        match env::var("AGENT_MODE").as_deref().unwrap_or("all") {
+        let mode = env::var("AGENT_MODE").expect("AGENT_MODE environment variable must be set");
+        Self::parse(&mode)
+    }
+
+    /// Parse agent mode from string
+    /// Panics if the value is invalid
+    fn parse(mode: &str) -> Self {
+        match mode {
             "worker" => AgentMode::Worker,
             "manager" => AgentMode::Manager,
-            _ => AgentMode::All,
+            "all" => AgentMode::All,
+            _ => panic!(
+                "AGENT_MODE must be 'worker', 'manager', or 'all', got: {}",
+                mode
+            ),
         }
     }
 
@@ -51,15 +62,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_agent_mode_default_is_all() {
-        // Note: This test runs with whatever AGENT_MODE env var is set
-        // In CI, ensure AGENT_MODE is not set to test the default
-        let mode = AgentMode::from_env();
-        // Just verify it returns a valid mode
-        assert!(matches!(
-            mode,
-            AgentMode::All | AgentMode::Worker | AgentMode::Manager
-        ));
+    fn test_agent_mode_parse_all() {
+        let mode = AgentMode::parse("all");
+        assert_eq!(mode, AgentMode::All);
+    }
+
+    #[test]
+    fn test_agent_mode_parse_worker() {
+        let mode = AgentMode::parse("worker");
+        assert_eq!(mode, AgentMode::Worker);
+    }
+
+    #[test]
+    fn test_agent_mode_parse_manager() {
+        let mode = AgentMode::parse("manager");
+        assert_eq!(mode, AgentMode::Manager);
+    }
+
+    #[test]
+    #[should_panic(expected = "AGENT_MODE must be 'worker', 'manager', or 'all'")]
+    fn test_agent_mode_parse_invalid() {
+        AgentMode::parse("invalid");
     }
 
     #[test]

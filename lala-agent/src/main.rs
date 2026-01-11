@@ -111,26 +111,26 @@ async fn main() {
     // Support both CASSANDRA_HOSTS and legacy SCYLLA_HOSTS for backward compatibility
     let cassandra_hosts = env::var("CASSANDRA_HOSTS")
         .or_else(|_| env::var("SCYLLA_HOSTS"))
-        .unwrap_or_else(|_| "127.0.0.1:9042".to_string())
+        .expect("CASSANDRA_HOSTS or SCYLLA_HOSTS environment variable must be set")
         .split(',')
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
 
     let cassandra_keyspace = env::var("CASSANDRA_KEYSPACE")
         .or_else(|_| env::var("SCYLLA_KEYSPACE"))
-        .unwrap_or_else(|_| "lalasearch".to_string());
+        .expect("CASSANDRA_KEYSPACE or SCYLLA_KEYSPACE environment variable must be set");
 
     let agent_mode = AgentMode::from_env();
 
     let poll_interval_secs = env::var("QUEUE_POLL_INTERVAL_SECS")
-        .unwrap_or_else(|_| "5".to_string())
+        .expect("QUEUE_POLL_INTERVAL_SECS environment variable must be set")
         .parse::<u64>()
-        .unwrap_or(5);
+        .expect("QUEUE_POLL_INTERVAL_SECS must be a valid number");
 
-    let user_agent = env::var("USER_AGENT").unwrap_or_else(|_| "LalaSearchBot/0.1".to_string());
+    let user_agent = env::var("USER_AGENT").expect("USER_AGENT environment variable must be set");
 
     let meilisearch_host =
-        env::var("MEILISEARCH_HOST").unwrap_or_else(|_| "127.0.0.1:7700".to_string());
+        env::var("MEILISEARCH_HOST").expect("MEILISEARCH_HOST environment variable must be set");
 
     // Initialize Cassandra client
     let db_client =

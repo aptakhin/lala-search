@@ -59,11 +59,11 @@ services:
       - ./lala-agent/tests:/app/tests:ro
       - ./lala-agent/Cargo.toml:/app/Cargo.toml:ro
       - ./lala-agent/Cargo.lock:/app/Cargo.lock:ro
+    env_file:
+      - .env
     environment:
-      - RUST_LOG=info
-      - AGENT_MODE=all
+      # Override specific values for Docker environment
       - CASSANDRA_HOSTS=cassandra:9042
-      - CASSANDRA_KEYSPACE=lalasearch
       - MEILISEARCH_HOST=meilisearch:7700
     depends_on:
       cassandra:

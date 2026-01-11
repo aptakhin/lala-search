@@ -1,1 +1,4 @@
 lala-agent/target/
+
+# Environment variables
+.env

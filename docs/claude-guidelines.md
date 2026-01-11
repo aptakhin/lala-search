@@ -327,6 +327,77 @@ if mode.should_process_queue() {
 - Easy refactoring (compiler catches all usages)
 - Enables custom methods with domain logic
 
+### Environment Variables Management
+
+**CRITICAL**: Never use default values directly in code. Always use environment variables for configuration.
+
+#### Standard Approach
+
+1. **Create `.env` file** (gitignored) for local development:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your local configuration
+   ```
+
+2. **Maintain `.env.example`** with all required variables and documentation:
+   ```bash
+   # Example structure
+   AGENT_MODE=all
+   CASSANDRA_HOSTS=127.0.0.1:9042
+   CASSANDRA_KEYSPACE=lalasearch
+   ```
+
+3. **Docker Compose integration** using `env_file`:
+   ```yaml
+   services:
+     lala-agent:
+       env_file:
+         - .env
+       environment:
+         # Override Docker-specific values
+         - CASSANDRA_HOSTS=cassandra:9042
+   ```
+
+#### ❌ BAD - Hardcoded defaults:
+```rust
+// Never hardcode defaults in application code
+let db_host = env::var("DB_HOST").unwrap_or("127.0.0.1:9042".to_string());
+let keyspace = env::var("KEYSPACE").unwrap_or("lalasearch".to_string());
+```
+
+#### ✅ GOOD - Environment variables only:
+```rust
+// Fail early if required variables are missing
+let db_host = env::var("CASSANDRA_HOSTS")
+    .expect("CASSANDRA_HOSTS environment variable must be set");
+let keyspace = env::var("CASSANDRA_KEYSPACE")
+    .expect("CASSANDRA_KEYSPACE environment variable must be set");
+```
+
+Or with defaults from `.env` file:
+```rust
+// Load from .env file (using dotenvy crate)
+dotenvy::dotenv().ok();
+
+let db_host = env::var("CASSANDRA_HOSTS")
+    .expect("CASSANDRA_HOSTS must be set in .env file");
+```
+
+#### Benefits:
+- **Explicit configuration**: Forces developers to think about configuration
+- **No surprises**: Clear what values are being used
+- **Environment parity**: Development, staging, and production use same pattern
+- **Security**: Sensitive values never committed to git
+- **Documentation**: `.env.example` serves as configuration reference
+
+#### File Structure:
+```
+.env.example       # Committed - Template with all variables documented
+.env               # Gitignored - Your local configuration
+.gitignore         # Must include .env
+docker-compose.yml # Uses env_file: .env
+```
+
 ### Cross-Platform Compatibility
 
 **CRITICAL**: Code must work across all major platforms and architectures.

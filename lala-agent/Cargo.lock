@@ -1820,6 +1820,7 @@ dependencies = [
  "async-trait",
  "byteorder",
  "bytes",
+ "chrono",
  "lz4_flex",
  "scylla-macros",
  "snap",
