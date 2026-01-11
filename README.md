@@ -93,6 +93,59 @@ Expected response:
 
 This project follows Test-Driven Development (TDD). See [docs/claude-guidelines.md](docs/claude-guidelines.md) for detailed development workflow.
 
+### Manual Testing with Crawl Queue
+
+#### Adding URLs via HTTP API (Recommended)
+
+The agent provides an HTTP endpoint to add URLs to the crawl queue:
+
+```bash
+# Add a URL to the crawl queue
+curl -X POST http://localhost:3000/queue/add \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://en.wikipedia.org/wiki/Main_Page",
+    "priority": 1
+  }'
+```
+
+Expected response:
+```json
+{
+  "success": true,
+  "message": "URL added to crawl queue successfully",
+  "url": "https://en.wikipedia.org/wiki/Main_Page",
+  "domain": "en.wikipedia.org"
+}
+```
+
+The lala-agent will automatically pick up entries from the queue and process them. You can monitor the agent logs:
+
+```bash
+docker-compose logs -f lala-agent
+```
+
+#### Viewing Queue Status via Database
+
+You can also query the database directly to see queue and crawled page status:
+
+```bash
+# Connect to ScyllaDB via Docker
+docker exec -it lalasearch-scylla cqlsh
+
+# Switch to lalasearch keyspace
+USE lalasearch;
+
+# View the queue
+SELECT * FROM crawl_queue;
+
+# View crawled pages (after the agent processes the queue)
+SELECT * FROM crawled_pages;
+
+# Check for a specific crawled page
+SELECT * FROM crawled_pages WHERE domain = 'en.wikipedia.org' AND url_path = '/wiki/Main_Page';
+```
+
 ### First-Time Setup
 
 After cloning, install the git pre-commit hook to automatically run quality checks:

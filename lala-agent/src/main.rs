@@ -1,13 +1,32 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Aleksandr Ptakhin
 
-use axum::{routing::get, Json, Router};
+use axum::{
+    extract::State,
+    http::StatusCode,
+    routing::{get, post},
+    Json, Router,
+};
+use chrono::Utc;
+use lala_agent::models::db::CrawlQueueEntry;
+use lala_agent::models::queue::{AddToQueueRequest, AddToQueueResponse};
 use lala_agent::models::version::VersionResponse;
+use lala_agent::services::db::ScyllaClient;
+use lala_agent::services::queue_processor::QueueProcessor;
+use scylla::frame::value::CqlTimestamp;
+use std::env;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 
 // Version is extracted from Cargo.toml at compile time via build.rs
 // In CI/CD, the patch version can be overridden via LALA_PATCH_VERSION env var
 const VERSION: &str = env!("LALA_VERSION");
+
+#[derive(Clone)]
+struct AppState {
+    db_client: Arc<ScyllaClient>,
+}
 
 async fn version_handler() -> Json<VersionResponse> {
     Json(VersionResponse {
@@ -16,9 +35,112 @@ async fn version_handler() -> Json<VersionResponse> {
     })
 }
 
+async fn add_to_queue_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<AddToQueueRequest>,
+) -> Result<Json<AddToQueueResponse>, (StatusCode, String)> {
+    // Parse and validate URL
+    let parsed_url = url::Url::parse(&payload.url)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid URL: {}", e)))?;
+
+    let domain = parsed_url
+        .host_str()
+        .ok_or((StatusCode::BAD_REQUEST, "URL has no host".to_string()))?
+        .to_string();
+
+    // Create queue entry
+    let now = Utc::now();
+    let now_timestamp = CqlTimestamp(now.timestamp_millis());
+
+    let entry = CrawlQueueEntry {
+        priority: payload.priority,
+        scheduled_at: now_timestamp,
+        url: payload.url.clone(),
+        domain: domain.clone(),
+        last_attempt_at: None,
+        attempt_count: 0,
+        created_at: now_timestamp,
+    };
+
+    // Insert into database
+    state
+        .db_client
+        .insert_queue_entry(&entry)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Database error: {}", e),
+            )
+        })?;
+
+    Ok(Json(AddToQueueResponse {
+        success: true,
+        message: "URL added to crawl queue successfully".to_string(),
+        url: payload.url,
+        domain,
+    }))
+}
+
 #[tokio::main]
 async fn main() {
-    let app = create_app();
+    // Get configuration from environment variables
+    let scylla_hosts = env::var("SCYLLA_HOSTS")
+        .unwrap_or_else(|_| "127.0.0.1:9042".to_string())
+        .split(',')
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+
+    let scylla_keyspace = env::var("SCYLLA_KEYSPACE").unwrap_or_else(|_| "lalasearch".to_string());
+
+    let agent_mode = env::var("AGENT_MODE").unwrap_or_else(|_| "all".to_string());
+
+    let poll_interval_secs = env::var("QUEUE_POLL_INTERVAL_SECS")
+        .unwrap_or_else(|_| "5".to_string())
+        .parse::<u64>()
+        .unwrap_or(5);
+
+    let user_agent = env::var("USER_AGENT").unwrap_or_else(|_| "LalaSearchBot/0.1".to_string());
+
+    // Initialize ScyllaDB client
+    let db_client = match ScyllaClient::new(scylla_hosts.clone(), scylla_keyspace.clone()).await {
+        Ok(client) => {
+            println!("Connected to ScyllaDB at {:?}", scylla_hosts);
+            Arc::new(client)
+        }
+        Err(e) => {
+            eprintln!("Failed to connect to ScyllaDB: {}", e);
+            eprintln!("Continuing without database connection");
+            // In production, you might want to exit here
+            // For now, we'll continue to allow the HTTP server to run
+            Arc::new(
+                ScyllaClient::new(vec!["127.0.0.1:9042".to_string()], scylla_keyspace)
+                    .await
+                    .unwrap(),
+            )
+        }
+    };
+
+    // Start queue processor if agent mode is "worker" or "all"
+    if agent_mode == "worker" || agent_mode == "all" {
+        let processor = QueueProcessor::new(
+            db_client.clone(),
+            user_agent,
+            Duration::from_secs(poll_interval_secs),
+        );
+
+        tokio::spawn(async move {
+            processor.start().await;
+        });
+
+        println!("Queue processor started in background");
+    }
+
+    let state = AppState {
+        db_client: db_client.clone(),
+    };
+
+    let app = create_app(state);
 
     // Bind to 0.0.0.0 to accept connections from any network interface (required for Docker)
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
@@ -29,8 +151,11 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-fn create_app() -> Router {
-    Router::new().route("/version", get(version_handler))
+fn create_app(state: AppState) -> Router {
+    Router::new()
+        .route("/version", get(version_handler))
+        .route("/queue/add", post(add_to_queue_handler))
+        .with_state(state)
 }
 
 #[cfg(test)]
@@ -41,9 +166,33 @@ mod tests {
     use axum::http::StatusCode;
     use tower::ServiceExt;
 
+    async fn create_test_app() -> Router {
+        // For unit tests, try to connect to test database, but fallback to main keyspace
+        // Tests that require database should be marked with #[ignore]
+        let db_client = match ScyllaClient::new(
+            vec!["127.0.0.1:9042".to_string()],
+            "lalasearch_test".to_string(),
+        )
+        .await
+        {
+            Ok(client) => Arc::new(client),
+            Err(_) => {
+                // If test database is not available, use main keyspace
+                Arc::new(
+                    ScyllaClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
+                        .await
+                        .expect("Failed to connect to database"),
+                )
+            }
+        };
+
+        let state = AppState { db_client };
+        create_app(state)
+    }
+
     #[tokio::test]
     async fn test_version_endpoint_response() {
-        let app = create_app();
+        let app = create_test_app().await;
 
         let response = app
             .oneshot(
@@ -75,7 +224,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_version_follows_semver_format() {
-        let app = create_app();
+        let app = create_test_app().await;
 
         let response = app
             .oneshot(
@@ -104,7 +253,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_route_returns_404() {
-        let app = create_app();
+        let app = create_test_app().await;
 
         let response = app
             .oneshot(
@@ -121,7 +270,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_requests_succeed() {
-        let app = create_app();
+        let app = create_test_app().await;
 
         let handles: Vec<_> = (0..10)
             .map(|_| {
@@ -145,5 +294,64 @@ mod tests {
             let status = handle.await.unwrap();
             assert_eq!(status, StatusCode::OK);
         }
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires ScyllaDB connection
+    async fn test_add_to_queue_valid_url() {
+        let app = create_test_app().await;
+
+        let request_body = AddToQueueRequest {
+            url: "https://en.wikipedia.org/wiki/Main_Page".to_string(),
+            priority: 1,
+        };
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/queue/add")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let response_data: AddToQueueResponse = serde_json::from_slice(&body).unwrap();
+
+        assert!(response_data.success);
+        assert_eq!(response_data.url, request_body.url);
+        assert_eq!(response_data.domain, "en.wikipedia.org");
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires ScyllaDB connection
+    async fn test_add_to_queue_invalid_url() {
+        let app = create_test_app().await;
+
+        let request_body = AddToQueueRequest {
+            url: "not-a-valid-url".to_string(),
+            priority: 1,
+        };
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/queue/add")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

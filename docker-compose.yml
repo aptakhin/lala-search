@@ -67,14 +67,14 @@ services:
         condition: service_healthy
     volumes:
       - ./docker/scylla/schema.cql:/schema.cql:ro
-    command: >
-      bash -c "
-        echo 'Waiting for ScyllaDB to be ready...' &&
-        sleep 10 &&
-        echo 'Initializing ScyllaDB schema...' &&
-        cqlsh scylla -f /schema.cql &&
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo 'Waiting for ScyllaDB to be ready...'
+        sleep 10
+        echo 'Initializing ScyllaDB schema...'
+        cqlsh scylla -f /schema.cql
         echo 'Schema initialized successfully!'
-      "
     networks:
       - lalasearch-network
     restart: "no"

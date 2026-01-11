@@ -6,6 +6,7 @@ We need also to run some helper scripts to issue letsencrypt certificates for do
 
 We'll need to keep information which sites or parts of documents are on which machine in the future. But maybe for now we can call just all search machines, when user comes to main website to search for information.
 
+agent --mode all
 agent --mode manager
 agent --mode serve
 agent --mode worker
