@@ -52,6 +52,25 @@ async fn add_to_queue_handler(
         .ok_or((StatusCode::BAD_REQUEST, "URL has no host".to_string()))?
         .to_string();
 
+    // Check if domain is allowed
+    let is_allowed = state
+        .db_client
+        .is_domain_allowed(&domain)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to check domain allowlist: {}", e),
+            )
+        })?;
+
+    if !is_allowed {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!("Domain '{}' is not in the allowed domains list", domain),
+        ));
+    }
+
     // Create queue entry
     let now = Utc::now();
     let now_timestamp = CqlTimestamp(now.timestamp_millis());
@@ -415,5 +434,39 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires Cassandra connection
+    async fn test_add_to_queue_domain_not_allowed() {
+        let app = create_test_app().await;
+
+        // Try to add a URL from a domain that's not in allowed_domains
+        let request_body = AddToQueueRequest {
+            url: "https://example.com/page".to_string(),
+            priority: 1,
+        };
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/queue/add")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(body_str.contains("not in the allowed domains list"));
+        assert!(body_str.contains("example.com"));
     }
 }

@@ -236,6 +236,28 @@ impl CassandraClient {
         Ok(())
     }
 
+    /// Check if a domain is in the allowed domains list
+    /// Returns true if the domain is allowed, false otherwise
+    pub async fn is_domain_allowed(&self, domain: &str) -> Result<bool, QueryError> {
+        let query = "SELECT domain FROM allowed_domains WHERE domain = ?";
+
+        let result = self.session.query_unpaged(query, (domain,)).await?;
+        let rows_result = match result.into_rows_result() {
+            Ok(rows_result) => rows_result,
+            Err(_) => return Ok(false),
+        };
+
+        let mut rows_iter = rows_result.rows::<(String,)>().map_err(|e| {
+            QueryError::DbError(
+                scylla::transport::errors::DbError::Other(0),
+                format!("Failed to parse allowed domain row: {}", e),
+            )
+        })?;
+
+        // If there's at least one row, the domain is allowed
+        Ok(rows_iter.next().is_some())
+    }
+
     /// Get a crawled page by domain and url_path
     pub async fn get_crawled_page(
         &self,
@@ -354,5 +376,55 @@ mod tests {
 
         let result = client.get_next_queue_entry().await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_is_domain_allowed_returns_false_for_unlisted_domain() {
+        let client =
+            CassandraClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
+                .await
+                .unwrap();
+
+        // Test with a domain that's definitely not in the allowed list
+        let result = client
+            .is_domain_allowed("definitely-not-allowed-domain.example")
+            .await;
+
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_is_domain_allowed_returns_true_for_listed_domain() {
+        let client =
+            CassandraClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
+                .await
+                .unwrap();
+
+        // First, insert a test domain into allowed_domains
+        let test_domain = "en.wikipedia.org";
+        let insert_query =
+            "INSERT INTO allowed_domains (domain, added_at, added_by, notes) VALUES (?, toTimestamp(now()), 'test', 'Test domain')";
+        client
+            .session
+            .query_unpaged(insert_query, (test_domain,))
+            .await
+            .unwrap();
+
+        // Now check if it's allowed
+        let result = client.is_domain_allowed(test_domain).await;
+
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+
+        // Clean up: remove the test domain
+        let delete_query = "DELETE FROM allowed_domains WHERE domain = ?";
+        client
+            .session
+            .query_unpaged(delete_query, (test_domain,))
+            .await
+            .unwrap();
     }
 }

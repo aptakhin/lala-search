@@ -45,6 +45,15 @@ CREATE TABLE IF NOT EXISTS crawl_queue (
 ) WITH CLUSTERING ORDER BY (scheduled_at ASC, url ASC)
   AND comment = 'Queue of URLs to be crawled, ordered by priority and schedule';
 
+-- Table for allowed domains
+-- Whitelist of domains that are permitted to be crawled
+CREATE TABLE IF NOT EXISTS allowed_domains (
+    domain text PRIMARY KEY,
+    added_at timestamp,
+    added_by text,
+    notes text
+) WITH comment = 'Whitelist of domains permitted for crawling';
+
 -- Table for storing robots.txt cache
 -- Avoid repeated fetches of robots.txt files
 CREATE TABLE IF NOT EXISTS robots_cache (
