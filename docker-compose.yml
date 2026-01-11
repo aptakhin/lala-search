@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Aleksandr Ptakhin
+
+version: '3.8'
+
+services:
+  # ScyllaDB - Fast NoSQL database compatible with Cassandra
+  scylla:
+    image: scylladb/scylla:6.2
+    container_name: lalasearch-scylla
+    ports:
+      - "9042:9042"  # CQL native transport
+      - "9160:9160"  # Thrift
+      - "10000:10000" # REST API
+    volumes:
+      - scylla-data:/var/lib/scylla
+      - ./docker/scylla/init:/docker-entrypoint-initdb.d
+    environment:
+      - SCYLLA_CLUSTER_NAME=lalasearch
+    command: --smp 1 --memory 1G --overprovisioned 1
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - lalasearch-network
+
+  # LalaSearch Agent - Web crawler and search agent
+  lala-agent:
+    build:
+      context: ./lala-agent
+      dockerfile: Dockerfile
+    container_name: lalasearch-agent
+    ports:
+      - "3000:3000"  # HTTP API
+    volumes:
+      # Mount source code for hot-reload development
+      - ./lala-agent/src:/app/src:ro
+      - ./lala-agent/tests:/app/tests:ro
+      - ./lala-agent/Cargo.toml:/app/Cargo.toml:ro
+      - ./lala-agent/Cargo.lock:/app/Cargo.lock:ro
+    environment:
+      - RUST_LOG=info
+      - AGENT_MODE=all
+      - SCYLLA_HOSTS=scylla:9042
+      - SCYLLA_KEYSPACE=lalasearch
+    depends_on:
+      scylla:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/version"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - lalasearch-network
+    # Override CMD for development with hot-reload
+    # Uncomment the line below for development mode:
+    # command: cargo watch -x run
+
+  # ScyllaDB initialization service (runs once to create schema)
+  scylla-init:
+    image: scylladb/scylla:6.2
+    container_name: lalasearch-scylla-init
+    depends_on:
+      scylla:
+        condition: service_healthy
+    volumes:
+      - ./docker/scylla/schema.cql:/schema.cql:ro
+    command: >
+      bash -c "
+        echo 'Waiting for ScyllaDB to be ready...' &&
+        sleep 10 &&
+        echo 'Initializing ScyllaDB schema...' &&
+        cqlsh scylla -f /schema.cql &&
+        echo 'Schema initialized successfully!'
+      "
+    networks:
+      - lalasearch-network
+    restart: "no"
+
+volumes:
+  scylla-data:
+    driver: local
+
+networks:
+  lalasearch-network:
+    driver: bridge
