@@ -2,18 +2,12 @@
 // Copyright (c) 2026 Aleksandr Ptakhin
 
 use axum::{Json, Router, routing::get};
-use serde::{Deserialize, Serialize};
+use lala_agent::models::version::VersionResponse;
 use std::net::SocketAddr;
 
 // Version is extracted from Cargo.toml at compile time via build.rs
 // In CI/CD, the patch version can be overridden via LALA_PATCH_VERSION env var
 const VERSION: &str = env!("LALA_VERSION");
-
-#[derive(Serialize, Deserialize)]
-struct VersionResponse {
-    agent: String,
-    version: String,
-}
 
 async fn version_handler() -> Json<VersionResponse> {
     Json(VersionResponse {
