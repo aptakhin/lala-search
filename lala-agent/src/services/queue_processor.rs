@@ -110,6 +110,14 @@ impl QueueProcessor {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to upsert crawled page: {}", e))?;
 
+        // After storing the crawled page, extract any "meet" links and enqueue them
+        if let Some(ref content) = result.content {
+            // Respect global cap: don't add new links if there are already > 20 crawled pages
+            if let Err(e) = self.enqueue_meet_links(content, &entry).await {
+                eprintln!("Failed to enqueue meet links: {}", e);
+            }
+        }
+
         // If Meilisearch is available and we have successful content, index the document
         if let (Some(search_client), Some(content)) = (&self.search_client, &result.content) {
             if let Err(e) = self
@@ -166,6 +174,73 @@ impl QueueProcessor {
         println!("Indexed document for: {}", entry.url);
 
         Ok(())
+    }
+
+    /// Extract meet links from crawled content and enqueue them if count allows
+    async fn enqueue_meet_links(&self, content: &str, entry: &CrawlQueueEntry) -> Result<()> {
+        let total = self
+            .db_client
+            .count_crawled_pages()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to count crawled pages: {}", e))?;
+
+        if total > 20 {
+            println!(
+                "Skipping enqueueing meet links: crawled_pages count {} > 20",
+                total
+            );
+            return Ok(());
+        }
+
+        let meet_links = extract_meet_links(content, &entry.url);
+        for link in meet_links {
+            self.enqueue_link(&link, entry).await;
+        }
+
+        Ok(())
+    }
+
+    /// Enqueue a single link if it hasn't been crawled yet
+    async fn enqueue_link(&self, link: &str, parent_entry: &CrawlQueueEntry) {
+        match url::Url::parse(link) {
+            Ok(parsed) => {
+                let domain = parsed.host_str().unwrap_or("").to_string();
+                let url_path = parsed.path().to_string();
+
+                match self.db_client.crawled_page_exists(&domain, &url_path).await {
+                    Ok(exists) => {
+                        if exists {
+                            return; // Already crawled
+                        }
+
+                        let now = Utc::now();
+                        let ts = CqlTimestamp(now.timestamp_millis());
+                        let new_entry = CrawlQueueEntry {
+                            priority: parent_entry.priority,
+                            scheduled_at: ts,
+                            url: link.to_string(),
+                            domain,
+                            last_attempt_at: None,
+                            attempt_count: 0,
+                            created_at: ts,
+                        };
+
+                        match self.db_client.insert_queue_entry(&new_entry).await {
+                            Ok(()) => println!("Enqueued meet link: {}", link),
+                            Err(e) => {
+                                eprintln!("Failed to insert meet link into queue {}: {}", link, e)
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to check crawled_page_exists for {}: {}", link, e);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to parse meet link URL {}: {}", link, e);
+            }
+        }
     }
 
     /// Convert crawl result to a crawled page entry
@@ -300,6 +375,50 @@ fn extract_title(html: &str) -> Option<String> {
     }
 
     None
+}
+
+/// Extract links that look like meeting URLs from HTML content.
+/// It finds href attributes, resolves relative URLs against `base_url`, and
+/// returns absolute URLs that contain the substring "meet" (case-insensitive).
+fn extract_meet_links(html: &str, base_url: &str) -> Vec<String> {
+    let mut links = Vec::new();
+
+    let lower = html.to_lowercase();
+    let mut idx = 0usize;
+
+    while let Some(href_pos) = lower[idx..].find("href=") {
+        idx += href_pos;
+        // Move to the '=' sign
+        if let Some(start_quote_pos) = lower[idx..].find(['"', '\'']) {
+            let quote = lower.as_bytes()[idx + start_quote_pos] as char;
+            let value_start = idx + start_quote_pos + 1;
+            if let Some(value_end_rel) = lower[value_start..].find(quote) {
+                let value_end = value_start + value_end_rel;
+                let raw = html[value_start..value_end].trim();
+                // Only consider URLs containing 'meet' (case-insensitive)
+                if raw.to_lowercase().contains("meet") {
+                    // Resolve relative URLs
+                    if let Ok(base) = url::Url::parse(base_url) {
+                        if let Ok(resolved) = base.join(raw) {
+                            links.push(resolved.to_string());
+                        } else {
+                            links.push(raw.to_string());
+                        }
+                    } else {
+                        links.push(raw.to_string());
+                    }
+                }
+                idx = value_end + 1;
+                continue;
+            }
+        }
+        idx += 5; // skip past 'href=' to continue searching
+    }
+
+    // Deduplicate
+    links.sort();
+    links.dedup();
+    links
 }
 
 #[cfg(test)]

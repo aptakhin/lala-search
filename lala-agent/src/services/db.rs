@@ -84,6 +84,52 @@ impl ScyllaClient {
         Ok(None)
     }
 
+    /// Return total number of rows in `crawled_pages`.
+    pub async fn count_crawled_pages(&self) -> Result<i64, QueryError> {
+        let query = "SELECT COUNT(*) FROM crawled_pages";
+
+        let result = self.session.query_unpaged(query, &[]).await?;
+        let rows_result = match result.into_rows_result() {
+            Ok(r) => r,
+            Err(_) => return Ok(0),
+        };
+
+        // Expect a single row with a single bigint column
+        let rows = rows_result.rows::<(i64,)>().map_err(|e| {
+            QueryError::DbError(
+                scylla::transport::errors::DbError::Other(0),
+                format!("Failed to deserialize count rows: {}", e),
+            )
+        })?;
+
+        if let Some(row_res) = rows.into_iter().next() {
+            let (count,) = row_res.map_err(|e| {
+                QueryError::DbError(
+                    scylla::transport::errors::DbError::Other(0),
+                    format!("Failed to parse count row: {}", e),
+                )
+            })?;
+
+            return Ok(count);
+        }
+
+        Ok(0)
+    }
+
+    /// Convenience method to check if a crawled page exists by domain + url_path
+    pub async fn crawled_page_exists(
+        &self,
+        domain: &str,
+        url_path: &str,
+    ) -> Result<bool, QueryError> {
+        // Reuse get_crawled_page implementation
+        match self.get_crawled_page(domain, url_path).await {
+            Ok(Some(_)) => Ok(true),
+            Ok(None) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Insert an entry into the crawl queue
     pub async fn insert_queue_entry(&self, entry: &CrawlQueueEntry) -> Result<(), QueryError> {
         let query = "INSERT INTO crawl_queue
