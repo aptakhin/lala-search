@@ -398,6 +398,36 @@ let db_host = env::var("CASSANDRA_HOSTS")
 docker-compose.yml # Uses env_file: .env
 ```
 
+### Docker Compose Usage
+
+**CRITICAL**: Always use `docker compose` (two words) instead of the legacy `docker-compose` (hyphenated).
+
+#### ✅ GOOD - Modern Docker Compose V2:
+```bash
+docker compose up -d
+docker compose down
+docker compose logs -f
+docker compose ps
+```
+
+#### ❌ BAD - Legacy Docker Compose V1:
+```bash
+docker-compose up -d      # Don't use hyphenated version
+docker-compose down       # Don't use hyphenated version
+```
+
+**Why:**
+- Docker Compose V2 (`docker compose`) is integrated into Docker CLI since 2020
+- V1 (`docker-compose`) is deprecated and requires separate installation
+- V2 is faster, better integrated, and actively maintained
+- V2 is the default in all modern Docker installations
+
+**Apply everywhere:**
+- Documentation (README.md, docs/*.md)
+- Scripts and automation
+- CI/CD pipelines
+- Comments and examples
+
 ### Cross-Platform Compatibility
 
 **CRITICAL**: Code must work across all major platforms and architectures.

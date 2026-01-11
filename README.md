@@ -44,14 +44,18 @@ lalasearch/
 Run LalaSearch with Docker Compose (includes Apache Cassandra):
 
 ```bash
+# Copy environment configuration
+cp .env.example .env
+# Edit .env if needed for your local setup
+
 # Start all services
-docker-compose up -d
+docker compose up -d
 
 # Check status
-docker-compose ps
+docker compose ps
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # Test the agent
 curl http://localhost:3000/version
@@ -122,7 +126,7 @@ Expected response:
 The lala-agent will automatically pick up entries from the queue and process them. You can monitor the agent logs:
 
 ```bash
-docker-compose logs -f lala-agent
+docker compose logs -f lala-agent
 ```
 
 #### Viewing Queue Status via Database

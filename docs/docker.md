@@ -18,10 +18,18 @@ The Docker setup includes:
 
 ## Quick Start
 
-### 1. Start All Services
+### 1. Configure Environment
 
 ```bash
-docker-compose up -d
+# Copy environment configuration
+cp .env.example .env
+# Edit .env if needed for your local setup
+```
+
+### 2. Start All Services
+
+```bash
+docker compose up -d
 ```
 
 This will:
@@ -30,10 +38,10 @@ This will:
 3. Initialize the database schema
 4. Start the lala-agent service
 
-### 2. Check Service Status
+### 3. Check Service Status
 
 ```bash
-docker-compose ps
+docker compose ps
 ```
 
 Expected output:
@@ -44,18 +52,18 @@ lalasearch-cassandra        Up        0.0.0.0:9042->9042/tcp, ...
 lalasearch-cassandra-init   Exited (0)
 ```
 
-### 3. View Logs
+### 4. View Logs
 
 ```bash
 # All services
-docker-compose logs -f
+docker compose logs -f
 
 # Specific service
-docker-compose logs -f lala-agent
-docker-compose logs -f scylla
+docker compose logs -f lala-agent
+docker compose logs -f scylla
 ```
 
-### 4. Test the Agent
+### 5. Test the Agent
 
 ```bash
 # Check version endpoint
@@ -133,7 +141,7 @@ cqlsh:lalasearch> SELECT * FROM crawl_queue;
 
 ### Hot Reload (Development Mode)
 
-Uncomment the `command` override in `docker-compose.yml`:
+Uncomment the `command` override in `docker compose.yml`:
 
 ```yaml
 lala-agent:
@@ -144,7 +152,7 @@ lala-agent:
 Then restart:
 
 ```bash
-docker-compose restart lala-agent
+docker compose restart lala-agent
 ```
 
 Now source code changes will automatically trigger rebuilds.
@@ -153,23 +161,23 @@ Now source code changes will automatically trigger rebuilds.
 
 ```bash
 # Run tests in container
-docker-compose exec lala-agent cargo test
+docker compose exec lala-agent cargo test
 
 # Run specific test
-docker-compose exec lala-agent cargo test test_name
+docker compose exec lala-agent cargo test test_name
 
 # Run with output
-docker-compose exec lala-agent cargo test -- --nocapture
+docker compose exec lala-agent cargo test -- --nocapture
 ```
 
 ### Rebuilding the Agent
 
 ```bash
 # Rebuild image
-docker-compose build lala-agent
+docker compose build lala-agent
 
 # Rebuild and restart
-docker-compose up -d --build lala-agent
+docker compose up -d --build lala-agent
 ```
 
 ## Common Operations
@@ -177,21 +185,21 @@ docker-compose up -d --build lala-agent
 ### Stop All Services
 
 ```bash
-docker-compose down
+docker compose down
 ```
 
 ### Stop and Remove Data
 
 ```bash
 # WARNING: This deletes all crawled data!
-docker-compose down -v
+docker compose down -v
 ```
 
 ### Restart a Service
 
 ```bash
-docker-compose restart lala-agent
-docker-compose restart scylla
+docker compose restart lala-agent
+docker compose restart scylla
 ```
 
 ### Scale Workers (Future)
@@ -199,7 +207,7 @@ docker-compose restart scylla
 When worker mode is implemented:
 
 ```bash
-docker-compose up -d --scale lala-agent=3
+docker compose up -d --scale lala-agent=3
 ```
 
 ## Troubleshooting
@@ -211,7 +219,7 @@ docker-compose up -d --scale lala-agent=3
 **Solution**:
 ```bash
 # Wait for Apache Cassandra to fully start (can take 60-90 seconds)
-docker-compose logs -f scylla
+docker compose logs -f scylla
 
 # Look for: "Starting listening for CQL clients"
 ```
@@ -220,12 +228,12 @@ docker-compose logs -f scylla
 
 **Check network connectivity:**
 ```bash
-docker-compose exec lala-agent ping scylla
+docker compose exec lala-agent ping scylla
 ```
 
 **Check Apache Cassandra health:**
 ```bash
-docker-compose exec scylla nodetool status
+docker compose exec scylla nodetool status
 ```
 
 ### Out of Memory
@@ -249,7 +257,7 @@ netstat -ano | findstr :3000
 # Linux/Mac
 lsof -i :3000
 
-# Kill process or change port in docker-compose.yml
+# Kill process or change port in docker compose.yml
 ```
 
 ## Production Considerations
@@ -258,7 +266,7 @@ For production deployment:
 
 1. **Multi-stage Dockerfile**: Use smaller runtime image
 2. **Cassandra Cluster**: Multiple nodes with proper replication
-3. **Resource Limits**: Set memory/CPU limits in docker-compose
+3. **Resource Limits**: Set memory/CPU limits in docker compose
 4. **Monitoring**: Add Prometheus and Grafana
 5. **Secrets Management**: Use Docker secrets or external vault
 6. **Reverse Proxy**: Add nginx or traefik for HTTPS

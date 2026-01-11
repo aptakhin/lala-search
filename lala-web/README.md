@@ -43,7 +43,7 @@ lala-web/
 Start all services including the web frontend:
 
 ```bash
-docker-compose up -d --build
+docker compose up -d --build
 ```
 
 Access the web UI at: **http://localhost:8080**
@@ -67,7 +67,7 @@ This frontend has **zero npm dependencies**:
 ## Customization
 
 ### Change Port
-Edit `docker-compose.yml`:
+Edit `docker compose.yml`:
 ```yaml
 ports:
   - "8000:80"  # Change 8000 to your desired port
@@ -119,8 +119,8 @@ Edit the `searchApp()` Alpine component:
 To modify the interface:
 
 1. Edit `lala-web/index.html`
-2. Rebuild container: `docker-compose build lala-web`
-3. Restart service: `docker-compose up -d lala-web`
+2. Rebuild container: `docker compose build lala-web`
+3. Restart service: `docker compose up -d lala-web`
 4. Or mount as volume for live editing:
 
 ```yaml

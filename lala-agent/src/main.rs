@@ -108,17 +108,14 @@ async fn search_handler(
 #[tokio::main]
 async fn main() {
     // Get configuration from environment variables
-    // Support both CASSANDRA_HOSTS and legacy SCYLLA_HOSTS for backward compatibility
     let cassandra_hosts = env::var("CASSANDRA_HOSTS")
-        .or_else(|_| env::var("SCYLLA_HOSTS"))
-        .expect("CASSANDRA_HOSTS or SCYLLA_HOSTS environment variable must be set")
+        .expect("CASSANDRA_HOSTS environment variable must be set")
         .split(',')
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
 
     let cassandra_keyspace = env::var("CASSANDRA_KEYSPACE")
-        .or_else(|_| env::var("SCYLLA_KEYSPACE"))
-        .expect("CASSANDRA_KEYSPACE or SCYLLA_KEYSPACE environment variable must be set");
+        .expect("CASSANDRA_KEYSPACE environment variable must be set");
 
     let agent_mode = AgentMode::from_env();
 
