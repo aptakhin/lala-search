@@ -72,6 +72,15 @@ impl QueueProcessor {
     /// Process a single entry from the queue
     /// Returns true if an entry was processed, false if queue was empty
     async fn process_next_entry(&self) -> Result<bool> {
+        let count = self.db_client.count_crawled_pages().await?;
+        if count > 20 {
+            println!(
+                "Skipping queue processing: crawled_pages count {} > 20",
+                count
+            );
+            return Ok(false);
+        }
+
         // Get the next entry from the queue
         let entry = match self
             .db_client
