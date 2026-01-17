@@ -17,7 +17,8 @@
       "Bash(docker logs:*)",
       "Bash(python -m json.tool:*)",
       "Bash(cargo doc:*)",
-      "Bash(docker ps:*)"
+      "Bash(docker ps:*)",
+      "Bash(./tests/e2e/run_tests.sh:*)"
     ]
   }
 }

@@ -16,6 +16,19 @@ TEST_TIMEOUT = 60  # seconds
 REQUEST_TIMEOUT = 10  # seconds - timeout for individual HTTP requests
 
 
+def add_allowed_domain(domain: str, notes: str = "E2E test domain"):
+    """
+    Add a domain to the allowed_domains table via HTTP API.
+    """
+    response = httpx.post(
+        f"{AGENT_URL}/admin/allowed-domains",
+        json={"domain": domain, "notes": notes},
+        timeout=REQUEST_TIMEOUT
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def test_full_crawl_and_search_pipeline():
     """
     E2E test: Add URL to queue → Wait for crawl → Search → Verify results
@@ -35,16 +48,13 @@ def test_full_crawl_and_search_pipeline():
 
     print(f"\n1. Testing with URL: {test_url}")
 
-    # Step 1: Add domain to allowed list
+    # Step 1: Add domain to allowed list via HTTP API
     print(f"2. Adding domain '{test_domain}' to allowed list...")
-    response = httpx.post(
-        f"{AGENT_URL}/admin/allowed-domains",
-        json={"domain": test_domain},
-        timeout=REQUEST_TIMEOUT
-    )
-    assert response.status_code in [200, 201], \
-        f"Failed to add domain: {response.status_code} - {response.text}"
-    print("   ✓ Domain added")
+    try:
+        result = add_allowed_domain(test_domain)
+        print(f"   ✓ Domain added: {result['message']}")
+    except Exception as e:
+        pytest.fail(f"Failed to add domain: {e}")
 
     # Step 2: Add URL to crawl queue
     print(f"3. Adding URL to queue...")
@@ -67,9 +77,9 @@ def test_full_crawl_and_search_pipeline():
 
         # Search for content we know is on the page
         try:
-            response = httpx.get(
+            response = httpx.post(
                 f"{AGENT_URL}/search",
-                params={"q": search_term, "limit": 10},
+                json={"query": search_term, "limit": 10},
                 timeout=REQUEST_TIMEOUT
             )
 
@@ -97,9 +107,9 @@ def test_full_crawl_and_search_pipeline():
 
     # Step 4: Verify search quality (optional but good to check)
     print(f"5. Verifying search quality...")
-    response = httpx.get(
+    response = httpx.post(
         f"{AGENT_URL}/search",
-        params={"q": search_term, "limit": 10},
+        json={"query": search_term, "limit": 10},
         timeout=REQUEST_TIMEOUT
     )
 
@@ -119,9 +129,9 @@ def test_full_crawl_and_search_pipeline():
 
 def test_search_api_available():
     """Smoke test: Verify search API is accessible"""
-    response = httpx.get(
+    response = httpx.post(
         f"{AGENT_URL}/search",
-        params={"q": "test"},
+        json={"query": "test"},
         timeout=REQUEST_TIMEOUT
     )
     assert response.status_code == 200, "Search API should be accessible"

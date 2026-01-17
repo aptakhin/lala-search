@@ -58,7 +58,7 @@ async fn test_queue_processor_workflow() {
     );
 
     db_client
-        .insert_allowed_domain(&test_domain)
+        .insert_allowed_domain(&test_domain, "test", Some("Test domain"))
         .await
         .expect("Failed to insert test domain into allowed_domains");
     println!("✓ Set up allowed domain: {}", test_domain);
@@ -224,7 +224,7 @@ async fn test_full_crawl_workflow_with_storage() {
 
     // Set up allowed domain
     db_client
-        .insert_allowed_domain(&test_domain)
+        .insert_allowed_domain(&test_domain, "test", Some("Test domain"))
         .await
         .expect("Failed to insert test domain into allowed_domains");
     println!("✓ Set up allowed domain: {}", test_domain);
@@ -335,7 +335,7 @@ async fn test_queue_entry_workflow() {
     );
 
     db_client
-        .insert_allowed_domain(&test_domain)
+        .insert_allowed_domain(&test_domain, "test", Some("Test domain"))
         .await
         .expect("Failed to insert test domain into allowed_domains");
     println!("✓ Set up allowed domain: {}", test_domain);
@@ -458,7 +458,7 @@ async fn test_crawl_pipeline_end_to_end() {
 
     // Step 1: Setup - add allowed domain
     db_client
-        .insert_allowed_domain(&test_domain)
+        .insert_allowed_domain(&test_domain, "test", Some("Test domain"))
         .await
         .expect("Failed to insert allowed domain");
     println!("✓ Added allowed domain: {}", test_domain);

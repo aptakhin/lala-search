@@ -2,14 +2,17 @@
 // Copyright (c) 2026 Aleksandr Ptakhin
 
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::StatusCode,
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use chrono::Utc;
 use lala_agent::models::agent::AgentMode;
 use lala_agent::models::db::CrawlQueueEntry;
+use lala_agent::models::domain::{
+    AddDomainRequest, AddDomainResponse, DeleteDomainResponse, DomainInfo, ListDomainsResponse,
+};
 use lala_agent::models::queue::{AddToQueueRequest, AddToQueueResponse};
 use lala_agent::models::search::{SearchRequest, SearchResponse};
 use lala_agent::models::version::VersionResponse;
@@ -131,6 +134,87 @@ async fn search_handler(
             "Search service is not available".to_string(),
         ))
     }
+}
+
+async fn add_domain_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<AddDomainRequest>,
+) -> Result<Json<AddDomainResponse>, (StatusCode, String)> {
+    // Validate domain format
+    if payload.domain.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Domain cannot be empty".to_string(),
+        ));
+    }
+
+    // Insert domain into database
+    state
+        .db_client
+        .insert_allowed_domain(&payload.domain, "api", payload.notes.as_deref())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Database error: {}", e),
+            )
+        })?;
+
+    Ok(Json(AddDomainResponse {
+        success: true,
+        message: "Domain added to allowed list successfully".to_string(),
+        domain: payload.domain,
+    }))
+}
+
+async fn list_domains_handler(
+    State(state): State<AppState>,
+) -> Result<Json<ListDomainsResponse>, (StatusCode, String)> {
+    let domains = state.db_client.list_allowed_domains().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {}", e),
+        )
+    })?;
+
+    let domain_infos: Vec<DomainInfo> = domains
+        .into_iter()
+        .map(|(domain, added_by, notes, added_at)| DomainInfo {
+            domain,
+            added_at,
+            added_by,
+            notes,
+        })
+        .collect();
+
+    let count = domain_infos.len();
+
+    Ok(Json(ListDomainsResponse {
+        domains: domain_infos,
+        count,
+    }))
+}
+
+async fn delete_domain_handler(
+    State(state): State<AppState>,
+    Path(domain): Path<String>,
+) -> Result<Json<DeleteDomainResponse>, (StatusCode, String)> {
+    state
+        .db_client
+        .delete_allowed_domain(&domain)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Database error: {}", e),
+            )
+        })?;
+
+    Ok(Json(DeleteDomainResponse {
+        success: true,
+        message: "Domain removed from allowed list successfully".to_string(),
+        domain,
+    }))
 }
 
 #[tokio::main]
@@ -295,6 +379,12 @@ fn create_app(state: AppState) -> Router {
         .route("/version", get(version_handler))
         .route("/queue/add", post(add_to_queue_handler))
         .route("/search", post(search_handler))
+        .route("/admin/allowed-domains", post(add_domain_handler))
+        .route("/admin/allowed-domains", get(list_domains_handler))
+        .route(
+            "/admin/allowed-domains/{domain}",
+            delete(delete_domain_handler),
+        )
         .with_state(state)
 }
 

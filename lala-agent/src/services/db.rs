@@ -59,10 +59,17 @@ impl CassandraClient {
         Self::new(config.hosts, config.keyspace).await
     }
 
-    /// Insert an allowed domain (used for test setup)
-    pub async fn insert_allowed_domain(&self, domain: &str) -> Result<(), QueryError> {
-        let query = "INSERT INTO allowed_domains (domain, added_at, added_by, notes) VALUES (?, toTimestamp(now()), 'test', 'Test domain')";
-        self.session.query_unpaged(query, (domain,)).await?;
+    /// Insert an allowed domain
+    pub async fn insert_allowed_domain(
+        &self,
+        domain: &str,
+        added_by: &str,
+        notes: Option<&str>,
+    ) -> Result<(), QueryError> {
+        let query = "INSERT INTO allowed_domains (domain, added_at, added_by, notes) VALUES (?, toTimestamp(now()), ?, ?)";
+        self.session
+            .query_unpaged(query, (domain, added_by, notes))
+            .await?;
         Ok(())
     }
 
@@ -71,6 +78,49 @@ impl CassandraClient {
         let query = "DELETE FROM allowed_domains WHERE domain = ?";
         self.session.query_unpaged(query, (domain,)).await?;
         Ok(())
+    }
+
+    /// List all allowed domains
+    pub async fn list_allowed_domains(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>, Option<String>)>, QueryError> {
+        let query = "SELECT domain, added_by, notes, added_at FROM allowed_domains";
+        let result = self.session.query_unpaged(query, &[]).await?;
+        let rows_result = match result.into_rows_result() {
+            Ok(rows_result) => rows_result,
+            Err(_) => return Ok(Vec::new()),
+        };
+
+        let rows_vec = rows_result
+            .rows::<(String, Option<String>, Option<String>, Option<CqlTimestamp>)>()
+            .map_err(|e| {
+                QueryError::DbError(
+                    scylla::transport::errors::DbError::Other(0),
+                    format!("Failed to deserialize allowed domains: {}", e),
+                )
+            })?;
+
+        let mut domains = Vec::new();
+        for row in rows_vec {
+            let (domain, added_by, notes, added_at) = row.map_err(|e| {
+                QueryError::DbError(
+                    scylla::transport::errors::DbError::Other(0),
+                    format!("Failed to parse allowed domain row: {}", e),
+                )
+            })?;
+
+            // Convert CqlTimestamp to String if present
+            let added_at_str = added_at.map(|ts| {
+                let millis = ts.0;
+                let datetime = chrono::DateTime::from_timestamp_millis(millis)
+                    .unwrap_or_else(chrono::Utc::now);
+                datetime.to_rfc3339()
+            });
+
+            domains.push((domain, added_by, notes, added_at_str));
+        }
+
+        Ok(domains)
     }
 
     /// Delete a crawled page by domain and url_path (used for test cleanup)
@@ -548,7 +598,7 @@ mod tests {
 
         // Setup: Insert the test domain
         client
-            .insert_allowed_domain(&test_domain)
+            .insert_allowed_domain(&test_domain, "test", Some("Test domain"))
             .await
             .expect("Failed to insert test domain");
 
