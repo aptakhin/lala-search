@@ -1,9 +1,466 @@
-# Claude Code Instructions
+# Claude Code Guidelines for LalaSearch
 
-Follow the guidelines defined in [.claude/guidelines.md](.claude/guidelines.md)
+## Critical Rules
 
-## Critical Rule
+### 1. ASK QUESTIONS FIRST
 
-**ALWAYS commit changes after completing a task!**
+**IMPORTANT**: Don't blindly execute requests. Always think critically about the best solution.
 
-Every completed task must end with a git commit. Never consider work done until it is committed.
+Ask clarifying questions when:
+1. **Multiple approaches exist**: The request could be solved in different ways
+2. **Potential conflicts**: The request might conflict with existing patterns or architecture
+3. **Sub-optimal solution**: You see a better approach than what was requested
+4. **Missing context**: You need more information to provide the best solution
+5. **Trade-offs involved**: The solution has important implications to discuss
+6. **Unclear requirements**: The request is ambiguous or could be interpreted differently
+
+**Examples:**
+
+**Good** - Asking when there's a better approach:
+- User: "Add a new config file for the version"
+- Assistant: "I notice the version is currently hardcoded. Would you prefer to extract it from Cargo.toml using a build script instead? That would keep it in sync automatically."
+
+**Good** - Asking about conflicts:
+- User: "Let's use JSON for configuration"
+- Assistant: "I see we're using TOML for Cargo.toml. Should we use TOML for consistency, or is there a specific reason to prefer JSON?"
+
+**Bad** - Executing without thinking:
+- User: "Create a new file for every route handler"
+- Assistant: *Creates files without asking if organizing by feature or by type would be better*
+
+**Principle**: You're not just a code executor - you're a development partner. Use your knowledge to suggest better alternatives, point out potential issues, and clarify ambiguous requirements.
+
+**Balance**: Ask questions when they add value, but don't over-question trivial decisions.
+
+### 2. ALWAYS COMMIT CHANGES
+
+**Every completed task must end with a git commit. Never consider work done until it is committed!**
+
+## Technology Choices: Open Source Solutions Only
+
+**CRITICAL**: LalaSearch is a fully open source project. All dependencies and technical solutions must be open source.
+
+### Why Open Source
+
+1. **Transparency**: Anyone can audit the code and security
+2. **Community support**: Active communities provide better long-term support
+3. **No vendor lock-in**: Freedom to modify, fork, or migrate
+4. **Cost**: No licensing fees or proprietary restrictions
+5. **Licensing compliance**: Ensures the project remains distributable under its open source license
+
+### GOOD - Open Source Solutions
+- **PostgreSQL** - Open source relational database
+- **Redis** - Open source in-memory data store
+- **Elasticsearch** - Open source search and analytics engine
+- **Apache Kafka** - Open source event streaming platform
+- **Meilisearch** - Open source search engine
+- **MinIO** - Open source object storage (S3-compatible)
+- **Docker** - Open source containerization platform
+- **Prometheus** - Open source monitoring and metrics
+
+### AVOID - Proprietary/Closed Source Solutions
+- **ScyllaDB** - Changed from AGPL to proprietary "source-available" license in Dec 2024 (use Apache Cassandra instead)
+- **DataStax Astra** - Proprietary managed database service
+- **Splunk** - Proprietary log aggregation and analysis
+- **New Relic** - Proprietary application monitoring
+- **Datadog** - Proprietary infrastructure monitoring
+
+### When Open Source Isn't Available
+
+If no viable open source solution exists:
+1. **Ask first**: Before choosing a proprietary tool, discuss with the team
+2. **Document the decision**: Add a comment explaining why open source wasn't suitable
+3. **Minimize impact**: Keep proprietary tools isolated to specific components
+4. **Plan migration path**: Document how to eventually switch to an open source alternative
+
+## Test-Driven Development (TDD) Workflow
+
+All features follow a strict TDD cycle to ensure code quality, maintainability, and correctness.
+
+### TDD Cycle
+
+```
+1. Analyze → 2. Red → 3. Green → 4. Refactor → (repeat)
+```
+
+#### 1. Analyze Phase
+Before writing any code, identify and document:
+- **Corner cases**: Edge conditions that might break the feature
+- **Error scenarios**: Invalid inputs, network failures, resource exhaustion
+- **Happy path**: Expected normal operation
+- **Boundary conditions**: Limits, empty states, maximum values
+- **Concurrency issues**: Race conditions, deadlocks (for async code)
+
+#### 2. Red Phase (Failing Test)
+- Write a test that captures ONE specific behavior or corner case
+- The test MUST fail initially (compile errors count as failures)
+- Keep tests focused and isolated
+- Use descriptive test names: `test_<scenario>_<expected_outcome>`
+
+#### 3. Green Phase (Minimal Implementation)
+- Write the MINIMUM code to make the test pass
+- Don't worry about perfection or optimization
+- Avoid implementing features not covered by current tests
+- Run tests frequently: `cargo test`
+
+#### 4. Refactor Phase (Optional)
+- Improve code quality without changing behavior
+- Extract duplicated code
+- Improve naming and structure
+- Tests must still pass after refactoring
+- Skip if code is already clean
+
+## Code Quality Standards
+
+### Formatting
+- **Tool**: `rustfmt`
+- **Command**: `cargo fmt`
+- **Enforcement**: Runs automatically in pre-commit hook
+
+### Linting
+- **Tool**: `clippy`
+- **Command**: `cargo clippy -- -D warnings`
+- **Standard**: All warnings treated as errors
+
+### Testing
+- **Unit tests**: Co-located with code in same file
+- **Integration tests**: In `tests/` directory
+- **Command**: `cargo test`
+- **Coverage**: Aim for high coverage, especially for critical paths
+
+## Pre-Commit Workflow
+
+Before every commit, run:
+```bash
+./scripts/pre-commit.sh
+```
+
+This runs:
+- `cargo fmt --check` (formatting)
+- `cargo clippy -- -D warnings` (linting)
+- `cargo test` (all tests)
+
+If any check fails, fix the issues before committing.
+
+## Completing Features
+
+**Every feature MUST be completed with**:
+1. Update README.md if project structure changed (new files, directories, tests)
+2. Run `./scripts/pre-commit.sh`
+3. Commit: `git add . && git commit -m "feat: description"`
+
+**Never consider a feature complete until it is committed!**
+
+## Project Structure
+
+```
+lalasearch/
+├── CLAUDE.md                     # This file - all guidelines
+├── docs/
+│   ├── overview.md               # Project vision and architecture
+│   ├── docker.md                 # Docker setup and usage guide
+│   └── versioning.md             # Version management
+├── lala-agent/                   # Core agent implementation
+│   ├── src/
+│   │   ├── main.rs               # HTTP server entry point
+│   │   ├── lib.rs                # Library root
+│   │   ├── models/               # Data models
+│   │   └── services/             # Business logic
+│   ├── tests/                    # Integration tests
+│   ├── Dockerfile                # Container image definition
+│   └── Cargo.toml                # Rust dependencies
+├── docker/                       # Docker configuration
+│   └── cassandra/
+│       └── schema.cql            # Apache Cassandra database schema
+├── docker-compose.yml            # Multi-container setup
+├── .env.example                  # Environment variables template
+└── scripts/
+    └── pre-commit.sh             # Pre-commit validation script
+```
+
+## Key Principles
+
+1. Tests before code
+2. High code quality (zero clippy warnings)
+3. Proper formatting (rustfmt)
+4. Complete features with commits
+5. Document architectural decisions
+
+## Error Handling & Data Integrity
+
+**Never assume what's optional!** Treat all operations as critical for downstream processes.
+
+- If a step fails (storage, database, search indexing), fail the entire operation
+- Return failed items to queue with `attempt_count += 1` for retry
+- Log errors to dedicated error tables for observability
+- Don't silently skip failures or treat them as "non-critical"
+
+## Command Verification
+
+**Before suggesting commands to the user, always verify them yourself first!**
+
+- Run the command to ensure it works
+- Check for typos, correct paths, and valid syntax
+- If a command fails, fix it before presenting to the user
+- Don't give untested commands - execute them directly when possible
+
+## Best Practices
+
+1. **Write tests first**: No production code without a failing test
+2. **One test, one behavior**: Keep tests focused on a single concern
+3. **Merge tests with identical inputs**: When multiple assertions test the same request/input without variations, combine them into one test
+4. **Descriptive names**: Tests should document behavior
+5. **Fast feedback**: Run tests frequently during development
+6. **Refactor with confidence**: Tests protect against regressions
+7. **Commit working code**: All tests pass before committing
+8. **Document assumptions**: Use comments for non-obvious decisions
+9. **Always finish with commit**: Run pre-commit.sh and commit before moving to next feature
+
+## Integration Tests
+
+### Reuse Existing Code
+
+**CRITICAL**: Integration tests must reuse existing production code, not reimplement it.
+
+**BAD** - Reimplementing logic in tests:
+```rust
+// Don't rebuild workflows step-by-step in tests
+#[tokio::test]
+async fn test_crawl_workflow() {
+    // Manually creating queue entries
+    let entry = CrawlQueueEntry { ... };
+    db_client.insert_queue_entry(&entry).await?;
+
+    // Manually simulating crawl
+    let content = fetch_url(&url).await?;
+
+    // Manually uploading to storage
+    let storage_id = storage_client.upload_content(&content, &url).await?;
+
+    // Manually creating crawled page
+    let page = CrawledPage { storage_id: Some(storage_id), ... };
+    db_client.upsert_crawled_page(&page).await?;
+}
+```
+
+**GOOD** - Using existing high-level services:
+```rust
+// Use production code to test production behavior
+#[tokio::test]
+async fn test_crawl_workflow() {
+    let processor = QueueProcessor::with_storage(db_client, storage_client, ...);
+
+    // Use the actual production workflow
+    db_client.insert_queue_entry(&entry).await?;
+    processor.process_next_entry().await?;
+
+    // Verify results
+    let page = db_client.get_crawled_page(&domain, &path).await?;
+    assert!(page.is_some());
+}
+```
+
+**Why this matters**:
+- Tests verify actual production behavior, not a parallel implementation
+- Bugs in production code get caught, not masked by test-specific implementations
+- Less code to maintain (single implementation, not two)
+- Tests stay in sync with production automatically
+
+### Proper Environment Setup
+
+**CRITICAL**: Every test must set up its own prerequisites. "May be skipped" or "might not work" is NOT acceptable.
+
+**BAD** - Tests with uncertain prerequisites:
+```rust
+/// Prerequisites:
+/// - allowed_domains table should have the test domain (or this test may be skipped)
+#[tokio::test]
+async fn test_queue_workflow() {
+    // Retrieve entry (note: may get a different entry if queue is not empty)
+    let retrieved = db_client.get_next_queue_entry().await?;
+}
+```
+
+**GOOD** - Tests that set up their own environment:
+```rust
+#[tokio::test]
+async fn test_queue_workflow() {
+    // Setup: Ensure test domain is allowed
+    db_client.insert_allowed_domain("test.example.com").await
+        .expect("Failed to set up test domain");
+
+    // Now run the actual test with known state
+    let entry = CrawlQueueEntry { domain: "test.example.com".into(), ... };
+    db_client.insert_queue_entry(&entry).await?;
+
+    let retrieved = db_client.get_next_queue_entry().await?;
+    assert_eq!(retrieved.unwrap().domain, "test.example.com");
+
+    // Cleanup
+    db_client.delete_allowed_domain("test.example.com").await?;
+}
+```
+
+**Principles**:
+1. **Tests own their environment**: Set up all prerequisites in the test itself
+2. **No external dependencies**: Don't rely on pre-existing data or manual setup
+3. **Deterministic results**: Tests must produce the same result every run
+4. **Clean state**: Either clean up after tests, or use unique identifiers to avoid collisions
+5. **Fail explicitly**: If setup fails, the test should fail with a clear error, not skip silently
+
+## Type Safety: Avoid Magic Strings
+
+**IMPORTANT**: Never use raw string comparisons for configuration values or enum-like states.
+
+**BAD** - Magic strings:
+```rust
+let agent_mode = env::var("AGENT_MODE").unwrap_or_else(|_| "all".to_string());
+if agent_mode == "worker" || agent_mode == "all" {
+    // start worker
+}
+```
+
+**GOOD** - Use enums:
+```rust
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum AgentMode {
+    Worker,
+    Manager,
+    All,
+}
+
+impl AgentMode {
+    fn from_env() -> Self {
+        match env::var("AGENT_MODE").as_deref().unwrap_or("all") {
+            "worker" => AgentMode::Worker,
+            "manager" => AgentMode::Manager,
+            _ => AgentMode::All,
+        }
+    }
+
+    fn should_process_queue(&self) -> bool {
+        matches!(self, AgentMode::Worker | AgentMode::All)
+    }
+}
+```
+
+**Benefits**:
+- Compiler enforces exhaustiveness checking
+- No runtime typos or invalid values
+- Self-documenting code
+- Easy refactoring (compiler catches all usages)
+
+## Environment Variables Management
+
+**CRITICAL**: Never use default values directly in code. Always use environment variables for configuration.
+
+### Standard Approach
+
+1. **Create `.env` file** (gitignored) for local development:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Maintain `.env.example`** with all required variables and documentation
+
+3. **Docker Compose integration** using `env_file`:
+   ```yaml
+   services:
+     lala-agent:
+       env_file:
+         - .env
+   ```
+
+**BAD** - Hardcoded defaults:
+```rust
+let db_host = env::var("DB_HOST").unwrap_or("127.0.0.1:9042".to_string());
+```
+
+**GOOD** - Environment variables only:
+```rust
+let db_host = env::var("CASSANDRA_HOSTS")
+    .expect("CASSANDRA_HOSTS environment variable must be set");
+```
+
+### File Structure
+```
+.env.example       # Committed - Template with all variables documented
+.env               # Gitignored - Your local configuration
+.gitignore         # Must include .env
+docker-compose.yml # Uses env_file: .env
+```
+
+## Docker Compose Usage
+
+**CRITICAL**: Always use `docker compose` (two words) instead of the legacy `docker-compose` (hyphenated).
+
+**GOOD** - Modern Docker Compose V2:
+```bash
+docker compose up -d
+docker compose down
+docker compose logs -f
+```
+
+**BAD** - Legacy Docker Compose V1:
+```bash
+docker-compose up -d      # Don't use hyphenated version
+```
+
+## Cross-Platform Compatibility
+
+**CRITICAL**: Code must work across all major platforms and architectures.
+
+**BAD** - Local-only fixes:
+```rust
+#[cfg(target_os = "windows")]
+let config_path = "C:\\Users\\...";
+
+let db_host = "127.0.0.1:9042";  // Fails in Docker
+```
+
+**GOOD** - Cross-platform solutions:
+```rust
+let config_path = env::var("CONFIG_PATH")
+    .unwrap_or_else(|_| "config.toml".to_string());
+
+let db_host = env::var("CASSANDRA_HOSTS")
+    .expect("CASSANDRA_HOSTS must be set");
+```
+
+**Target Platforms**:
+- Linux (x86_64, ARM64)
+- macOS (Intel, Apple Silicon)
+- Windows (x86_64, ARM64)
+- Docker containers (Alpine, Debian base images)
+
+## Commands Reference
+
+```bash
+# Run tests
+cargo test
+
+# Run specific test
+cargo test test_name
+
+# Format code
+cargo fmt
+
+# Lint code
+cargo clippy -- -D warnings
+
+# Build project
+cargo build
+
+# Run project
+cargo run
+
+# Pre-commit checks
+./scripts/pre-commit.sh
+```
+
+## Resources
+
+- [Rust Book](https://doc.rust-lang.org/book/)
+- [Axum Documentation](https://docs.rs/axum/)
+- [Tokio Tutorial](https://tokio.rs/tokio/tutorial)
+- [Test-Driven Development](https://en.wikipedia.org/wiki/Test-driven_development)
