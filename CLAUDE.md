@@ -406,6 +406,28 @@ docker compose logs -f
 docker-compose up -d      # Don't use hyphenated version
 ```
 
+### Always Use --build Flag
+
+**CRITICAL**: Always use `--build` flag when starting services to ensure fresh builds with latest code and environment variables.
+
+**GOOD** - Always rebuild:
+```bash
+docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build lala-agent
+```
+
+**BAD** - Using cached builds:
+```bash
+docker compose up -d                    # May use stale cached build
+docker compose restart lala-agent       # Doesn't rebuild, just restarts
+```
+
+**Why this matters**:
+- Ensures environment variables are properly read from docker-compose.yml overrides
+- Picks up latest code changes without manual rebuild steps
+- Prevents subtle bugs from cached builds with old configuration
+- Standard practice for CI/CD pipelines
+
 ## Cross-Platform Compatibility
 
 **CRITICAL**: Code must work across all major platforms and architectures.

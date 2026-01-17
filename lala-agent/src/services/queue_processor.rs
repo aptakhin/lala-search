@@ -373,6 +373,12 @@ impl QueueProcessor {
         match url::Url::parse(link) {
             Ok(parsed) => {
                 let domain = parsed.host_str().unwrap_or("").to_string();
+
+                // Skip URLs without a valid domain
+                if domain.is_empty() {
+                    return;
+                }
+
                 let url_path = parsed.path().to_string();
 
                 // Check if domain is allowed

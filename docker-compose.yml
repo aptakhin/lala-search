@@ -10,7 +10,6 @@ services:
       - "9042:9042"  # CQL native transport
     volumes:
       - cassandra-data:/var/lib/cassandra
-      - ./docker/cassandra/schema_test.cql:/schema_test.cql:ro
     environment:
       - CASSANDRA_CLUSTER_NAME=lalasearch
       - CASSANDRA_DC=datacenter1
@@ -93,13 +92,17 @@ services:
       cassandra:
         condition: service_healthy
     volumes:
-      - ./docker/cassandra/schema.cql:/schema.cql:ro
+      - ./docker/cassandra/schema.cql:/schema.cql.template:ro
+    environment:
+      - KEYSPACE_NAME=${CASSANDRA_KEYSPACE:-lalasearch}
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
         echo 'Waiting for Cassandra to be ready...'
         sleep 10
-        echo 'Initializing Cassandra schema...'
+        echo 'Initializing Cassandra schema for keyspace: '$$KEYSPACE_NAME
+        # Substitute KEYSPACE_NAME in template
+        sed "s/\$${KEYSPACE_NAME}/$$KEYSPACE_NAME/g" /schema.cql.template > /schema.cql
         cqlsh cassandra -f /schema.cql
         echo 'Schema initialized successfully!'
     networks:

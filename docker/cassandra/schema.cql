@@ -2,13 +2,14 @@
 -- Copyright (c) 2026 Aleksandr Ptakhin
 
 -- Create keyspace for LalaSearch
-CREATE KEYSPACE IF NOT EXISTS lalasearch
+-- Note: KEYSPACE_NAME is replaced at runtime
+CREATE KEYSPACE IF NOT EXISTS ${KEYSPACE_NAME}
 WITH replication = {
     'class': 'SimpleStrategy',
     'replication_factor': 1
 };
 
-USE lalasearch;
+USE ${KEYSPACE_NAME};
 
 -- Table for storing crawled pages metadata
 -- Tracks which pages have been crawled and when they need to be re-indexed

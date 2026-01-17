@@ -2,7 +2,7 @@
 # End-to-End Test Runner for LalaSearch
 # Ensures Docker services are running and executes E2E tests
 
-set -euo pipefail
+set -exuo pipefail
 
 # Colors for output
 RED='\033[0;31m'
@@ -74,24 +74,19 @@ fi
 echo -e "${GREEN}✓ Docker Compose is available${NC}"
 echo ""
 
-# Step 2: Start Docker Compose services with test configuration
+# Step 2: Start base Docker Compose services (without agent)
 echo "Step 2: Checking Docker services..."
 cd "$PROJECT_ROOT"
 
-if ! docker compose ps --status running | grep -q "lalasearch-agent"; then
-    echo -e "${YELLOW}Starting Docker Compose services with test configuration...${NC}"
-    docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
+if ! docker compose ps --status running | grep -q "lalasearch-cassandra"; then
+    echo -e "${YELLOW}Starting base services (Cassandra, Meilisearch, MinIO)...${NC}"
+    docker compose up -d cassandra meilisearch minio --build
 
-    # Wait for critical services
-    wait_for_service "LalaSearch Agent" "$AGENT_URL/version" || exit 1
+    # Wait for base services
+    wait_for_service "Cassandra" "http://localhost:9042" 2>/dev/null || sleep 15  # Cassandra takes time
     wait_for_service "Meilisearch" "http://localhost:7700/health" || exit 1
 else
-    echo -e "${GREEN}✓ Docker services are already running${NC}"
-
-    # Restart agent with test configuration
-    echo -e "${YELLOW}Restarting agent with test configuration...${NC}"
-    docker compose -f docker-compose.yml -f docker-compose.test.yml up -d lala-agent
-    wait_for_service "LalaSearch Agent" "$AGENT_URL/version" || exit 1
+    echo -e "${GREEN}✓ Base services are already running${NC}"
 fi
 echo ""
 
@@ -99,61 +94,46 @@ echo ""
 echo "Step 3: Setting up test environment..."
 cd "$PROJECT_ROOT"
 
-# Create test keyspace in Cassandra if it doesn't exist
+# Create test keyspace in Cassandra using templated schema
 echo "Creating test keyspace in Cassandra..."
-docker exec lalasearch-cassandra cqlsh -f /schema_test.cql 2>/dev/null || {
-    # If schema_test.cql is not mounted, create it inline
-    docker exec lalasearch-cassandra cqlsh -e "
-        CREATE KEYSPACE IF NOT EXISTS lalasearch_test
-        WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
 
-        USE lalasearch_test;
+# Drop existing test keyspace to ensure clean state
+echo "Dropping existing test keyspace if it exists..."
+docker exec lalasearch-cassandra cqlsh -e "DROP KEYSPACE IF EXISTS lalasearch_test;" 2>/dev/null || true
 
-        CREATE TABLE IF NOT EXISTS allowed_domains (
-            domain text PRIMARY KEY, added_at timestamp, added_by text, notes text
-        );
-        CREATE TABLE IF NOT EXISTS crawl_queue (
-            domain text, url_path text, url text, priority int, added_at timestamp,
-            PRIMARY KEY (domain, url_path)
-        );
-        CREATE TABLE IF NOT EXISTS crawled_pages (
-            domain text, url_path text, url text, title text, http_status int,
-            content_hash text, crawled_at timestamp, storage_key text,
-            PRIMARY KEY (domain, url_path)
-        );
-        CREATE TABLE IF NOT EXISTS crawl_errors (
-            domain text, url_path text, url text, error_type text,
-            error_message text, attempted_at timestamp,
-            PRIMARY KEY (domain, url_path)
-        );
-        CREATE TABLE IF NOT EXISTS crawl_stats (
-            date date, hour int, domain text,
-            pages_crawled counter, pages_failed counter, bytes_downloaded counter,
-            PRIMARY KEY ((date, hour), domain)
-        );
-        CREATE TABLE IF NOT EXISTS robots_cache (
-            domain text PRIMARY KEY, content text, cached_at timestamp, expires_at timestamp
-        );
-    " >/dev/null 2>&1
-}
+# Copy schema template to container and apply substitution
+docker cp docker/cassandra/schema.cql lalasearch-cassandra:/tmp/schema.template
+docker exec lalasearch-cassandra bash -c "
+    sed 's/\\\${KEYSPACE_NAME}/lalasearch_test/g' /tmp/schema.template > /tmp/schema_test.cql
+    cqlsh -f /tmp/schema_test.cql
+"
+
 echo -e "${GREEN}✓ Test keyspace ready${NC}"
 
 # Clean test data (truncate tables for fresh test run)
 echo "Cleaning test data..."
-docker exec lalasearch-cassandra cqlsh -e "
-    USE lalasearch_test;
-    TRUNCATE allowed_domains;
-    TRUNCATE crawl_queue;
-    TRUNCATE crawled_pages;
-    TRUNCATE crawl_errors;
-    TRUNCATE crawl_stats;
-    TRUNCATE robots_cache;
-" >/dev/null 2>&1
+docker exec lalasearch-cassandra cqlsh -e "USE lalasearch_test; TRUNCATE allowed_domains; TRUNCATE crawl_queue; TRUNCATE crawled_pages; TRUNCATE crawl_errors; TRUNCATE crawl_stats; TRUNCATE robots_cache;" >/dev/null 2>&1
 echo -e "${GREEN}✓ Test data cleaned${NC}"
 echo ""
 
-# Step 4: Install Python dependencies with uv
-echo "Step 4: Installing Python dependencies..."
+# Step 4: Start agent with test configuration
+echo "Step 4: Starting agent with test configuration..."
+cd "$PROJECT_ROOT"
+
+# Stop and remove existing agent if running
+docker compose stop lala-agent 2>/dev/null || true
+docker compose rm -f lala-agent 2>/dev/null || true
+
+# Start agent with test configuration
+echo -e "${YELLOW}Starting agent with test environment...${NC}"
+docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build lala-agent
+
+# Wait for agent to be ready
+wait_for_service "LalaSearch Agent" "$AGENT_URL/version" || exit 1
+echo ""
+
+# Step 5: Install Python dependencies with uv
+echo "Step 5: Installing Python dependencies..."
 cd "$SCRIPT_DIR"
 
 echo "Installing dependencies with uv..."
@@ -161,17 +141,12 @@ uv sync
 echo -e "${GREEN}✓ Dependencies installed${NC}"
 echo ""
 
-# Step 5: Run the E2E tests with test environment variables
-echo "Step 5: Running E2E tests..."
+# Step 6: Run the E2E tests
+echo "Step 6: Running E2E tests..."
 echo "======================================"
 echo ""
 
 cd "$SCRIPT_DIR"
-
-# Export test environment variables to override defaults
-export TEST_AGENT_URL="${TEST_AGENT_URL:-http://localhost:3000}"
-export CASSANDRA_KEYSPACE="lalasearch_test"
-export MEILISEARCH_INDEX="documents_test"
 
 # Run tests with uv (manages venv automatically)
 uv run pytest test_system.py -v --tb=short

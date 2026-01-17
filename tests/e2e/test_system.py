@@ -87,15 +87,15 @@ def test_full_crawl_and_search_pipeline():
                 results = response.json()
 
                 # Check if we got results and our URL is in them
-                if results.get("hits") and len(results["hits"]) > 0:
-                    urls = [hit.get("url") for hit in results["hits"]]
+                if results.get("results") and len(results["results"]) > 0:
+                    urls = [result["document"].get("url") for result in results["results"]]
                     if test_url in urls:
                         elapsed = time.time() - start_time
                         print(f"   ✓ Page indexed and searchable ({elapsed:.1f}s)")
                         found = True
                         break
                     else:
-                        print(f"   ... Found {len(results['hits'])} results, waiting for our URL...")
+                        print(f"   ... Found {len(results['results'])} results, waiting for our URL...")
                 else:
                     print(f"   ... No results yet, waiting...")
         except httpx.HTTPError as e:
@@ -117,13 +117,13 @@ def test_full_crawl_and_search_pipeline():
     results = response.json()
 
     # Should have at least our page
-    assert len(results["hits"]) >= 1, "Should return at least one result"
+    assert len(results["results"]) >= 1, "Should return at least one result"
 
     # Our URL should be in the top results
-    top_urls = [hit["url"] for hit in results["hits"][:3]]
+    top_urls = [result["document"]["url"] for result in results["results"][:3]]
     assert test_url in top_urls, "Our URL should be in top 3 results"
 
-    print(f"   ✓ Found {len(results['hits'])} results, our URL in top 3")
+    print(f"   ✓ Found {len(results['results'])} results, our URL in top 3")
     print("\n✅ E2E test passed!")
 
 

@@ -269,7 +269,10 @@ async fn main() {
 async fn init_cassandra_client(hosts: &[String], keyspace: &str) -> Arc<CassandraClient> {
     match CassandraClient::new(hosts.to_vec(), keyspace.to_string()).await {
         Ok(client) => {
-            println!("Connected to Cassandra at {:?}", hosts);
+            println!(
+                "Connected to Cassandra at {:?} using keyspace '{}'",
+                hosts, keyspace
+            );
             Arc::new(client)
         }
         Err(e) => {
