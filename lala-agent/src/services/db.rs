@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Aleksandr Ptakhin
 
-use crate::models::db::{CrawlQueueEntry, CrawledPage};
+use crate::models::db::{CrawlError, CrawlQueueEntry, CrawledPage};
 use chrono::Timelike;
 use scylla::frame::value::{Counter, CqlTimestamp};
 use scylla::transport::errors::{NewSessionError, QueryError};
@@ -357,6 +357,72 @@ impl CassandraClient {
             created_at,
             updated_at,
         }))
+    }
+
+    /// Log a crawl error to the crawl_errors table
+    pub async fn log_crawl_error(&self, error: &CrawlError) -> Result<(), QueryError> {
+        let query = "INSERT INTO crawl_errors
+                     (domain, occurred_at, url, error_type, error_message, attempt_count, stack_trace)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)";
+
+        self.session
+            .query_unpaged(
+                query,
+                (
+                    error.domain.as_str(),
+                    error.occurred_at,
+                    error.url.as_str(),
+                    error.error_type.to_string(),
+                    error.error_message.as_str(),
+                    error.attempt_count,
+                    error.stack_trace.as_deref(),
+                ),
+            )
+            .await?;
+
+        // Also increment the failed counter in crawl_stats
+        self.increment_crawl_failed_stats(&error.domain).await?;
+
+        Ok(())
+    }
+
+    /// Increment the crawl_stats counter for pages_failed
+    async fn increment_crawl_failed_stats(&self, domain: &str) -> Result<(), QueryError> {
+        let now = chrono::Utc::now();
+        let date = now.date_naive();
+        let hour = now.hour() as i32;
+
+        let query = "UPDATE crawl_stats
+                     SET pages_failed = pages_failed + 1
+                     WHERE date = ? AND hour = ? AND domain = ?";
+
+        self.session
+            .query_unpaged(query, (date, hour, domain))
+            .await?;
+
+        Ok(())
+    }
+
+    /// Re-queue an entry with incremented attempt count for retry
+    /// Schedules the retry with exponential backoff based on attempt count
+    pub async fn requeue_with_retry(&self, entry: &CrawlQueueEntry) -> Result<(), QueryError> {
+        let now = chrono::Utc::now();
+
+        // Exponential backoff: 1min, 2min, 4min, 8min, etc.
+        let backoff_minutes = 2i64.pow(entry.attempt_count as u32);
+        let scheduled_at = now + chrono::Duration::minutes(backoff_minutes);
+
+        let new_entry = CrawlQueueEntry {
+            priority: entry.priority + 1, // Lower priority for retries
+            scheduled_at: CqlTimestamp(scheduled_at.timestamp_millis()),
+            url: entry.url.clone(),
+            domain: entry.domain.clone(),
+            last_attempt_at: Some(CqlTimestamp(now.timestamp_millis())),
+            attempt_count: entry.attempt_count + 1,
+            created_at: entry.created_at,
+        };
+
+        self.insert_queue_entry(&new_entry).await
     }
 }
 

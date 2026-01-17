@@ -43,3 +43,48 @@ pub struct CrawledPage {
     pub created_at: CqlTimestamp,
     pub updated_at: CqlTimestamp,
 }
+
+/// Error types for crawl operations
+#[derive(Debug, Clone, PartialEq)]
+pub enum CrawlErrorType {
+    /// Failed to fetch the URL (network error, timeout, etc.)
+    FetchError,
+    /// Failed to upload content to S3 storage
+    StorageError,
+    /// Failed to save to Cassandra database
+    DatabaseError,
+    /// Failed to index in search engine
+    SearchIndexError,
+    /// robots.txt disallowed crawling
+    RobotsDisallowed,
+    /// URL parsing or validation error
+    InvalidUrl,
+    /// Unknown or unexpected error
+    Unknown,
+}
+
+impl std::fmt::Display for CrawlErrorType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CrawlErrorType::FetchError => write!(f, "fetch_error"),
+            CrawlErrorType::StorageError => write!(f, "storage_error"),
+            CrawlErrorType::DatabaseError => write!(f, "database_error"),
+            CrawlErrorType::SearchIndexError => write!(f, "search_index_error"),
+            CrawlErrorType::RobotsDisallowed => write!(f, "robots_disallowed"),
+            CrawlErrorType::InvalidUrl => write!(f, "invalid_url"),
+            CrawlErrorType::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
+/// Crawl error record for observability
+#[derive(Debug, Clone)]
+pub struct CrawlError {
+    pub domain: String,
+    pub occurred_at: CqlTimestamp,
+    pub url: String,
+    pub error_type: CrawlErrorType,
+    pub error_message: String,
+    pub attempt_count: i32,
+    pub stack_trace: Option<String>,
+}

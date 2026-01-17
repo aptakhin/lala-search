@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Aleksandr Ptakhin
 
 use crate::models::crawler::{CrawlRequest, CrawlResult};
-use crate::models::db::{CrawlQueueEntry, CrawledPage};
+use crate::models::db::{CrawlError, CrawlErrorType, CrawlQueueEntry, CrawledPage};
 use crate::models::search::IndexedDocument;
 use crate::services::crawler::crawl_url;
 use crate::services::db::CassandraClient;
@@ -16,6 +16,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use uuid::Uuid;
+
+/// Maximum number of retry attempts before giving up on a URL
+const MAX_RETRY_ATTEMPTS: i32 = 5;
 
 /// Queue processor that continuously processes crawl queue entries
 pub struct QueueProcessor {
@@ -143,52 +146,160 @@ impl QueueProcessor {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to delete queue entry: {}", e))?;
 
-        // Crawl the URL
+        // Process the entry and handle any failures with retry logic
+        match self.process_crawl_entry(&entry).await {
+            Ok(()) => {
+                println!("Successfully processed URL: {}", entry.url);
+                Ok(true)
+            }
+            Err((error_type, error_message)) => {
+                eprintln!(
+                    "Failed to process URL {}: {} - {}",
+                    entry.url, error_type, error_message
+                );
+                self.handle_crawl_failure(&entry, error_type, &error_message)
+                    .await;
+                Ok(true) // Return true because we did process an entry (even if it failed)
+            }
+        }
+    }
+
+    /// Process a crawl entry through all stages
+    /// Returns Ok(()) on success, or Err((error_type, message)) on failure
+    async fn process_crawl_entry(
+        &self,
+        entry: &CrawlQueueEntry,
+    ) -> std::result::Result<(), (CrawlErrorType, String)> {
+        // Stage 1: Crawl the URL
         let request = CrawlRequest {
             url: entry.url.clone(),
             user_agent: self.user_agent.clone(),
         };
 
-        let result = crawl_url(request)
+        let result = crawl_url(request).await.map_err(|e| {
+            (
+                CrawlErrorType::FetchError,
+                format!("Failed to crawl: {}", e),
+            )
+        })?;
+
+        // Check if robots.txt disallowed
+        if !result.allowed_by_robots {
+            return Err((
+                CrawlErrorType::RobotsDisallowed,
+                "Crawling disallowed by robots.txt".to_string(),
+            ));
+        }
+
+        // Ensure we have content
+        let content = result.content.as_ref().ok_or_else(|| {
+            (
+                CrawlErrorType::FetchError,
+                result
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "No content retrieved".to_string()),
+            )
+        })?;
+
+        // Stage 2: Upload to S3 storage (MANDATORY)
+        let storage_id = self
+            .upload_to_storage_required(&result, &entry.url)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to crawl URL: {}", e))?;
+            .map_err(|e| (CrawlErrorType::StorageError, e))?;
 
-        // Upload to S3 if storage is available and we have content
-        let storage_id = self.upload_to_storage(&result, &entry.url).await;
-
-        // Convert crawl result to crawled page
+        // Stage 3: Create and store crawled page in Cassandra
         let crawled_page = self
-            .create_crawled_page(&entry, &result, storage_id)
-            .await?;
+            .create_crawled_page(entry, &result, Some(storage_id))
+            .await
+            .map_err(|e| {
+                (
+                    CrawlErrorType::DatabaseError,
+                    format!("Failed to create page: {}", e),
+                )
+            })?;
 
-        // Store the result in crawled_pages table
         self.db_client
             .upsert_crawled_page(&crawled_page)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to upsert crawled page: {}", e))?;
+            .map_err(|e| {
+                (
+                    CrawlErrorType::DatabaseError,
+                    format!("Failed to upsert page: {}", e),
+                )
+            })?;
 
-        // After storing the crawled page, extract any "meet" links and enqueue them
-        if let Some(ref content) = result.content {
-            // Respect global cap: don't add new links if there are already > 20 crawled pages
-            if let Err(e) = self.enqueue_meet_links(content, &entry).await {
-                eprintln!("Failed to enqueue meet links: {}", e);
-            }
-        }
-
-        // If Meilisearch is available and we have successful content, index the document
-        if let (Some(search_client), Some(content)) = (&self.search_client, &result.content) {
-            if let Err(e) = self
-                .index_document_to_search(search_client, &entry, &crawled_page, content)
+        // Stage 4: Index in search engine (MANDATORY if search client is configured)
+        if let Some(search_client) = &self.search_client {
+            self.index_document_to_search(search_client, entry, &crawled_page, content)
                 .await
-            {
-                eprintln!("Failed to index document in Meilisearch: {}", e);
-                // Don't fail the crawl if indexing fails - it's non-critical
-            }
+                .map_err(|e| {
+                    (
+                        CrawlErrorType::SearchIndexError,
+                        format!("Failed to index: {}", e),
+                    )
+                })?;
         }
 
-        println!("Successfully processed URL: {}", entry.url);
+        // Stage 5: Extract and enqueue links (non-critical, log but don't fail)
+        if let Err(e) = self.enqueue_meet_links(content, entry).await {
+            eprintln!("Warning: Failed to enqueue meet links: {}", e);
+        }
 
-        Ok(true)
+        Ok(())
+    }
+
+    /// Handle a crawl failure by logging the error and potentially re-queueing
+    async fn handle_crawl_failure(
+        &self,
+        entry: &CrawlQueueEntry,
+        error_type: CrawlErrorType,
+        error_message: &str,
+    ) {
+        let now = Utc::now();
+        let domain = url::Url::parse(&entry.url)
+            .map(|u| u.host_str().unwrap_or(&entry.domain).to_string())
+            .unwrap_or_else(|_| entry.domain.clone());
+
+        // Log the error to crawl_errors table
+        let crawl_error = CrawlError {
+            domain: domain.clone(),
+            occurred_at: CqlTimestamp(now.timestamp_millis()),
+            url: entry.url.clone(),
+            error_type: error_type.clone(),
+            error_message: error_message.to_string(),
+            attempt_count: entry.attempt_count + 1,
+            stack_trace: None,
+        };
+
+        if let Err(e) = self.db_client.log_crawl_error(&crawl_error).await {
+            eprintln!("Failed to log crawl error to database: {}", e);
+        }
+
+        // Re-queue for retry if under max attempts (except for permanent failures)
+        let should_retry = match error_type {
+            CrawlErrorType::RobotsDisallowed | CrawlErrorType::InvalidUrl => false,
+            _ => entry.attempt_count < MAX_RETRY_ATTEMPTS,
+        };
+
+        if should_retry {
+            if let Err(e) = self.db_client.requeue_with_retry(entry).await {
+                eprintln!("Failed to re-queue entry for retry: {}", e);
+            } else {
+                println!(
+                    "Re-queued URL for retry (attempt {}/{}): {}",
+                    entry.attempt_count + 1,
+                    MAX_RETRY_ATTEMPTS,
+                    entry.url
+                );
+            }
+        } else {
+            println!(
+                "Giving up on URL after {} attempts: {}",
+                entry.attempt_count + 1,
+                entry.url
+            );
+        }
     }
 
     /// Index a crawled document to Meilisearch
@@ -314,18 +425,27 @@ impl QueueProcessor {
         }
     }
 
-    /// Upload content to S3 storage if available
-    async fn upload_to_storage(&self, result: &CrawlResult, url: &str) -> Option<Uuid> {
-        let storage_client = self.storage_client.as_ref()?;
-        let content = result.content.as_ref()?;
+    /// Upload content to S3 storage (REQUIRED operation)
+    /// Returns error if storage client is not configured or upload fails
+    async fn upload_to_storage_required(
+        &self,
+        result: &CrawlResult,
+        url: &str,
+    ) -> std::result::Result<Uuid, String> {
+        let storage_client = self
+            .storage_client
+            .as_ref()
+            .ok_or_else(|| "Storage client not configured".to_string())?;
 
-        match storage_client.upload_content(content, url).await {
-            Ok(storage_id) => Some(storage_id),
-            Err(e) => {
-                eprintln!("Failed to upload to S3: {}. Continuing without storage.", e);
-                None
-            }
-        }
+        let content = result
+            .content
+            .as_ref()
+            .ok_or_else(|| "No content to upload".to_string())?;
+
+        storage_client
+            .upload_content(content, url)
+            .await
+            .map_err(|e| format!("S3 upload failed: {}", e))
     }
 
     /// Convert crawl result to a crawled page entry

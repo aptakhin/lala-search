@@ -77,6 +77,20 @@ CREATE TABLE IF NOT EXISTS crawl_stats (
     PRIMARY KEY ((date, hour), domain)
 ) WITH comment = 'Aggregated statistics of crawling activity';
 
+-- Table for tracking crawl errors
+-- Provides observability into failed crawl attempts
+CREATE TABLE IF NOT EXISTS crawl_errors (
+    domain text,
+    occurred_at timestamp,
+    url text,
+    error_type text,
+    error_message text,
+    attempt_count int,
+    stack_trace text,
+    PRIMARY KEY (domain, occurred_at, url)
+) WITH CLUSTERING ORDER BY (occurred_at DESC, url ASC)
+  AND comment = 'Log of crawl errors for observability and debugging';
+
 -- Secondary index for finding pages that need recrawling
 CREATE INDEX IF NOT EXISTS idx_next_crawl
 ON crawled_pages (next_crawl_at);
@@ -84,3 +98,7 @@ ON crawled_pages (next_crawl_at);
 -- Secondary index for finding pages by status
 CREATE INDEX IF NOT EXISTS idx_http_status
 ON crawled_pages (http_status);
+
+-- Secondary index for finding errors by type
+CREATE INDEX IF NOT EXISTS idx_error_type
+ON crawl_errors (error_type);

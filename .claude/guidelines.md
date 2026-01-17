@@ -54,6 +54,15 @@ This runs:
 4. Complete features with commits
 5. Document architectural decisions
 
+## Error Handling & Data Integrity
+
+**Never assume what's optional!** Treat all operations as critical for downstream processes.
+
+- If a step fails (storage, database, search indexing), fail the entire operation
+- Return failed items to queue with `attempt_count += 1` for retry
+- Log errors to dedicated error tables for observability
+- Don't silently skip failures or treat them as "non-critical"
+
 ## Command Verification
 
 **Before suggesting commands to the user, always verify them yourself first!**
