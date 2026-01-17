@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Aleksandr Ptakhin
 
+use axum::{routing::get, Router};
 use chrono::Utc;
 use lala_agent::models::db::{CrawlQueueEntry, CrawledPage};
 use lala_agent::services::db::{CassandraClient, CassandraConfig};
+use lala_agent::services::queue_processor::QueueProcessor;
 use lala_agent::services::storage::{S3Config, StorageClient};
 use scylla::frame::value::CqlTimestamp;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::net::TcpListener;
 
 // Integration tests for queue processor workflows.
 // These tests require running Cassandra and MinIO instances.
@@ -383,4 +387,163 @@ async fn test_queue_entry_workflow() {
     println!("✓ Cleaned up test domain");
 
     println!("\n✅ Queue entry workflow test passed!");
+}
+
+/// Integration test for the complete crawl pipeline using production code.
+///
+/// This test verifies the full end-to-end flow with a single production code call:
+/// 1. Setup: Start local HTTP server, add allowed domain
+/// 2. Add page to crawl queue
+/// 3. Call QueueProcessor::process_next_entry() (single production code call)
+/// 4. Verify: crawled page in Cassandra + content in S3
+/// 5. Cleanup
+#[tokio::test]
+#[ignore]
+async fn test_crawl_pipeline_end_to_end() {
+    // Test content that will be served by our local HTTP server
+    let test_html = r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Integration Test Page</title>
+</head>
+<body>
+    <h1>Test Content</h1>
+    <p>This is test content for the end-to-end integration test.</p>
+</body>
+</html>"#;
+
+    // robots.txt that allows all crawling
+    let robots_txt = "User-agent: *\nAllow: /\n";
+
+    // Start local HTTP server
+    let test_html_clone = test_html.to_string();
+    let robots_txt_clone = robots_txt.to_string();
+
+    let app = Router::new()
+        .route(
+            "/test-page",
+            get(move || {
+                let html = test_html_clone.clone();
+                async move { html }
+            }),
+        )
+        .route(
+            "/robots.txt",
+            get(move || {
+                let robots = robots_txt_clone.clone();
+                async move { robots }
+            }),
+        );
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind test server");
+    let port = listener.local_addr().unwrap().port();
+    let test_domain = format!("127.0.0.1:{}", port);
+    let test_url = format!("http://{}/test-page", test_domain);
+
+    // Start server in background
+    let server_handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    println!("✓ Started local HTTP server on port {}", port);
+
+    // Setup clients
+    let db_client = create_db_client().await;
+    println!("✓ Connected to Cassandra");
+
+    let storage_client = create_storage_client().await;
+    println!("✓ Connected to S3/MinIO storage");
+
+    // Step 1: Setup - add allowed domain
+    db_client
+        .insert_allowed_domain(&test_domain)
+        .await
+        .expect("Failed to insert allowed domain");
+    println!("✓ Added allowed domain: {}", test_domain);
+
+    // Step 2: Add page to crawl queue
+    let now = Utc::now();
+    let now_timestamp = CqlTimestamp(now.timestamp_millis());
+
+    let queue_entry = CrawlQueueEntry {
+        priority: 1,
+        scheduled_at: now_timestamp,
+        url: test_url.clone(),
+        domain: test_domain.clone(),
+        last_attempt_at: None,
+        attempt_count: 0,
+        created_at: now_timestamp,
+    };
+
+    db_client
+        .insert_queue_entry(&queue_entry)
+        .await
+        .expect("Failed to insert queue entry");
+    println!("✓ Added queue entry: {}", test_url);
+
+    // Step 3: Process crawl using production code (SINGLE CALL)
+    let processor = QueueProcessor::with_storage(
+        db_client.clone(),
+        Arc::new(storage_client),
+        "LalaSearchBot/0.1 (Integration Test)".to_string(),
+        Duration::from_secs(1),
+    );
+
+    let processed = processor
+        .process_next_entry()
+        .await
+        .expect("process_next_entry failed");
+
+    assert!(processed, "Should have processed the queue entry");
+    println!("✓ Processed crawl entry via production code");
+
+    // Step 4: Verify results
+    // 4a: Check crawled page exists in Cassandra
+    let crawled_page = db_client
+        .get_crawled_page(&test_domain, "/test-page")
+        .await
+        .expect("Failed to query crawled page")
+        .expect("Crawled page not found in Cassandra");
+
+    assert_eq!(crawled_page.url, test_url);
+    assert_eq!(crawled_page.http_status, 200);
+    assert!(crawled_page.robots_allowed);
+    assert!(
+        crawled_page.storage_id.is_some(),
+        "storage_id should be set"
+    );
+    println!("✓ Verified crawled page in Cassandra");
+
+    // 4b: Check content exists in S3 and matches
+    let storage_client = create_storage_client().await;
+    let storage_id = crawled_page.storage_id.unwrap();
+    let retrieved_content = storage_client
+        .get_content(storage_id)
+        .await
+        .expect("Failed to retrieve content from S3");
+
+    assert_eq!(retrieved_content, test_html, "S3 content should match");
+    println!("✓ Verified content in S3 matches original");
+
+    // Step 5: Cleanup
+    db_client
+        .delete_crawled_page(&test_domain, "/test-page")
+        .await
+        .expect("Failed to cleanup crawled page");
+    db_client
+        .delete_allowed_domain(&test_domain)
+        .await
+        .expect("Failed to cleanup allowed domain");
+    println!("✓ Cleaned up test data");
+
+    // Abort the server
+    server_handle.abort();
+
+    println!("\n✅ End-to-end crawl pipeline test passed!");
+    println!("   - Local HTTP server served test content");
+    println!("   - Single process_next_entry() call processed the crawl");
+    println!("   - Crawled page verified in Cassandra");
+    println!("   - Content verified in S3");
 }

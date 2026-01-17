@@ -337,6 +337,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore] // Requires Cassandra
     async fn test_version_endpoint_response() {
         let app = create_test_app().await;
 
@@ -369,6 +370,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore] // Requires Cassandra
     async fn test_version_follows_semver_format() {
         let app = create_test_app().await;
 
@@ -398,6 +400,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore] // Requires Cassandra
     async fn test_invalid_route_returns_404() {
         let app = create_test_app().await;
 
@@ -415,6 +418,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore] // Requires Cassandra
     async fn test_concurrent_requests_succeed() {
         let app = create_test_app().await;
 
