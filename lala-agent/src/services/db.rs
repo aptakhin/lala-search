@@ -160,7 +160,8 @@ impl CassandraClient {
         };
 
         // Sum up all the counter values across domains
-        let rows = rows_result.rows::<(Counter,)>().map_err(|e| {
+        // Note: Counter columns can be NULL until first incremented, so we use Option<Counter>
+        let rows = rows_result.rows::<(Option<Counter>,)>().map_err(|e| {
             QueryError::DbError(
                 scylla::transport::errors::DbError::Other(0),
                 format!("Failed to deserialize count rows: {}", e),
@@ -175,7 +176,8 @@ impl CassandraClient {
                     format!("Failed to parse count row: {}", e),
                 )
             })?;
-            total_count += count.0;
+            // Treat NULL counters as 0
+            total_count += count.map(|c| c.0).unwrap_or(0);
         }
 
         Ok(total_count)
