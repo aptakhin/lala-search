@@ -152,7 +152,7 @@ async fn test_full_crawl_workflow_with_storage() {
         endpoint: std::env::var("S3_ENDPOINT")
             .unwrap_or_else(|_| "http://127.0.0.1:9000".to_string()),
         region: "us-east-1".to_string(),
-        bucket: std::env::var("S3_BUCKET").unwrap_or_else(|_| "crawled-content".to_string()),
+        bucket: std::env::var("S3_BUCKET").unwrap_or_else(|_| "lalasearch-content".to_string()),
         access_key: std::env::var("S3_ACCESS_KEY").unwrap_or_else(|_| "minioadmin".to_string()),
         secret_key: std::env::var("S3_SECRET_KEY").unwrap_or_else(|_| "minioadmin".to_string()),
         compress_content: true,
