@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS crawled_pages (
     domain text,
     url_path text,
     url text,
+    storage_id uuid,
     last_crawled_at timestamp,
     next_crawl_at timestamp,
     crawl_frequency_hours int,

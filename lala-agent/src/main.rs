@@ -16,6 +16,7 @@ use lala_agent::models::version::VersionResponse;
 use lala_agent::services::db::CassandraClient;
 use lala_agent::services::queue_processor::QueueProcessor;
 use lala_agent::services::search::SearchClient;
+use lala_agent::services::storage::{S3Config, StorageClient};
 use scylla::frame::value::CqlTimestamp;
 use std::env;
 use std::net::SocketAddr;
@@ -148,15 +149,17 @@ async fn main() {
     let meilisearch_host =
         env::var("MEILISEARCH_HOST").expect("MEILISEARCH_HOST environment variable must be set");
 
-    // Initialize database and search clients
+    // Initialize database, search, and storage clients
     let db_client = init_cassandra_client(&cassandra_hosts, &cassandra_keyspace).await;
     let search_client = init_search_client(&meilisearch_host).await;
+    let storage_client = init_storage_client().await;
 
     // Start queue processor if needed
     start_queue_processor_if_needed(
         agent_mode,
         &db_client,
         &search_client,
+        &storage_client,
         user_agent,
         poll_interval_secs,
     );
@@ -202,11 +205,30 @@ async fn init_search_client(host: &str) -> Option<Arc<SearchClient>> {
     }
 }
 
+/// Initialize S3-compatible storage client
+async fn init_storage_client() -> Option<Arc<StorageClient>> {
+    match S3Config::from_env() {
+        Ok(config) => match StorageClient::new(config).await {
+            Ok(client) => Some(Arc::new(client)),
+            Err(e) => {
+                eprintln!("Failed to initialize S3 storage: {}", e);
+                eprintln!("Continuing without content storage");
+                None
+            }
+        },
+        Err(_) => {
+            println!("S3 storage not configured, skipping content storage");
+            None
+        }
+    }
+}
+
 /// Start queue processor if agent mode requires it
 fn start_queue_processor_if_needed(
     agent_mode: AgentMode,
     db_client: &Arc<CassandraClient>,
     search_client: &Option<Arc<SearchClient>>,
+    storage_client: &Option<Arc<StorageClient>>,
     user_agent: String,
     poll_interval_secs: u64,
 ) {
@@ -214,19 +236,31 @@ fn start_queue_processor_if_needed(
         return;
     }
 
-    let processor = if let Some(ref search_client) = search_client {
-        QueueProcessor::with_search(
+    let processor = match (search_client, storage_client) {
+        (Some(search), Some(storage)) => QueueProcessor::with_all(
             db_client.clone(),
-            search_client.clone(),
+            search.clone(),
+            storage.clone(),
             user_agent,
             Duration::from_secs(poll_interval_secs),
-        )
-    } else {
-        QueueProcessor::new(
+        ),
+        (Some(search), None) => QueueProcessor::with_search(
+            db_client.clone(),
+            search.clone(),
+            user_agent,
+            Duration::from_secs(poll_interval_secs),
+        ),
+        (None, Some(storage)) => QueueProcessor::with_storage(
+            db_client.clone(),
+            storage.clone(),
+            user_agent,
+            Duration::from_secs(poll_interval_secs),
+        ),
+        (None, None) => QueueProcessor::new(
             db_client.clone(),
             user_agent,
             Duration::from_secs(poll_interval_secs),
-        )
+        ),
     };
 
     tokio::spawn(async move {

@@ -7,6 +7,7 @@ use scylla::frame::value::{Counter, CqlTimestamp};
 use scylla::transport::errors::{NewSessionError, QueryError};
 use scylla::{Session, SessionBuilder};
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// Apache Cassandra client for managing crawl queue and crawled pages
 #[derive(Clone)]
@@ -185,10 +186,10 @@ impl CassandraClient {
     /// Insert or update a crawled page
     pub async fn upsert_crawled_page(&self, page: &CrawledPage) -> Result<(), QueryError> {
         let query = "INSERT INTO crawled_pages
-                     (domain, url_path, url, last_crawled_at, next_crawl_at,
+                     (domain, url_path, url, storage_id, last_crawled_at, next_crawl_at,
                       crawl_frequency_hours, http_status, content_hash, content_length,
                       robots_allowed, error_message, crawl_count, created_at, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         self.session
             .query_unpaged(
@@ -197,6 +198,7 @@ impl CassandraClient {
                     page.domain.as_str(),
                     page.url_path.as_str(),
                     page.url.as_str(),
+                    page.storage_id,
                     page.last_crawled_at,
                     page.next_crawl_at,
                     page.crawl_frequency_hours,
@@ -264,7 +266,7 @@ impl CassandraClient {
         domain: &str,
         url_path: &str,
     ) -> Result<Option<CrawledPage>, QueryError> {
-        let query = "SELECT domain, url_path, url, last_crawled_at, next_crawl_at,
+        let query = "SELECT domain, url_path, url, storage_id, last_crawled_at, next_crawl_at,
                             crawl_frequency_hours, http_status, content_hash, content_length,
                             robots_allowed, error_message, crawl_count, created_at, updated_at
                      FROM crawled_pages
@@ -291,6 +293,7 @@ impl CassandraClient {
                 String,
                 String,
                 String,
+                Option<Uuid>,
                 CqlTimestamp,
                 CqlTimestamp,
                 i32,
@@ -318,6 +321,7 @@ impl CassandraClient {
             domain,
             url_path,
             url,
+            storage_id,
             last_crawled_at,
             next_crawl_at,
             crawl_frequency_hours,
@@ -340,6 +344,7 @@ impl CassandraClient {
             domain,
             url_path,
             url,
+            storage_id,
             last_crawled_at,
             next_crawl_at,
             crawl_frequency_hours,

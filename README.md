@@ -204,6 +204,39 @@ LalaSearch uses semantic versioning with a hybrid approach:
 
 See [docs/versioning.md](docs/versioning.md) for detailed version management.
 
+## S3 Storage Configuration
+
+LalaSearch can store raw HTML content in S3-compatible storage for archival and replay purposes.
+
+### Supported Providers
+
+- **MinIO** (included in Docker Compose for local development)
+- AWS S3
+- DigitalOcean Spaces
+- Wasabi
+- Any S3-compatible storage
+
+### Configuration
+
+Set the following environment variables in your `.env` file:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `S3_ENDPOINT` | S3 endpoint URL | `http://minio:9000` |
+| `S3_REGION` | AWS region (optional for MinIO) | `us-east-1` |
+| `S3_BUCKET` | Bucket name | `lalasearch-content` |
+| `S3_ACCESS_KEY` | Access key ID | `minioadmin` |
+| `S3_SECRET_KEY` | Secret access key | `minioadmin` |
+| `S3_COMPRESS_CONTENT` | Enable gzip compression | `true` |
+| `S3_COMPRESS_MIN_SIZE` | Min size for compression (bytes) | `1024` |
+
+### Storage Details
+
+- Content is stored with UUID v7 keys (time-ordered, sortable)
+- Files are named `{uuid}.html` or `{uuid}.html.gz` (if compressed)
+- The `storage_id` column in Cassandra references the S3 object
+- S3 failures are non-blocking - crawling continues without storage
+
 ## Current Status
 
 ✅ **Implemented:**
@@ -212,6 +245,7 @@ See [docs/versioning.md](docs/versioning.md) for detailed version management.
 - Modular architecture (models, services, handlers)
 - Docker and Docker Compose setup
 - Apache Cassandra for crawl metadata storage
+- S3-compatible storage for crawled HTML content
 - Test-driven development workflow
 - Code quality tooling and pre-commit hooks
 - Build-time version extraction

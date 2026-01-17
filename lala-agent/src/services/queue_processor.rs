@@ -7,6 +7,7 @@ use crate::models::search::IndexedDocument;
 use crate::services::crawler::crawl_url;
 use crate::services::db::CassandraClient;
 use crate::services::search::SearchClient;
+use crate::services::storage::StorageClient;
 use anyhow::Result;
 use chrono::Utc;
 use scraper::Html;
@@ -14,11 +15,13 @@ use scylla::frame::value::CqlTimestamp;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
+use uuid::Uuid;
 
 /// Queue processor that continuously processes crawl queue entries
 pub struct QueueProcessor {
     db_client: Arc<CassandraClient>,
     search_client: Option<Arc<SearchClient>>,
+    storage_client: Option<Arc<StorageClient>>,
     user_agent: String,
     poll_interval: Duration,
 }
@@ -33,6 +36,7 @@ impl QueueProcessor {
         Self {
             db_client,
             search_client: None,
+            storage_client: None,
             user_agent,
             poll_interval,
         }
@@ -48,6 +52,40 @@ impl QueueProcessor {
         Self {
             db_client,
             search_client: Some(search_client),
+            storage_client: None,
+            user_agent,
+            poll_interval,
+        }
+    }
+
+    /// Create a new queue processor with S3 storage support
+    pub fn with_storage(
+        db_client: Arc<CassandraClient>,
+        storage_client: Arc<StorageClient>,
+        user_agent: String,
+        poll_interval: Duration,
+    ) -> Self {
+        Self {
+            db_client,
+            search_client: None,
+            storage_client: Some(storage_client),
+            user_agent,
+            poll_interval,
+        }
+    }
+
+    /// Create a new queue processor with both Meilisearch and S3 storage support
+    pub fn with_all(
+        db_client: Arc<CassandraClient>,
+        search_client: Arc<SearchClient>,
+        storage_client: Arc<StorageClient>,
+        user_agent: String,
+        poll_interval: Duration,
+    ) -> Self {
+        Self {
+            db_client,
+            search_client: Some(search_client),
+            storage_client: Some(storage_client),
             user_agent,
             poll_interval,
         }
@@ -115,8 +153,11 @@ impl QueueProcessor {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to crawl URL: {}", e))?;
 
+        // Upload to S3 if storage is available and we have content
+        let storage_id = self.upload_to_storage(&result, &entry.url).await;
+
         // Convert crawl result to crawled page
-        let crawled_page = self.create_crawled_page(&entry, &result).await?;
+        let crawled_page = self.create_crawled_page(&entry, &result, storage_id).await?;
 
         // Store the result in crawled_pages table
         self.db_client
@@ -271,11 +312,26 @@ impl QueueProcessor {
         }
     }
 
+    /// Upload content to S3 storage if available
+    async fn upload_to_storage(&self, result: &CrawlResult, url: &str) -> Option<Uuid> {
+        let storage_client = self.storage_client.as_ref()?;
+        let content = result.content.as_ref()?;
+
+        match storage_client.upload_content(content, url).await {
+            Ok(storage_id) => Some(storage_id),
+            Err(e) => {
+                eprintln!("Failed to upload to S3: {}. Continuing without storage.", e);
+                None
+            }
+        }
+    }
+
     /// Convert crawl result to a crawled page entry
     async fn create_crawled_page(
         &self,
         entry: &CrawlQueueEntry,
         result: &CrawlResult,
+        storage_id: Option<Uuid>,
     ) -> Result<CrawledPage> {
         let parsed_url = url::Url::parse(&entry.url)?;
         let domain = parsed_url.host_str().unwrap_or(&entry.domain).to_string();
@@ -325,6 +381,7 @@ impl QueueProcessor {
             domain,
             url_path,
             url: entry.url.clone(),
+            storage_id,
             last_crawled_at: now_timestamp,
             next_crawl_at,
             crawl_frequency_hours,

@@ -3,6 +3,7 @@
 
 use chrono::{DateTime, Utc};
 use scylla::frame::value::CqlTimestamp;
+use uuid::Uuid;
 
 /// Entry in the crawl queue
 #[derive(Debug, Clone)]
@@ -29,6 +30,7 @@ pub struct CrawledPage {
     pub domain: String,
     pub url_path: String,
     pub url: String,
+    pub storage_id: Option<Uuid>,
     pub last_crawled_at: CqlTimestamp,
     pub next_crawl_at: CqlTimestamp,
     pub crawl_frequency_hours: i32,
