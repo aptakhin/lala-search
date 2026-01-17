@@ -165,10 +165,26 @@ This hook will automatically run before every commit to ensure code quality.
 
 ### Running Tests
 
+#### Unit and Integration Tests
+
 ```bash
 cd lala-agent
 cargo test
 ```
+
+#### End-to-End Tests
+
+```bash
+# Automated runner (recommended for CI/CD)
+./tests/e2e/run_tests.sh
+```
+
+The E2E test runner will:
+- Start Docker Compose services if needed
+- Install Python dependencies with uv
+- Run full pipeline tests (queue → crawl → index → search)
+
+See [tests/e2e/README.md](tests/e2e/README.md) for more testing options.
 
 ### Code Quality Checks
 
