@@ -101,18 +101,8 @@ echo ""
 echo "Step 3: Installing Python dependencies..."
 cd "$SCRIPT_DIR"
 
-if ! command -v uv &> /dev/null; then
-    echo -e "${YELLOW}uv not found, falling back to pip${NC}"
-    if [ -f "requirements.txt" ]; then
-        pip install -q -r requirements.txt
-    else
-        echo -e "${RED}Error: neither uv nor requirements.txt available${NC}"
-        exit 1
-    fi
-else
-    echo "Installing dependencies with uv..."
-    uv pip install -q --system -e .
-fi
+echo "Installing dependencies with uv..."
+uv sync
 echo -e "${GREEN}✓ Dependencies installed${NC}"
 echo ""
 
@@ -123,15 +113,9 @@ echo ""
 
 cd "$SCRIPT_DIR"
 
-# Run pytest with verbose output
-if command -v pytest &> /dev/null; then
-    pytest test_system.py -v --tb=short
-    TEST_RESULT=$?
-else
-    # Fall back to running the test directly
-    python test_system.py
-    TEST_RESULT=$?
-fi
+# Run tests with uv (manages venv automatically)
+uv run pytest test_system.py -v --tb=short
+TEST_RESULT=$?
 
 echo ""
 echo "======================================"
