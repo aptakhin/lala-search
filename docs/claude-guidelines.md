@@ -276,6 +276,100 @@ struct VersionResponse {
 8. **Document assumptions**: Use comments for non-obvious decisions
 9. **Always finish with commit**: Run pre-commit.sh and commit before moving to next feature
 
+### Integration Tests: Reuse Existing Code
+
+**CRITICAL**: Integration tests must reuse existing production code, not reimplement it.
+
+#### ❌ BAD - Reimplementing logic in tests:
+```rust
+// Don't rebuild workflows step-by-step in tests
+#[tokio::test]
+async fn test_crawl_workflow() {
+    // Manually creating queue entries
+    let entry = CrawlQueueEntry { ... };
+    db_client.insert_queue_entry(&entry).await?;
+
+    // Manually simulating crawl
+    let content = fetch_url(&url).await?;
+
+    // Manually uploading to storage
+    let storage_id = storage_client.upload_content(&content, &url).await?;
+
+    // Manually creating crawled page
+    let page = CrawledPage { storage_id: Some(storage_id), ... };
+    db_client.upsert_crawled_page(&page).await?;
+}
+```
+
+#### ✅ GOOD - Using existing high-level services:
+```rust
+// Use production code to test production behavior
+#[tokio::test]
+async fn test_crawl_workflow() {
+    let crawler = CrawlerService::new(db_client, storage_client, http_client);
+
+    // Use the actual production workflow
+    crawler.add_to_queue(&url).await?;
+    crawler.process_next().await?;
+
+    // Verify results
+    let page = db_client.get_crawled_page(&domain, &path).await?;
+    assert!(page.is_some());
+}
+```
+
+**Why this matters**:
+- Tests verify actual production behavior, not a parallel implementation
+- Bugs in production code get caught, not masked by test-specific implementations
+- Less code to maintain (single implementation, not two)
+- Tests stay in sync with production automatically
+
+### Integration Tests: Proper Environment Setup
+
+**CRITICAL**: Every test must set up its own prerequisites. "May be skipped" or "might not work" is NOT acceptable.
+
+#### ❌ BAD - Tests with uncertain prerequisites:
+```rust
+/// Prerequisites:
+/// - allowed_domains table should have the test domain (or this test may be skipped)
+#[tokio::test]
+async fn test_queue_workflow() {
+    // Retrieve entry (note: may get a different entry if queue is not empty)
+    let retrieved = db_client.get_next_queue_entry().await?;
+    // ...
+}
+```
+
+#### ✅ GOOD - Tests that set up their own environment:
+```rust
+#[tokio::test]
+async fn test_queue_workflow() {
+    // Setup: Ensure test domain is allowed
+    db_client.insert_allowed_domain("test.example.com").await
+        .expect("Failed to set up test domain");
+
+    // Setup: Clear any existing queue entries for this domain
+    db_client.clear_queue_entries_for_domain("test.example.com").await?;
+
+    // Now run the actual test with known state
+    let entry = CrawlQueueEntry { domain: "test.example.com".into(), ... };
+    db_client.insert_queue_entry(&entry).await?;
+
+    let retrieved = db_client.get_next_queue_entry().await?;
+    assert_eq!(retrieved.unwrap().domain, "test.example.com");
+
+    // Cleanup (optional but recommended)
+    db_client.delete_allowed_domain("test.example.com").await?;
+}
+```
+
+**Principles**:
+1. **Tests own their environment**: Set up all prerequisites in the test itself
+2. **No external dependencies**: Don't rely on pre-existing data or manual setup
+3. **Deterministic results**: Tests must produce the same result every run
+4. **Clean state**: Either clean up after tests, or use unique identifiers to avoid collisions
+5. **Fail explicitly**: If setup fails, the test should fail with a clear error, not skip silently
+
 ### Type Safety: Avoid Magic Strings
 
 **IMPORTANT**: Never use raw string comparisons for configuration values or enum-like states.
