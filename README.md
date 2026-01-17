@@ -25,7 +25,8 @@ lalasearch/
 │   │   └── services/              # Business logic
 │   │       └── crawler.rs        # Web crawler with robots.txt support
 │   ├── tests/                     # Integration tests
-│   │   └── crawler_integration_test.rs
+│   │   ├── crawler_integration_test.rs
+│   │   └── queue_processor_integration_test.rs
 │   ├── Dockerfile                 # Container image definition
 │   ├── Cargo.toml                 # Rust dependencies
 │   └── build.rs                   # Build-time version extraction
@@ -49,7 +50,7 @@ cp .env.example .env
 # Edit .env if needed for your local setup
 
 # Start all services
-docker compose up -d
+docker compose up -d --build
 
 # Check status
 docker compose ps
@@ -175,6 +176,7 @@ The pre-commit hook automatically runs before each commit. To run manually:
 
 ```bash
 # From repository root
+chmod +x ./scripts/pre-commit.sh
 ./scripts/pre-commit.sh
 ```
 
