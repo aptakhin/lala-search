@@ -7,7 +7,7 @@ Uses only public APIs, no internal state inspection.
 """
 
 import time
-import requests
+import httpx
 import pytest
 
 # Configuration
@@ -37,7 +37,7 @@ def test_full_crawl_and_search_pipeline():
 
     # Step 1: Add domain to allowed list
     print(f"2. Adding domain '{test_domain}' to allowed list...")
-    response = requests.post(
+    response = httpx.post(
         f"{AGENT_URL}/admin/allowed-domains",
         json={"domain": test_domain},
         timeout=REQUEST_TIMEOUT
@@ -48,7 +48,7 @@ def test_full_crawl_and_search_pipeline():
 
     # Step 2: Add URL to crawl queue
     print(f"3. Adding URL to queue...")
-    response = requests.post(
+    response = httpx.post(
         f"{AGENT_URL}/queue/add",
         json={"url": test_url, "priority": 1},
         timeout=REQUEST_TIMEOUT
@@ -67,7 +67,7 @@ def test_full_crawl_and_search_pipeline():
 
         # Search for content we know is on the page
         try:
-            response = requests.get(
+            response = httpx.get(
                 f"{AGENT_URL}/search",
                 params={"q": search_term, "limit": 10},
                 timeout=REQUEST_TIMEOUT
@@ -88,7 +88,7 @@ def test_full_crawl_and_search_pipeline():
                         print(f"   ... Found {len(results['hits'])} results, waiting for our URL...")
                 else:
                     print(f"   ... No results yet, waiting...")
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             print(f"   ... Search API error (retrying): {e}")
             continue
 
@@ -97,7 +97,7 @@ def test_full_crawl_and_search_pipeline():
 
     # Step 4: Verify search quality (optional but good to check)
     print(f"5. Verifying search quality...")
-    response = requests.get(
+    response = httpx.get(
         f"{AGENT_URL}/search",
         params={"q": search_term, "limit": 10},
         timeout=REQUEST_TIMEOUT
@@ -119,7 +119,7 @@ def test_full_crawl_and_search_pipeline():
 
 def test_search_api_available():
     """Smoke test: Verify search API is accessible"""
-    response = requests.get(
+    response = httpx.get(
         f"{AGENT_URL}/search",
         params={"q": "test"},
         timeout=REQUEST_TIMEOUT
@@ -129,7 +129,7 @@ def test_search_api_available():
 
 def test_version_endpoint():
     """Smoke test: Verify version endpoint works"""
-    response = requests.get(f"{AGENT_URL}/version", timeout=REQUEST_TIMEOUT)
+    response = httpx.get(f"{AGENT_URL}/version", timeout=REQUEST_TIMEOUT)
     assert response.status_code == 200, "Version endpoint should work"
     data = response.json()
     assert "version" in data, "Version should be in response"

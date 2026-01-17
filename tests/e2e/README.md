@@ -13,6 +13,7 @@ End-to-end tests for the complete LalaSearch system.
 
 - Docker Compose stack running (`docker compose up`)
 - Python 3.8+
+- httpx library (safer than requests with 5s default timeout)
 
 ## Running the Tests
 
