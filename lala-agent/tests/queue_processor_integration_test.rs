@@ -3,85 +3,135 @@
 
 use chrono::Utc;
 use lala_agent::models::db::{CrawlQueueEntry, CrawledPage};
-use lala_agent::services::db::CassandraClient;
+use lala_agent::services::db::{CassandraClient, CassandraConfig};
 use lala_agent::services::storage::{S3Config, StorageClient};
 use scylla::frame::value::CqlTimestamp;
 use std::sync::Arc;
 
-// Integration tests for queue processor
-// These tests require running Cassandra and MinIO instances
+// Integration tests for queue processor workflows.
+// These tests require running Cassandra and MinIO instances.
 // Run with: cargo test --test queue_processor_integration_test -- --ignored
+//
+// Required environment variables:
+// - CASSANDRA_HOSTS: Cassandra host(s), e.g., "127.0.0.1:9042"
+// - CASSANDRA_KEYSPACE: Cassandra keyspace, e.g., "lalasearch"
+// - S3_ENDPOINT: MinIO/S3 endpoint, e.g., "http://127.0.0.1:9000"
+// - S3_BUCKET: S3 bucket name
+// - S3_ACCESS_KEY: S3 access key
+// - S3_SECRET_KEY: S3 secret key
+
+/// Helper to create a CassandraClient from environment variables.
+async fn create_db_client() -> Arc<CassandraClient> {
+    let config = CassandraConfig::from_env()
+        .expect("CASSANDRA_HOSTS and CASSANDRA_KEYSPACE environment variables must be set");
+    Arc::new(
+        CassandraClient::from_config(config)
+            .await
+            .expect("Failed to connect to Cassandra"),
+    )
+}
+
+/// Helper to create a StorageClient from environment variables.
+async fn create_storage_client() -> StorageClient {
+    let config = S3Config::from_env().expect(
+        "S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY environment variables must be set",
+    );
+    StorageClient::new(config)
+        .await
+        .expect("Failed to connect to S3/MinIO")
+}
 
 #[tokio::test]
 #[ignore]
 async fn test_queue_processor_workflow() {
-    // Connect to Cassandra
-    let db_client = Arc::new(
-        CassandraClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
-            .await
-            .expect("Failed to connect to Cassandra"),
+    let db_client = create_db_client().await;
+    println!("✓ Connected to Cassandra");
+
+    // Setup: Create a unique test domain and ensure it's allowed
+    let test_domain = format!(
+        "queue-test-{}.example.invalid",
+        Utc::now().timestamp_millis()
     );
 
+    db_client
+        .insert_allowed_domain(&test_domain)
+        .await
+        .expect("Failed to insert test domain into allowed_domains");
+    println!("✓ Set up allowed domain: {}", test_domain);
+
     // Create a test queue entry
-    let test_url = "https://en.wikipedia.org/wiki/Test_Page";
+    let test_url = format!("https://{}/test-page", test_domain);
     let now = Utc::now();
     let now_timestamp = CqlTimestamp(now.timestamp_millis());
 
-    let _entry = CrawlQueueEntry {
+    let entry = CrawlQueueEntry {
         priority: 1,
         scheduled_at: now_timestamp,
-        url: test_url.to_string(),
-        domain: "en.wikipedia.org".to_string(),
+        url: test_url.clone(),
+        domain: test_domain.clone(),
         last_attempt_at: None,
         attempt_count: 0,
         created_at: now_timestamp,
     };
 
-    // Note: In a real test, you would insert this entry into the queue
-    // and verify that the processor picks it up and processes it
+    // Insert the queue entry
+    db_client
+        .insert_queue_entry(&entry)
+        .await
+        .expect("Failed to insert queue entry");
+    println!("✓ Inserted queue entry: {}", test_url);
 
-    // For now, we'll just test the database operations
+    // Retrieve the next entry - should get our entry
     let next_entry = db_client
         .get_next_queue_entry()
         .await
         .expect("Failed to get next entry");
 
-    if let Some(entry) = next_entry {
-        println!("Found queue entry: {}", entry.url);
+    assert!(next_entry.is_some(), "Should have a queue entry");
+    let retrieved_entry = next_entry.unwrap();
+    println!("✓ Retrieved queue entry: {}", retrieved_entry.url);
 
-        // Delete the entry
-        db_client
-            .delete_queue_entry(&entry)
-            .await
-            .expect("Failed to delete entry");
+    // Delete the entry
+    db_client
+        .delete_queue_entry(&retrieved_entry)
+        .await
+        .expect("Failed to delete entry");
+    println!("✓ Deleted queue entry");
 
-        println!("Successfully deleted queue entry");
-    } else {
-        println!("No queue entries found");
-    }
+    // Cleanup: Remove the test domain
+    db_client
+        .delete_allowed_domain(&test_domain)
+        .await
+        .expect("Failed to clean up test domain");
+    println!("✓ Cleaned up test domain");
+
+    println!("\n✅ Queue processor workflow test passed!");
 }
 
 #[tokio::test]
 #[ignore]
 async fn test_upsert_crawled_page() {
-    // Connect to Cassandra
-    let db_client = Arc::new(
-        CassandraClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
-            .await
-            .expect("Failed to connect to Cassandra"),
+    let db_client = create_db_client().await;
+    println!("✓ Connected to Cassandra");
+
+    // Use unique test data to ensure isolation
+    let test_domain = format!(
+        "crawled-page-test-{}.example.invalid",
+        Utc::now().timestamp_millis()
     );
+    let test_path = "/test-page";
+    let test_url = format!("https://{}{}", test_domain, test_path);
 
     let now = Utc::now();
     let now_timestamp = CqlTimestamp(now.timestamp_millis());
-
     let crawl_frequency_hours: i32 = 24;
     let next_crawl = now + chrono::Duration::hours(crawl_frequency_hours as i64);
     let next_crawl_at = CqlTimestamp(next_crawl.timestamp_millis());
 
     let page = CrawledPage {
-        domain: "test.example.com".to_string(),
-        url_path: "/test".to_string(),
-        url: "https://test.example.com/test".to_string(),
+        domain: test_domain.clone(),
+        url_path: test_path.to_string(),
+        url: test_url.clone(),
         last_crawled_at: now_timestamp,
         next_crawl_at,
         crawl_frequency_hours,
@@ -101,74 +151,60 @@ async fn test_upsert_crawled_page() {
         .upsert_crawled_page(&page)
         .await
         .expect("Failed to upsert page");
-
-    println!("Successfully inserted crawled page");
+    println!("✓ Inserted crawled page: {}", test_url);
 
     // Retrieve the page
     let retrieved = db_client
-        .get_crawled_page(&page.domain, &page.url_path)
+        .get_crawled_page(&test_domain, test_path)
         .await
         .expect("Failed to get page");
 
-    if let Some(retrieved_page) = retrieved {
-        assert_eq!(retrieved_page.url, page.url);
-        assert_eq!(retrieved_page.http_status, page.http_status);
-        assert_eq!(retrieved_page.content_hash, page.content_hash);
-        println!("Successfully retrieved crawled page");
-    } else {
-        panic!("Page not found after insertion");
-    }
+    assert!(retrieved.is_some(), "Page should exist after insertion");
+    let retrieved_page = retrieved.unwrap();
+
+    assert_eq!(retrieved_page.url, page.url);
+    assert_eq!(retrieved_page.http_status, page.http_status);
+    assert_eq!(retrieved_page.content_hash, page.content_hash);
+    println!("✓ Retrieved and verified crawled page");
+
+    // Cleanup: Delete the test page
+    db_client
+        .delete_crawled_page(&test_domain, test_path)
+        .await
+        .expect("Failed to clean up test page");
+    println!("✓ Cleaned up test page");
+
+    println!("\n✅ Upsert crawled page test passed!");
 }
 
 /// Integration test for the full page crawling workflow with Cassandra and S3 storage.
 ///
 /// This test verifies the complete flow:
-/// 1. Insert a queue entry into Cassandra
-/// 2. Simulate crawling by creating crawl result data
-/// 3. Upload HTML content to S3 storage
-/// 4. Create and store CrawledPage with storage_id in Cassandra
-/// 5. Verify the page can be retrieved from Cassandra with correct storage_id
-/// 6. Verify the content can be retrieved from S3 using storage_id
-///
-/// Prerequisites:
-/// - Cassandra running on localhost:9042 with lalasearch keyspace
-/// - MinIO running on localhost:9000 with crawled-content bucket
-/// - Environment variables set (or use defaults below)
-///
-/// Run with: cargo test test_full_crawl_workflow_with_storage -- --ignored
+/// 1. Set up test domain in allowed_domains
+/// 2. Upload HTML content to S3 storage
+/// 3. Create and store CrawledPage with storage_id in Cassandra
+/// 4. Verify the page can be retrieved from Cassandra with correct storage_id
+/// 5. Verify the content can be retrieved from S3 using storage_id
+/// 6. Clean up all test data
 #[tokio::test]
 #[ignore]
 async fn test_full_crawl_workflow_with_storage() {
-    // Setup Cassandra client
-    let db_client = Arc::new(
-        CassandraClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
-            .await
-            .expect("Failed to connect to Cassandra"),
-    );
+    // Setup clients from environment variables
+    let db_client = create_db_client().await;
     println!("✓ Connected to Cassandra");
 
-    // Setup S3 storage client (MinIO)
-    let storage_config = S3Config {
-        endpoint: std::env::var("S3_ENDPOINT")
-            .unwrap_or_else(|_| "http://127.0.0.1:9000".to_string()),
-        region: "us-east-1".to_string(),
-        bucket: std::env::var("S3_BUCKET").unwrap_or_else(|_| "lalasearch-content".to_string()),
-        access_key: std::env::var("S3_ACCESS_KEY").unwrap_or_else(|_| "minioadmin".to_string()),
-        secret_key: std::env::var("S3_SECRET_KEY").unwrap_or_else(|_| "minioadmin".to_string()),
-        compress_content: true,
-        compress_min_size: 1024,
-    };
-
-    let storage_client = StorageClient::new(storage_config)
-        .await
-        .expect("Failed to connect to S3/MinIO");
+    let storage_client = create_storage_client().await;
     println!("✓ Connected to S3/MinIO storage");
 
-    // Step 1: Create test data
-    let test_domain = "integration-test.example.com";
-    let test_path = format!("/test-page-{}", Utc::now().timestamp_millis());
+    // Step 1: Create unique test data and set up allowed domain
+    let test_domain = format!(
+        "full-workflow-test-{}.example.invalid",
+        Utc::now().timestamp_millis()
+    );
+    let test_path = "/test-page";
     let test_url = format!("https://{}{}", test_domain, test_path);
-    let test_content = r#"<!DOCTYPE html>
+    let test_content = format!(
+        r#"<!DOCTYPE html>
 <html>
 <head>
     <title>Integration Test Page</title>
@@ -176,11 +212,18 @@ async fn test_full_crawl_workflow_with_storage() {
 <body>
     <h1>Test Content for Full Workflow</h1>
     <p>This is test content for the integration test verifying the full crawl workflow.</p>
-    <p>Generated at: TIMESTAMP_PLACEHOLDER</p>
+    <p>Generated at: {}</p>
 </body>
-</html>"#
-        .replace("TIMESTAMP_PLACEHOLDER", &Utc::now().to_rfc3339());
+</html>"#,
+        Utc::now().to_rfc3339()
+    );
 
+    // Set up allowed domain
+    db_client
+        .insert_allowed_domain(&test_domain)
+        .await
+        .expect("Failed to insert test domain into allowed_domains");
+    println!("✓ Set up allowed domain: {}", test_domain);
     println!("✓ Created test data for URL: {}", test_url);
 
     // Step 2: Upload content to S3 storage
@@ -199,8 +242,8 @@ async fn test_full_crawl_workflow_with_storage() {
     let content_hash = format!("{:x}", md5::compute(test_content.as_bytes()));
 
     let crawled_page = CrawledPage {
-        domain: test_domain.to_string(),
-        url_path: test_path.clone(),
+        domain: test_domain.clone(),
+        url_path: test_path.to_string(),
         url: test_url.clone(),
         storage_id: Some(storage_id),
         last_crawled_at: now_timestamp,
@@ -224,7 +267,7 @@ async fn test_full_crawl_workflow_with_storage() {
 
     // Step 4: Verify page retrieval from Cassandra
     let retrieved_page = db_client
-        .get_crawled_page(test_domain, &test_path)
+        .get_crawled_page(&test_domain, test_path)
         .await
         .expect("Failed to query crawled page")
         .expect("CrawledPage not found in Cassandra");
@@ -254,44 +297,55 @@ async fn test_full_crawl_workflow_with_storage() {
     );
     println!("✓ Retrieved and verified content from S3 storage");
 
+    // Step 6: Cleanup
+    db_client
+        .delete_crawled_page(&test_domain, test_path)
+        .await
+        .expect("Failed to clean up test page");
+    db_client
+        .delete_allowed_domain(&test_domain)
+        .await
+        .expect("Failed to clean up test domain");
+    println!("✓ Cleaned up test data");
+
     println!("\n✅ Full crawl workflow integration test passed!");
-    println!("   - Queue entry created");
+    println!("   - Allowed domain set up");
     println!("   - Content uploaded to S3 (storage_id: {})", storage_id);
     println!("   - CrawledPage stored in Cassandra");
     println!("   - Page retrieved with correct storage_id");
     println!("   - Content retrieved from S3 matches original");
+    println!("   - Test data cleaned up");
 }
 
-/// Test the queue entry insertion and retrieval workflow.
-///
-/// Prerequisites:
-/// - Cassandra running on localhost:9042 with lalasearch keyspace
-/// - allowed_domains table should have the test domain (or this test may be skipped)
-///
-/// Run with: cargo test test_queue_entry_workflow -- --ignored
+/// Test the queue entry insertion and retrieval workflow with proper isolation.
 #[tokio::test]
 #[ignore]
 async fn test_queue_entry_workflow() {
-    let db_client = Arc::new(
-        CassandraClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
-            .await
-            .expect("Failed to connect to Cassandra"),
-    );
+    let db_client = create_db_client().await;
     println!("✓ Connected to Cassandra");
+
+    // Setup: Create a unique test domain and ensure it's allowed
+    let test_domain = format!(
+        "queue-entry-test-{}.example.invalid",
+        Utc::now().timestamp_millis()
+    );
+
+    db_client
+        .insert_allowed_domain(&test_domain)
+        .await
+        .expect("Failed to insert test domain into allowed_domains");
+    println!("✓ Set up allowed domain: {}", test_domain);
 
     // Create a unique test entry
     let now = Utc::now();
     let now_timestamp = CqlTimestamp(now.timestamp_millis());
-    let test_url = format!(
-        "https://queue-test.example.com/page-{}",
-        now.timestamp_millis()
-    );
+    let test_url = format!("https://{}/page-{}", test_domain, now.timestamp_millis());
 
     let entry = CrawlQueueEntry {
         priority: 5,
         scheduled_at: now_timestamp,
         url: test_url.clone(),
-        domain: "queue-test.example.com".to_string(),
+        domain: test_domain.clone(),
         last_attempt_at: None,
         attempt_count: 0,
         created_at: now_timestamp,
@@ -304,7 +358,7 @@ async fn test_queue_entry_workflow() {
         .expect("Failed to insert queue entry");
     println!("✓ Inserted queue entry: {}", test_url);
 
-    // Retrieve entry (note: may get a different entry if queue is not empty)
+    // Retrieve entry
     let retrieved = db_client
         .get_next_queue_entry()
         .await
@@ -320,6 +374,13 @@ async fn test_queue_entry_workflow() {
         .await
         .expect("Failed to delete queue entry");
     println!("✓ Deleted queue entry");
+
+    // Cleanup: Remove the test domain
+    db_client
+        .delete_allowed_domain(&test_domain)
+        .await
+        .expect("Failed to clean up test domain");
+    println!("✓ Cleaned up test domain");
 
     println!("\n✅ Queue entry workflow test passed!");
 }

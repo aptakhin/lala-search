@@ -2,12 +2,34 @@
 // Copyright (c) 2026 Aleksandr Ptakhin
 
 use crate::models::db::{CrawlError, CrawlQueueEntry, CrawledPage};
+use anyhow::{anyhow, Result};
 use chrono::Timelike;
 use scylla::frame::value::{Counter, CqlTimestamp};
 use scylla::transport::errors::{NewSessionError, QueryError};
 use scylla::{Session, SessionBuilder};
 use std::sync::Arc;
 use uuid::Uuid;
+
+/// Configuration for Cassandra database connection
+#[derive(Debug, Clone)]
+pub struct CassandraConfig {
+    pub hosts: Vec<String>,
+    pub keyspace: String,
+}
+
+impl CassandraConfig {
+    /// Load configuration from environment variables
+    pub fn from_env() -> Result<Self> {
+        let hosts_str = std::env::var("CASSANDRA_HOSTS")
+            .map_err(|_| anyhow!("CASSANDRA_HOSTS environment variable not set"))?;
+        let hosts: Vec<String> = hosts_str.split(',').map(|s| s.trim().to_string()).collect();
+
+        let keyspace = std::env::var("CASSANDRA_KEYSPACE")
+            .map_err(|_| anyhow!("CASSANDRA_KEYSPACE environment variable not set"))?;
+
+        Ok(Self { hosts, keyspace })
+    }
+}
 
 /// Apache Cassandra client for managing crawl queue and crawled pages
 #[derive(Clone)]
@@ -30,6 +52,38 @@ impl CassandraClient {
             session,
             _keyspace: keyspace,
         })
+    }
+
+    /// Create a new Apache Cassandra client from configuration
+    pub async fn from_config(config: CassandraConfig) -> Result<Self, NewSessionError> {
+        Self::new(config.hosts, config.keyspace).await
+    }
+
+    /// Insert an allowed domain (used for test setup)
+    pub async fn insert_allowed_domain(&self, domain: &str) -> Result<(), QueryError> {
+        let query = "INSERT INTO allowed_domains (domain, added_at, added_by, notes) VALUES (?, toTimestamp(now()), 'test', 'Test domain')";
+        self.session.query_unpaged(query, (domain,)).await?;
+        Ok(())
+    }
+
+    /// Delete an allowed domain (used for test cleanup)
+    pub async fn delete_allowed_domain(&self, domain: &str) -> Result<(), QueryError> {
+        let query = "DELETE FROM allowed_domains WHERE domain = ?";
+        self.session.query_unpaged(query, (domain,)).await?;
+        Ok(())
+    }
+
+    /// Delete a crawled page by domain and url_path (used for test cleanup)
+    pub async fn delete_crawled_page(
+        &self,
+        domain: &str,
+        url_path: &str,
+    ) -> Result<(), QueryError> {
+        let query = "DELETE FROM crawled_pages WHERE domain = ? AND url_path = ?";
+        self.session
+            .query_unpaged(query, (domain, url_path))
+            .await?;
+        Ok(())
     }
 
     /// Get the next entry from the crawl queue (with lowest priority and earliest scheduled_at)
@@ -430,28 +484,31 @@ impl CassandraClient {
 mod tests {
     use super::*;
 
-    // Note: These tests require a running Cassandra instance
-    // They are integration tests and should be run with:
-    // cargo test --test '*' -- --ignored
+    // Integration tests requiring Cassandra.
+    // Run with: cargo test -- --ignored
+    // Requires CASSANDRA_HOSTS and CASSANDRA_KEYSPACE environment variables.
+
+    /// Helper to create a CassandraClient from environment variables.
+    /// Fails if required environment variables are not set.
+    async fn create_test_client() -> CassandraClient {
+        let config = CassandraConfig::from_env()
+            .expect("CASSANDRA_HOSTS and CASSANDRA_KEYSPACE must be set");
+        CassandraClient::from_config(config)
+            .await
+            .expect("Failed to connect to Cassandra")
+    }
 
     #[tokio::test]
     #[ignore]
     async fn test_cassandra_connection() {
-        let client =
-            CassandraClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
-                .await;
-
-        assert!(client.is_ok());
+        let _client = create_test_client().await;
+        // If we got here, connection succeeded
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_get_next_queue_entry() {
-        let client =
-            CassandraClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
-                .await
-                .unwrap();
-
+        let client = create_test_client().await;
         let result = client.get_next_queue_entry().await;
         assert!(result.is_ok());
     }
@@ -459,50 +516,50 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_is_domain_allowed_returns_false_for_unlisted_domain() {
-        let client =
-            CassandraClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
-                .await
-                .unwrap();
+        let client = create_test_client().await;
 
-        // Test with a domain that's definitely not in the allowed list
-        let result = client
-            .is_domain_allowed("definitely-not-allowed-domain.example")
-            .await;
+        // Use a unique domain name to avoid collision with any real data
+        let test_domain = format!(
+            "test-unlisted-{}.example.invalid",
+            chrono::Utc::now().timestamp_millis()
+        );
+
+        // Ensure domain is NOT in allowed list (clean state)
+        client.delete_allowed_domain(&test_domain).await.ok();
+
+        let result = client.is_domain_allowed(&test_domain).await;
 
         assert!(result.is_ok());
-        assert!(!result.unwrap());
+        assert!(!result.unwrap(), "Domain should not be allowed");
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_is_domain_allowed_returns_true_for_listed_domain() {
-        let client =
-            CassandraClient::new(vec!["127.0.0.1:9042".to_string()], "lalasearch".to_string())
-                .await
-                .unwrap();
+        let client = create_test_client().await;
 
-        // First, insert a test domain into allowed_domains
-        let test_domain = "en.wikipedia.org";
-        let insert_query =
-            "INSERT INTO allowed_domains (domain, added_at, added_by, notes) VALUES (?, toTimestamp(now()), 'test', 'Test domain')";
+        // Use a unique domain name to ensure test isolation
+        let test_domain = format!(
+            "test-allowed-{}.example.invalid",
+            chrono::Utc::now().timestamp_millis()
+        );
+
+        // Setup: Insert the test domain
         client
-            .session
-            .query_unpaged(insert_query, (test_domain,))
+            .insert_allowed_domain(&test_domain)
             .await
-            .unwrap();
+            .expect("Failed to insert test domain");
 
-        // Now check if it's allowed
-        let result = client.is_domain_allowed(test_domain).await;
+        // Test: Check if domain is allowed
+        let result = client.is_domain_allowed(&test_domain).await;
 
         assert!(result.is_ok());
-        assert!(result.unwrap());
+        assert!(result.unwrap(), "Domain should be allowed");
 
-        // Clean up: remove the test domain
-        let delete_query = "DELETE FROM allowed_domains WHERE domain = ?";
+        // Cleanup: Remove the test domain
         client
-            .session
-            .query_unpaged(delete_query, (test_domain,))
+            .delete_allowed_domain(&test_domain)
             .await
-            .unwrap();
+            .expect("Failed to clean up test domain");
     }
 }
