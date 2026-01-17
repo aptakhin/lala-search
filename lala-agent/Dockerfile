@@ -2,7 +2,8 @@
 # Copyright (c) 2026 Aleksandr Ptakhin
 
 # Single-stage Rust development image
-FROM rust:1.83-bullseye
+# Using Rust 1.85+ for edition2024 support required by some dependencies
+FROM rust:1.85-bookworm
 
 # Create app directory
 WORKDIR /app
