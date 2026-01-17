@@ -13,6 +13,7 @@ import pytest
 # Configuration
 AGENT_URL = "http://localhost:3000"
 TEST_TIMEOUT = 60  # seconds
+REQUEST_TIMEOUT = 10  # seconds - timeout for individual HTTP requests
 
 
 def test_full_crawl_and_search_pipeline():
@@ -38,7 +39,8 @@ def test_full_crawl_and_search_pipeline():
     print(f"2. Adding domain '{test_domain}' to allowed list...")
     response = requests.post(
         f"{AGENT_URL}/admin/allowed-domains",
-        json={"domain": test_domain}
+        json={"domain": test_domain},
+        timeout=REQUEST_TIMEOUT
     )
     assert response.status_code in [200, 201], \
         f"Failed to add domain: {response.status_code} - {response.text}"
@@ -48,7 +50,8 @@ def test_full_crawl_and_search_pipeline():
     print(f"3. Adding URL to queue...")
     response = requests.post(
         f"{AGENT_URL}/queue/add",
-        json={"url": test_url, "priority": 1}
+        json={"url": test_url, "priority": 1},
+        timeout=REQUEST_TIMEOUT
     )
     assert response.status_code in [200, 201], \
         f"Failed to add to queue: {response.status_code} - {response.text}"
@@ -66,7 +69,8 @@ def test_full_crawl_and_search_pipeline():
         try:
             response = requests.get(
                 f"{AGENT_URL}/search",
-                params={"q": search_term, "limit": 10}
+                params={"q": search_term, "limit": 10},
+                timeout=REQUEST_TIMEOUT
             )
 
             if response.status_code == 200:
@@ -95,7 +99,8 @@ def test_full_crawl_and_search_pipeline():
     print(f"5. Verifying search quality...")
     response = requests.get(
         f"{AGENT_URL}/search",
-        params={"q": search_term, "limit": 10}
+        params={"q": search_term, "limit": 10},
+        timeout=REQUEST_TIMEOUT
     )
 
     assert response.status_code == 200, "Search API should be accessible"
@@ -114,13 +119,17 @@ def test_full_crawl_and_search_pipeline():
 
 def test_search_api_available():
     """Smoke test: Verify search API is accessible"""
-    response = requests.get(f"{AGENT_URL}/search", params={"q": "test"})
+    response = requests.get(
+        f"{AGENT_URL}/search",
+        params={"q": "test"},
+        timeout=REQUEST_TIMEOUT
+    )
     assert response.status_code == 200, "Search API should be accessible"
 
 
 def test_version_endpoint():
     """Smoke test: Verify version endpoint works"""
-    response = requests.get(f"{AGENT_URL}/version")
+    response = requests.get(f"{AGENT_URL}/version", timeout=REQUEST_TIMEOUT)
     assert response.status_code == 200, "Version endpoint should work"
     data = response.json()
     assert "version" in data, "Version should be in response"
