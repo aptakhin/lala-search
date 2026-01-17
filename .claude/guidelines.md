@@ -54,4 +54,13 @@ This runs:
 4. Complete features with commits
 5. Document architectural decisions
 
+## Command Verification
+
+**Before suggesting commands to the user, always verify them yourself first!**
+
+- Run the command to ensure it works
+- Check for typos, correct paths, and valid syntax
+- If a command fails, fix it before presenting to the user
+- Don't give untested commands - execute them directly when possible
+
 See [docs/claude-guidelines.md](../docs/claude-guidelines.md) for full details.
