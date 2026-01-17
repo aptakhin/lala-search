@@ -13,8 +13,7 @@ End-to-end tests for the complete LalaSearch system.
 
 - Docker Compose stack running (`docker compose up`)
 - Python 3.8+
-- httpx library (safer than requests with 5s default timeout)
-- [uv](https://github.com/astral-sh/uv) (recommended) or pip
+- [uv](https://github.com/astral-sh/uv) - Fast Python package manager (required)
 
 ## Running the Tests
 
@@ -28,36 +27,27 @@ End-to-end tests for the complete LalaSearch system.
 This script will:
 1. Check Docker Compose availability
 2. Start services if not running
-3. Install dependencies with uv (or fall back to pip)
+3. Install dependencies with uv
 4. Run E2E tests with pytest
 
-### Option 2: With uv (modern Python package manager)
+### Option 2: Manual with uv
 
 ```bash
+cd tests/e2e
+
 # Install dependencies
-uv pip install --system -e tests/e2e
+uv sync
 
 # Run the tests
-cd tests/e2e
-pytest test_system.py -v
+uv run pytest test_system.py -v
 ```
 
-### Option 3: With pip (traditional method)
-
-```bash
-# Install dependencies
-pip install -r tests/e2e/requirements.txt
-
-# Run the tests
-cd tests/e2e
-pytest test_system.py -v
-```
-
-### Option 4: Direct Python execution
+### Option 3: Direct execution (after uv sync)
 
 ```bash
 cd tests/e2e
-python test_system.py
+uv sync
+uv run python test_system.py
 ```
 
 ## What Gets Tested
