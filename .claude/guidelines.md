@@ -35,8 +35,9 @@ This runs:
 ### Completing Features
 
 **Every feature MUST be completed with**:
-1. Run `./scripts/pre-commit.sh`
-2. Commit: `git add . && git commit -m "feat: description"`
+1. Update README.md if project structure changed (new files, directories, tests)
+2. Run `./scripts/pre-commit.sh`
+3. Commit: `git add . && git commit -m "feat: description"`
 
 **Never consider a feature complete until it is committed!**
 
