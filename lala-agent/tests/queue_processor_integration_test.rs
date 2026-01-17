@@ -92,6 +92,7 @@ async fn test_upsert_crawled_page() {
         crawl_count: 1,
         created_at: now_timestamp,
         updated_at: now_timestamp,
+        storage_id: None,
     };
 
     // Insert the page

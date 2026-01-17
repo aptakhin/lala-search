@@ -33,6 +33,14 @@ struct AppState {
     search_client: Option<Arc<SearchClient>>,
 }
 
+struct QueueProcessorConfig {
+    db_client: Arc<CassandraClient>,
+    search_client: Option<Arc<SearchClient>>,
+    storage_client: Option<Arc<StorageClient>>,
+    user_agent: String,
+    poll_interval_secs: u64,
+}
+
 async fn version_handler() -> Json<VersionResponse> {
     Json(VersionResponse {
         agent: "lala-agent".to_string(),
@@ -157,11 +165,13 @@ async fn main() {
     // Start queue processor if needed
     start_queue_processor_if_needed(
         agent_mode,
-        &db_client,
-        &search_client,
-        &storage_client,
-        user_agent,
-        poll_interval_secs,
+        QueueProcessorConfig {
+            db_client: db_client.clone(),
+            search_client: search_client.clone(),
+            storage_client,
+            user_agent,
+            poll_interval_secs,
+        },
     );
 
     // Start HTTP server
@@ -224,43 +234,33 @@ async fn init_storage_client() -> Option<Arc<StorageClient>> {
 }
 
 /// Start queue processor if agent mode requires it
-fn start_queue_processor_if_needed(
-    agent_mode: AgentMode,
-    db_client: &Arc<CassandraClient>,
-    search_client: &Option<Arc<SearchClient>>,
-    storage_client: &Option<Arc<StorageClient>>,
-    user_agent: String,
-    poll_interval_secs: u64,
-) {
+fn start_queue_processor_if_needed(agent_mode: AgentMode, config: QueueProcessorConfig) {
     if !agent_mode.should_process_queue() {
         return;
     }
 
-    let processor = match (search_client, storage_client) {
+    let poll_interval = Duration::from_secs(config.poll_interval_secs);
+    let processor = match (&config.search_client, &config.storage_client) {
         (Some(search), Some(storage)) => QueueProcessor::with_all(
-            db_client.clone(),
+            config.db_client,
             search.clone(),
             storage.clone(),
-            user_agent,
-            Duration::from_secs(poll_interval_secs),
+            config.user_agent,
+            poll_interval,
         ),
         (Some(search), None) => QueueProcessor::with_search(
-            db_client.clone(),
+            config.db_client,
             search.clone(),
-            user_agent,
-            Duration::from_secs(poll_interval_secs),
+            config.user_agent,
+            poll_interval,
         ),
         (None, Some(storage)) => QueueProcessor::with_storage(
-            db_client.clone(),
+            config.db_client,
             storage.clone(),
-            user_agent,
-            Duration::from_secs(poll_interval_secs),
+            config.user_agent,
+            poll_interval,
         ),
-        (None, None) => QueueProcessor::new(
-            db_client.clone(),
-            user_agent,
-            Duration::from_secs(poll_interval_secs),
-        ),
+        (None, None) => QueueProcessor::new(config.db_client, config.user_agent, poll_interval),
     };
 
     tokio::spawn(async move {

@@ -157,7 +157,9 @@ impl QueueProcessor {
         let storage_id = self.upload_to_storage(&result, &entry.url).await;
 
         // Convert crawl result to crawled page
-        let crawled_page = self.create_crawled_page(&entry, &result, storage_id).await?;
+        let crawled_page = self
+            .create_crawled_page(&entry, &result, storage_id)
+            .await?;
 
         // Store the result in crawled_pages table
         self.db_client
