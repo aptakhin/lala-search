@@ -74,13 +74,13 @@ fi
 echo -e "${GREEN}✓ Docker Compose is available${NC}"
 echo ""
 
-# Step 2: Start Docker Compose services if not running
+# Step 2: Start Docker Compose services with test configuration
 echo "Step 2: Checking Docker services..."
 cd "$PROJECT_ROOT"
 
 if ! docker compose ps --status running | grep -q "lalasearch-agent"; then
-    echo -e "${YELLOW}Starting Docker Compose services...${NC}"
-    docker compose up -d
+    echo -e "${YELLOW}Starting Docker Compose services with test configuration...${NC}"
+    docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
 
     # Wait for critical services
     wait_for_service "LalaSearch Agent" "$AGENT_URL/version" || exit 1
@@ -88,17 +88,72 @@ if ! docker compose ps --status running | grep -q "lalasearch-agent"; then
 else
     echo -e "${GREEN}✓ Docker services are already running${NC}"
 
-    # Quick health check
-    check_service "LalaSearch Agent" "$AGENT_URL/version" || {
-        echo -e "${YELLOW}Restarting agent...${NC}"
-        docker compose restart lala-agent
-        wait_for_service "LalaSearch Agent" "$AGENT_URL/version" || exit 1
-    }
+    # Restart agent with test configuration
+    echo -e "${YELLOW}Restarting agent with test configuration...${NC}"
+    docker compose -f docker-compose.yml -f docker-compose.test.yml up -d lala-agent
+    wait_for_service "LalaSearch Agent" "$AGENT_URL/version" || exit 1
 fi
 echo ""
 
-# Step 3: Install Python dependencies with uv
-echo "Step 3: Installing Python dependencies..."
+# Step 3: Set up test environment (test keyspace and index)
+echo "Step 3: Setting up test environment..."
+cd "$PROJECT_ROOT"
+
+# Create test keyspace in Cassandra if it doesn't exist
+echo "Creating test keyspace in Cassandra..."
+docker exec lalasearch-cassandra cqlsh -f /schema_test.cql 2>/dev/null || {
+    # If schema_test.cql is not mounted, create it inline
+    docker exec lalasearch-cassandra cqlsh -e "
+        CREATE KEYSPACE IF NOT EXISTS lalasearch_test
+        WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+
+        USE lalasearch_test;
+
+        CREATE TABLE IF NOT EXISTS allowed_domains (
+            domain text PRIMARY KEY, added_at timestamp, added_by text, notes text
+        );
+        CREATE TABLE IF NOT EXISTS crawl_queue (
+            domain text, url_path text, url text, priority int, added_at timestamp,
+            PRIMARY KEY (domain, url_path)
+        );
+        CREATE TABLE IF NOT EXISTS crawled_pages (
+            domain text, url_path text, url text, title text, http_status int,
+            content_hash text, crawled_at timestamp, storage_key text,
+            PRIMARY KEY (domain, url_path)
+        );
+        CREATE TABLE IF NOT EXISTS crawl_errors (
+            domain text, url_path text, url text, error_type text,
+            error_message text, attempted_at timestamp,
+            PRIMARY KEY (domain, url_path)
+        );
+        CREATE TABLE IF NOT EXISTS crawl_stats (
+            date date, hour int, domain text,
+            pages_crawled counter, pages_failed counter, bytes_downloaded counter,
+            PRIMARY KEY ((date, hour), domain)
+        );
+        CREATE TABLE IF NOT EXISTS robots_cache (
+            domain text PRIMARY KEY, content text, cached_at timestamp, expires_at timestamp
+        );
+    " >/dev/null 2>&1
+}
+echo -e "${GREEN}✓ Test keyspace ready${NC}"
+
+# Clean test data (truncate tables for fresh test run)
+echo "Cleaning test data..."
+docker exec lalasearch-cassandra cqlsh -e "
+    USE lalasearch_test;
+    TRUNCATE allowed_domains;
+    TRUNCATE crawl_queue;
+    TRUNCATE crawled_pages;
+    TRUNCATE crawl_errors;
+    TRUNCATE crawl_stats;
+    TRUNCATE robots_cache;
+" >/dev/null 2>&1
+echo -e "${GREEN}✓ Test data cleaned${NC}"
+echo ""
+
+# Step 4: Install Python dependencies with uv
+echo "Step 4: Installing Python dependencies..."
 cd "$SCRIPT_DIR"
 
 echo "Installing dependencies with uv..."
@@ -106,12 +161,17 @@ uv sync
 echo -e "${GREEN}✓ Dependencies installed${NC}"
 echo ""
 
-# Step 4: Run the E2E tests
-echo "Step 4: Running E2E tests..."
+# Step 5: Run the E2E tests with test environment variables
+echo "Step 5: Running E2E tests..."
 echo "======================================"
 echo ""
 
 cd "$SCRIPT_DIR"
+
+# Export test environment variables to override defaults
+export TEST_AGENT_URL="${TEST_AGENT_URL:-http://localhost:3000}"
+export CASSANDRA_KEYSPACE="lalasearch_test"
+export MEILISEARCH_INDEX="documents_test"
 
 # Run tests with uv (manages venv automatically)
 uv run pytest test_system.py -v --tb=short

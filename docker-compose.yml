@@ -10,6 +10,7 @@ services:
       - "9042:9042"  # CQL native transport
     volumes:
       - cassandra-data:/var/lib/cassandra
+      - ./docker/cassandra/schema_test.cql:/schema_test.cql:ro
     environment:
       - CASSANDRA_CLUSTER_NAME=lalasearch
       - CASSANDRA_DC=datacenter1

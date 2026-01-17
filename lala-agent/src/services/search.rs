@@ -5,16 +5,15 @@ use crate::models::search::{IndexedDocument, SearchRequest, SearchResponse, Sear
 use anyhow::Result;
 use meilisearch_sdk::client::Client;
 
-const DOCUMENTS_INDEX: &str = "documents";
-
 /// Meilisearch client wrapper for indexing and searching crawled documents
 pub struct SearchClient {
     client: Client,
+    index_name: String,
 }
 
 impl SearchClient {
     /// Create a new Meilisearch client
-    pub async fn new(host: &str) -> Result<Self> {
+    pub async fn new(host: &str, index_name: String) -> Result<Self> {
         // Construct the full URL if only host:port is provided
         let url = if host.starts_with("http://") || host.starts_with("https://") {
             host.to_string()
@@ -26,13 +25,13 @@ impl SearchClient {
 
         println!("Connected to Meilisearch at {}", url);
 
-        Ok(Self { client })
+        Ok(Self { client, index_name })
     }
 
     /// Initialize the documents index with proper settings
     pub async fn init_index(&self) -> Result<()> {
         // Create or get the documents index
-        let index = self.client.index(DOCUMENTS_INDEX);
+        let index = self.client.index(&self.index_name);
 
         // Set searchable and filterable attributes
         let searchable_attrs = vec!["title", "content", "domain", "url"];
@@ -46,14 +45,14 @@ impl SearchClient {
         let sortable_attrs = vec!["crawled_at"];
         let _ = index.set_sortable_attributes(sortable_attrs).await;
 
-        println!("Initialized Meilisearch index: {}", DOCUMENTS_INDEX);
+        println!("Initialized Meilisearch index: {}", self.index_name);
 
         Ok(())
     }
 
     /// Index a single document
     pub async fn index_document(&self, doc: &IndexedDocument) -> Result<()> {
-        let index = self.client.index(DOCUMENTS_INDEX);
+        let index = self.client.index(&self.index_name);
 
         // Convert document to JSON for indexing
         let doc_json = serde_json::to_value(doc)?;
@@ -73,7 +72,7 @@ impl SearchClient {
             return Ok(());
         }
 
-        let index = self.client.index(DOCUMENTS_INDEX);
+        let index = self.client.index(&self.index_name);
 
         // Convert documents to JSON
         let doc_jsons: Vec<_> = docs
@@ -95,7 +94,7 @@ impl SearchClient {
 
     /// Search for documents
     pub async fn search(&self, request: SearchRequest) -> Result<SearchResponse> {
-        let index = self.client.index(DOCUMENTS_INDEX);
+        let index = self.client.index(&self.index_name);
 
         let limit = request.limit.unwrap_or(20).min(1000) as usize;
         let offset = request.offset.unwrap_or(0) as usize;
@@ -131,7 +130,7 @@ impl SearchClient {
 
     /// Delete a document from the index
     pub async fn delete_document(&self, doc_id: &str) -> Result<()> {
-        let index = self.client.index(DOCUMENTS_INDEX);
+        let index = self.client.index(&self.index_name);
 
         index
             .delete_document(doc_id)
@@ -143,7 +142,7 @@ impl SearchClient {
 
     /// Clear all documents from the index
     pub async fn clear_index(&self) -> Result<()> {
-        let index = self.client.index(DOCUMENTS_INDEX);
+        let index = self.client.index(&self.index_name);
 
         index
             .delete_all_documents()
@@ -170,14 +169,14 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires Meilisearch running
     async fn test_search_client_creation() {
-        let client = SearchClient::new("http://127.0.0.1:7700").await;
+        let client = SearchClient::new("http://127.0.0.1:7700", "documents".to_string()).await;
         assert!(client.is_ok());
     }
 
     #[tokio::test]
     #[ignore] // Requires Meilisearch running
     async fn test_index_document() {
-        let client = SearchClient::new("http://127.0.0.1:7700")
+        let client = SearchClient::new("http://127.0.0.1:7700", "documents".to_string())
             .await
             .expect("Failed to create client");
 

@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Aleksandr Ptakhin
+#
+# Docker Compose Override for E2E Testing
+# Usage: docker compose -f docker-compose.yml -f docker-compose.test.yml up
+
+services:
+  # Override agent with test environment
+  lala-agent:
+    environment:
+      # Use test keyspace and index to avoid interfering with development
+      - CASSANDRA_KEYSPACE=lalasearch_test
+      - MEILISEARCH_INDEX=documents_test
+      # Mark as test agent in user agent
+      - USER_AGENT=LalaSearchBot/0.1 (E2E-Test)

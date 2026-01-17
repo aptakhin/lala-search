@@ -241,9 +241,12 @@ async fn main() {
     let meilisearch_host =
         env::var("MEILISEARCH_HOST").expect("MEILISEARCH_HOST environment variable must be set");
 
+    let meilisearch_index =
+        env::var("MEILISEARCH_INDEX").unwrap_or_else(|_| "documents".to_string());
+
     // Initialize database, search, and storage clients
     let db_client = init_cassandra_client(&cassandra_hosts, &cassandra_keyspace).await;
-    let search_client = init_search_client(&meilisearch_host).await;
+    let search_client = init_search_client(&meilisearch_host, &meilisearch_index).await;
     let storage_client = init_storage_client().await;
 
     // Start queue processor if needed
@@ -282,8 +285,8 @@ async fn init_cassandra_client(hosts: &[String], keyspace: &str) -> Arc<Cassandr
 }
 
 /// Initialize Meilisearch client
-async fn init_search_client(host: &str) -> Option<Arc<SearchClient>> {
-    match SearchClient::new(host).await {
+async fn init_search_client(host: &str, index_name: &str) -> Option<Arc<SearchClient>> {
+    match SearchClient::new(host, index_name.to_string()).await {
         Ok(client) => {
             let client = Arc::new(client);
             if let Err(e) = client.init_index().await {

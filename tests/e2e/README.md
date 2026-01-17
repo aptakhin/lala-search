@@ -2,6 +2,16 @@
 
 End-to-end tests for the complete LalaSearch system.
 
+## Isolated Test Environment
+
+These tests run in an **isolated environment** to avoid interfering with development data:
+
+- **Test Keyspace**: `lalasearch_test` (separate from `lalasearch`)
+- **Test Index**: `documents_test` (separate from `documents`)
+- **Auto-cleanup**: Tables are truncated before each test run
+
+This means you can run E2E tests while actively developing without data conflicts.
+
 ## What This Tests
 
 - ✅ Queue API accepts URLs
@@ -26,9 +36,10 @@ End-to-end tests for the complete LalaSearch system.
 
 This script will:
 1. Check Docker Compose availability
-2. Start services if not running
-3. Install dependencies with uv
-4. Run E2E tests with pytest
+2. Start services with test configuration (isolated keyspace/index)
+3. Create test keyspace and clean test data
+4. Install dependencies with uv
+5. Run E2E tests with pytest
 
 ### Option 2: Manual with uv
 
