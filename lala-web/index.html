@@ -169,6 +169,13 @@
             line-height: 1.5;
         }
 
+        .result-excerpt mark {
+            background-color: #ffff00;
+            color: #000000;
+            font-weight: bold;
+            padding: 0 2px;
+        }
+
         .result-meta {
             font-size: 11px;
             color: #666666;
@@ -334,7 +341,7 @@
                     <div class="result-url" @click="copyToClipboard(result.document.url)" style="cursor: pointer;" title="Click to copy">
                         <span x-text="result.document.url"></span>
                     </div>
-                    <div class="result-excerpt" x-text="result.document.excerpt"></div>
+                    <div class="result-excerpt" x-html="result.snippet || result.document.excerpt"></div>
                     <div class="result-meta">
                         <strong>Domain:</strong> <span x-text="result.document.domain"></span>
                         | <strong>Status:</strong> <span x-text="result.document.http_status"></span>
