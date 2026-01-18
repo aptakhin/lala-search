@@ -12,7 +12,7 @@ LalaSearch implements a leader-follower agent architecture for distributed web c
 lalasearch/
 ├── docs/                           # Documentation
 │   ├── overview.md                # Project vision and architecture
-│   ├── claude-guidelines.md       # Development workflow and TDD guidelines
+│   ├── api.md                     # API reference with curl examples
 │   ├── docker.md                  # Docker setup and usage guide
 │   └── versioning.md              # Version management
 ├── lala-agent/                    # Core agent implementation
@@ -86,13 +86,7 @@ The agent will start on `http://127.0.0.1:3000`
 curl http://127.0.0.1:3000/version
 ```
 
-Expected response:
-```json
-{
-  "agent": "lala-agent",
-  "version": "0.1.0"
-}
-```
+See [docs/api.md](docs/api.md) for complete API reference with curl examples.
 
 ## Development
 
@@ -100,31 +94,13 @@ This project follows Test-Driven Development (TDD). See [docs/claude-guidelines.
 
 ### Manual Testing with Crawl Queue
 
-#### Adding URLs via HTTP API (Recommended)
+See [docs/api.md](docs/api.md) for API examples including:
+- Adding/removing allowed domains
+- Enabling/disabling crawling
+- Adding URLs to the queue
+- Searching indexed documents
 
-The agent provides an HTTP endpoint to add URLs to the crawl queue:
-
-```bash
-# Add a URL to the crawl queue
-curl -X POST http://localhost:3000/queue/add \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "https://en.wikipedia.org/wiki/Main_Page",
-    "priority": 1
-  }'
-```
-
-Expected response:
-```json
-{
-  "success": true,
-  "message": "URL added to crawl queue successfully",
-  "url": "https://en.wikipedia.org/wiki/Main_Page",
-  "domain": "en.wikipedia.org"
-}
-```
-
-The lala-agent will automatically pick up entries from the queue and process them. You can monitor the agent logs:
+The lala-agent will automatically pick up entries from the queue and process them. Monitor logs with:
 
 ```bash
 docker compose logs -f lala-agent
