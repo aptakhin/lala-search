@@ -634,4 +634,271 @@ mod tests {
         assert!(body_str.contains("not in the allowed domains list"));
         assert!(body_str.contains("example.com"));
     }
+
+    #[tokio::test]
+    #[ignore] // Requires Cassandra connection
+    async fn test_add_domain_success() {
+        let app = create_test_app().await;
+
+        let test_domain = format!("test-add-{}.example.com", Utc::now().timestamp_millis());
+        let request_body = AddDomainRequest {
+            domain: test_domain.clone(),
+            notes: Some("Test domain for smoke test".to_string()),
+        };
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/allowed-domains")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let response_data: AddDomainResponse = serde_json::from_slice(&body).unwrap();
+
+        assert!(response_data.success);
+        assert_eq!(response_data.domain, test_domain);
+        assert!(response_data
+            .message
+            .contains("Domain added to allowed list successfully"));
+
+        // Cleanup: delete the test domain
+        let _cleanup = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/admin/allowed-domains/{}", test_domain))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires Cassandra connection
+    async fn test_add_domain_empty_domain() {
+        let app = create_test_app().await;
+
+        let request_body = AddDomainRequest {
+            domain: "".to_string(),
+            notes: None,
+        };
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/allowed-domains")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(body_str.contains("Domain cannot be empty"));
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires Cassandra connection
+    async fn test_list_domains_success() {
+        let app = create_test_app().await;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/admin/allowed-domains")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let response_data: ListDomainsResponse = serde_json::from_slice(&body).unwrap();
+
+        // Should return a list (may be empty or have existing domains)
+        assert_eq!(response_data.domains.len(), response_data.count);
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires Cassandra connection
+    async fn test_list_domains_includes_added_domain() {
+        let app = create_test_app().await;
+
+        // Add a test domain first
+        let test_domain = format!("test-list-{}.example.com", Utc::now().timestamp_millis());
+        let add_request = AddDomainRequest {
+            domain: test_domain.clone(),
+            notes: Some("Test for list endpoint".to_string()),
+        };
+
+        let _add_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/allowed-domains")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&add_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // List domains and verify our test domain is included
+        let list_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/admin/allowed-domains")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(list_response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(list_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let response_data: ListDomainsResponse = serde_json::from_slice(&body).unwrap();
+
+        let found = response_data
+            .domains
+            .iter()
+            .any(|d| d.domain == test_domain);
+        assert!(found, "Added domain should appear in list");
+
+        // Verify domain info structure
+        if let Some(domain_info) = response_data
+            .domains
+            .iter()
+            .find(|d| d.domain == test_domain)
+        {
+            assert_eq!(domain_info.added_by, Some("api".to_string()));
+            assert_eq!(
+                domain_info.notes,
+                Some("Test for list endpoint".to_string())
+            );
+            assert!(domain_info.added_at.is_some());
+        }
+
+        // Cleanup
+        let _cleanup = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/admin/allowed-domains/{}", test_domain))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires Cassandra connection
+    async fn test_delete_domain_success() {
+        let app = create_test_app().await;
+
+        // Add a test domain first
+        let test_domain = format!("test-delete-{}.example.com", Utc::now().timestamp_millis());
+        let add_request = AddDomainRequest {
+            domain: test_domain.clone(),
+            notes: Some("Test domain for deletion".to_string()),
+        };
+
+        let _add_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/allowed-domains")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&add_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Delete the domain
+        let delete_response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/admin/allowed-domains/{}", test_domain))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(delete_response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(delete_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let response_data: DeleteDomainResponse = serde_json::from_slice(&body).unwrap();
+
+        assert!(response_data.success);
+        assert_eq!(response_data.domain, test_domain);
+        assert!(response_data
+            .message
+            .contains("Domain removed from allowed list successfully"));
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires Cassandra connection
+    async fn test_delete_nonexistent_domain() {
+        let app = create_test_app().await;
+
+        let nonexistent_domain =
+            format!("nonexistent-{}.example.com", Utc::now().timestamp_millis());
+
+        // Deleting a non-existent domain should still succeed (idempotent operation)
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/admin/allowed-domains/{}", nonexistent_domain))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let response_data: DeleteDomainResponse = serde_json::from_slice(&body).unwrap();
+
+        assert!(response_data.success);
+        assert_eq!(response_data.domain, nonexistent_domain);
+    }
 }

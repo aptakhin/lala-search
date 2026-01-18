@@ -12,7 +12,7 @@ pub struct AddDomainRequest {
 }
 
 /// Response after adding an allowed domain
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AddDomainResponse {
     pub success: bool,
     pub message: String,
@@ -20,14 +20,14 @@ pub struct AddDomainResponse {
 }
 
 /// Response for listing allowed domains
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ListDomainsResponse {
     pub domains: Vec<DomainInfo>,
     pub count: usize,
 }
 
 /// Information about an allowed domain
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DomainInfo {
     pub domain: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -39,7 +39,7 @@ pub struct DomainInfo {
 }
 
 /// Response after deleting an allowed domain
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DeleteDomainResponse {
     pub success: bool,
     pub message: String,
