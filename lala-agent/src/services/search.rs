@@ -4,6 +4,7 @@
 use crate::models::search::{IndexedDocument, SearchRequest, SearchResponse, SearchResult};
 use anyhow::Result;
 use meilisearch_sdk::client::Client;
+use meilisearch_sdk::search::Selectors;
 
 /// Meilisearch client wrapper for indexing and searching crawled documents
 pub struct SearchClient {
@@ -99,25 +100,41 @@ impl SearchClient {
         let limit = request.limit.unwrap_or(20).min(1000) as usize;
         let offset = request.offset.unwrap_or(0) as usize;
 
-        // Perform the search
+        // Perform the search with cropping and highlighting for snippets
         let search_result = index
             .search()
             .with_query(&request.query)
             .with_limit(limit)
             .with_offset(offset)
+            .with_attributes_to_crop(Selectors::Some(&[("content", Some(200))]))
+            .with_crop_length(200)
+            .with_attributes_to_highlight(Selectors::Some(&["content"]))
+            .with_highlight_pre_tag("<mark>")
+            .with_highlight_post_tag("</mark>")
             .execute::<IndexedDocument>()
             .await
             .map_err(|e| anyhow::anyhow!("Search failed: {}", e))?;
 
         let total = search_result.estimated_total_hits.unwrap_or(0) as u32;
 
-        // Convert results
+        // Convert results, extracting snippet from formatted_result
         let results: Vec<SearchResult> = search_result
             .hits
             .into_iter()
-            .map(|hit| SearchResult {
-                document: hit.result,
-                score: hit.ranking_score.map(|s| s as f32),
+            .map(|hit| {
+                // Extract the highlighted/cropped content from formatted_result
+                let snippet = hit
+                    .formatted_result
+                    .as_ref()
+                    .and_then(|formatted| formatted.get("content"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                SearchResult {
+                    document: hit.result,
+                    score: hit.ranking_score.map(|s| s as f32),
+                    snippet,
+                }
             })
             .collect();
 
