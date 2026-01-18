@@ -230,7 +230,8 @@ lalasearch/
 │   └── Cargo.toml                # Rust dependencies
 ├── docker/                       # Docker configuration
 │   └── cassandra/
-│       └── schema.cql            # Apache Cassandra database schema
+│       ├── schema.cql            # Apache Cassandra database schema
+│       └── migrations/           # Database migration files
 ├── docker-compose.yml            # Multi-container setup
 ├── .env.example                  # Environment variables template
 └── scripts/
@@ -409,6 +410,102 @@ impl AgentMode {
 - Self-documenting code
 - Easy refactoring (compiler catches all usages)
 
+## Early Returns: Flat Code Structure
+
+**IMPORTANT**: Use early returns to keep code flat. Avoid nested `match` or `if` ladders.
+
+The pattern: Handle errors and edge cases first with early returns, then write the success path at the same indentation level as the function start.
+
+**BAD** - Nested match ladder:
+```rust
+async fn enqueue_link(&self, link: &str) {
+    match url::Url::parse(link) {
+        Ok(parsed) => {
+            let domain = parsed.host_str().unwrap_or("").to_string();
+            if domain.is_empty() {
+                return;
+            }
+
+            match self.db_client.is_domain_allowed(&domain).await {
+                Ok(is_allowed) => {
+                    if !is_allowed {
+                        return;
+                    }
+
+                    match self.db_client.crawled_page_exists(&domain, &path).await {
+                        Ok(exists) => {
+                            if exists {
+                                return;
+                            }
+                            // Finally do the work here, deeply nested
+                            self.db_client.insert_queue_entry(&entry).await;
+                        }
+                        Err(e) => eprintln!("Error: {}", e),
+                    }
+                }
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+        Err(e) => eprintln!("Failed to parse: {}", e),
+    }
+}
+```
+
+**GOOD** - Early returns, flat structure:
+```rust
+async fn enqueue_link(&self, link: &str) {
+    // Parse URL - early return on error
+    let parsed = match url::Url::parse(link) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Failed to parse: {}", e);
+            return;
+        }
+    };
+
+    // Validate domain - early return if empty
+    let domain = parsed.host_str().unwrap_or("").to_string();
+    if domain.is_empty() {
+        return;
+    }
+
+    // Check allowlist - early return on error or not allowed
+    let is_allowed = match self.db_client.is_domain_allowed(&domain).await {
+        Ok(allowed) => allowed,
+        Err(e) => {
+            eprintln!("Error checking allowlist: {}", e);
+            return;
+        }
+    };
+    if !is_allowed {
+        return;
+    }
+
+    // Check if already crawled - early return on error or exists
+    let exists = match self.db_client.crawled_page_exists(&domain, &path).await {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("Error checking existence: {}", e);
+            return;
+        }
+    };
+    if exists {
+        return;
+    }
+
+    // Success path - at same indentation level as function start
+    if let Err(e) = self.db_client.insert_queue_entry(&entry).await {
+        eprintln!("Failed to insert: {}", e);
+    }
+}
+```
+
+**Principles**:
+1. **Handle errors first**: Check for error conditions and return early
+2. **Flat success path**: Main logic stays at the top indentation level
+3. **One concern per block**: Each early-return block handles one validation
+4. **Readable flow**: Code reads top-to-bottom without mental stack management
+
 ## Environment Variables Management
 
 **CRITICAL**: Never use default values directly in code. Always use environment variables for configuration.
@@ -486,6 +583,61 @@ docker compose restart lala-agent       # Doesn't rebuild, just restarts
 - Picks up latest code changes without manual rebuild steps
 - Prevents subtle bugs from cached builds with old configuration
 - Standard practice for CI/CD pipelines
+
+## Database Migrations
+
+**CRITICAL**: Never drop tables to add new columns. Use ALTER TABLE migrations instead.
+
+### Migration Strategy
+
+Cassandra doesn't have built-in migration tools, so we use a simple file-based approach:
+
+1. **Schema file** (`docker/cassandra/schema.cql`): Contains the full current schema for fresh deployments
+2. **Migrations directory** (`docker/cassandra/migrations/`): Contains numbered migration files for existing deployments
+
+### Creating a Migration
+
+When adding/modifying schema:
+
+1. Update `schema.cql` with the new column/table
+2. Create a migration file in `migrations/` with format: `NNN_description.cql`
+3. Document the migration with date and purpose
+
+**Example migration file** (`migrations/001_add_storage_compression.cql`):
+```sql
+-- Migration 001: Add storage_compression column to crawled_pages
+-- Date: 2026-01-18
+-- Description: Track compression type for stored content (0=none, 1=gzip)
+
+USE ${KEYSPACE_NAME};
+
+ALTER TABLE crawled_pages ADD storage_compression tinyint;
+```
+
+### Running Migrations
+
+**For existing deployments:**
+```bash
+# Run specific migration
+docker exec lalasearch-cassandra cqlsh -e "USE lalasearch; ALTER TABLE crawled_pages ADD storage_compression tinyint;"
+
+# Or run migration file (after copying to container)
+docker exec lalasearch-cassandra cqlsh -f /path/to/migration.cql
+```
+
+**For fresh deployments:**
+```bash
+# Schema already contains all columns - no migration needed
+docker compose up -d cassandra cassandra-init
+```
+
+### Migration Principles
+
+1. **Additive only**: Only add columns/tables, never remove or rename
+2. **Safe to re-run**: Migrations should be idempotent (use IF NOT EXISTS, ADD ignores existing)
+3. **No data loss**: Never drop tables or columns with production data
+4. **Document changes**: Each migration file explains what and why
+5. **Update schema.cql**: Always keep schema.cql in sync with migrations
 
 ## Cross-Platform Compatibility
 

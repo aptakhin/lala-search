@@ -353,65 +353,66 @@ impl QueueProcessor {
 
     /// Enqueue a single link if it hasn't been crawled yet
     async fn enqueue_link(&self, link: &str, parent_entry: &CrawlQueueEntry) {
-        match url::Url::parse(link) {
-            Ok(parsed) => {
-                let domain = parsed.host_str().unwrap_or("").to_string();
-
-                // Skip URLs without a valid domain
-                if domain.is_empty() {
-                    return;
-                }
-
-                let url_path = parsed.path().to_string();
-
-                // Check if domain is allowed
-                match self.db_client.is_domain_allowed(&domain).await {
-                    Ok(is_allowed) => {
-                        if !is_allowed {
-                            // Silently skip domains that are not in the allowlist
-                            return;
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to check domain allowlist for {}: {}", domain, e);
-                        return;
-                    }
-                }
-
-                match self.db_client.crawled_page_exists(&domain, &url_path).await {
-                    Ok(exists) => {
-                        if exists {
-                            return; // Already crawled
-                        }
-
-                        let now = Utc::now();
-                        let ts = CqlTimestamp(now.timestamp_millis());
-                        let new_entry = CrawlQueueEntry {
-                            priority: parent_entry.priority,
-                            scheduled_at: ts,
-                            url: link.to_string(),
-                            domain,
-                            last_attempt_at: None,
-                            attempt_count: 0,
-                            created_at: ts,
-                        };
-
-                        match self.db_client.insert_queue_entry(&new_entry).await {
-                            Ok(()) => println!("Enqueued meet link: {}", link),
-                            Err(e) => {
-                                eprintln!("Failed to insert meet link into queue {}: {}", link, e)
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to check crawled_page_exists for {}: {}", link, e);
-                    }
-                }
-            }
+        // Parse URL - early return on error
+        let parsed = match url::Url::parse(link) {
+            Ok(p) => p,
             Err(e) => {
                 eprintln!("Failed to parse meet link URL {}: {}", link, e);
+                return;
             }
+        };
+
+        // Validate domain - early return if empty
+        let domain = parsed.host_str().unwrap_or("").to_string();
+        if domain.is_empty() {
+            return;
         }
+
+        let url_path = parsed.path().to_string();
+
+        // Check allowlist - early return on error or not allowed
+        let is_allowed = match self.db_client.is_domain_allowed(&domain).await {
+            Ok(allowed) => allowed,
+            Err(e) => {
+                eprintln!("Failed to check domain allowlist for {}: {}", domain, e);
+                return;
+            }
+        };
+        if !is_allowed {
+            return;
+        }
+
+        // Check if already crawled - early return on error or exists
+        let exists = match self.db_client.crawled_page_exists(&domain, &url_path).await {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("Failed to check crawled_page_exists for {}: {}", link, e);
+                return;
+            }
+        };
+        if exists {
+            return;
+        }
+
+        // Success path - create and insert queue entry
+        let now = Utc::now();
+        let ts = CqlTimestamp(now.timestamp_millis());
+        let new_entry = CrawlQueueEntry {
+            priority: parent_entry.priority,
+            scheduled_at: ts,
+            url: link.to_string(),
+            domain,
+            last_attempt_at: None,
+            attempt_count: 0,
+            created_at: ts,
+        };
+
+        if let Err(e) = self.db_client.insert_queue_entry(&new_entry).await {
+            eprintln!("Failed to insert meet link into queue {}: {}", link, e);
+            return;
+        }
+
+        println!("Enqueued meet link: {}", link);
     }
 
     /// Upload content to S3 storage (REQUIRED operation)
