@@ -39,7 +39,7 @@ impl SearchClient {
         let _ = index.set_searchable_attributes(searchable_attrs).await;
 
         // Set filterable attributes for faceted search
-        let filterable_attrs = vec!["domain", "http_status", "crawled_at"];
+        let filterable_attrs = vec!["domain", "crawled_at"];
         let _ = index.set_filterable_attributes(filterable_attrs).await;
 
         // Set sortable attributes

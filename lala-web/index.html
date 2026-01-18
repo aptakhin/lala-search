@@ -176,13 +176,6 @@
             padding: 0 2px;
         }
 
-        .result-meta {
-            font-size: 11px;
-            color: #666666;
-            border-top: 1px solid #cccccc;
-            padding-top: 8px;
-        }
-
         /* Loading indicator */
         .loading {
             background-color: #ffffcc;
@@ -342,13 +335,6 @@
                         <span x-text="result.document.url"></span>
                     </div>
                     <div class="result-excerpt" x-html="result.snippet || result.document.excerpt"></div>
-                    <div class="result-meta">
-                        <strong>Domain:</strong> <span x-text="result.document.domain"></span>
-                        | <strong>Status:</strong> <span x-text="result.document.http_status"></span>
-                        <span x-show="result.score">
-                            | <strong>Score:</strong> <span x-text="(result.score * 100).toFixed(0)"></span>%
-                        </span>
-                    </div>
                 </div>
             </template>
 
