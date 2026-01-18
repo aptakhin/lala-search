@@ -3,17 +3,23 @@
 # Copyright (c) 2026 Aleksandr Ptakhin
 
 # Pre-commit check script for LalaSearch
-# Runs formatting checks, linting, and tests
+# Runs formatting checks, linting, and tests (including storage-dependent tests)
 # Run this manually before committing: ./scripts/pre-commit.sh
+#
+# This script will automatically start required Docker services if not running.
 
 set -e
 
 echo "Running pre-commit checks for lala-agent..."
 
-cd lala-agent
+# Ensure we're in the project root for docker compose
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+cd "$PROJECT_ROOT/lala-agent"
 
 # Check formatting
-echo "1/3 Checking code formatting..."
+echo "1/4 Checking code formatting..."
 cargo fmt --check
 if [ $? -ne 0 ]; then
     echo "❌ Formatting check failed. Run 'cargo fmt' to fix."
@@ -22,7 +28,7 @@ fi
 echo "✓ Formatting check passed"
 
 # Run clippy
-echo "2/3 Running clippy linter..."
+echo "2/4 Running clippy linter..."
 cargo clippy -- -D warnings
 if [ $? -ne 0 ]; then
     echo "❌ Clippy found issues. Fix them before committing."
@@ -30,14 +36,32 @@ if [ $? -ne 0 ]; then
 fi
 echo "✓ Clippy check passed"
 
-# Run tests
-echo "3/3 Running tests..."
-cargo test
+# Run unit tests (fast, no external dependencies)
+echo "3/4 Running unit tests..."
+cargo test --lib
 if [ $? -ne 0 ]; then
-    echo "❌ Tests failed. Fix failing tests before committing."
+    echo "❌ Unit tests failed. Fix failing tests before committing."
     exit 1
 fi
-echo "✓ All tests passed"
+echo "✓ Unit tests passed"
+
+# Start Docker services for storage-dependent tests
+echo "4/4 Running storage-dependent tests..."
+echo "    Starting Docker services (cassandra, minio, meilisearch)..."
+cd "$PROJECT_ROOT"
+docker compose up -d cassandra minio meilisearch cassandra-init minio-init
+
+# Wait for services to be healthy
+echo "    Waiting for services to be ready..."
+docker compose exec -T cassandra cqlsh -e "SELECT now() FROM system.local" > /dev/null 2>&1 || sleep 30
+
+cd "$PROJECT_ROOT/lala-agent"
+cargo test --lib -- --ignored
+if [ $? -ne 0 ]; then
+    echo "❌ Storage-dependent tests failed."
+    exit 1
+fi
+echo "✓ Storage-dependent tests passed"
 
 echo "✅ All pre-commit checks passed!"
 exit 0

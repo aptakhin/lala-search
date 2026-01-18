@@ -122,11 +122,67 @@ Before writing any code, identify and document:
 - **Command**: `cargo clippy -- -D warnings`
 - **Standard**: All warnings treated as errors
 
-### Testing
+### Testing Tiers
+
+LalaSearch uses a **two-tier testing strategy** to balance fast feedback with comprehensive coverage:
+
+#### Tier 1: Pre-Commit Tests (Fast, < 500ms per test)
+
+Run automatically by `./scripts/pre-commit.sh`. Must complete quickly.
+
+| Test Type | Location | Marker | Description |
+|-----------|----------|--------|-------------|
+| Unit tests | `src/**/*.rs` | None | Pure logic, no external dependencies |
+| Storage-dependent | `src/**/*.rs` | `#[ignore]` | Require Cassandra/MinIO/Meilisearch |
+
+**Rules for Tier 1 tests:**
+- Each test must complete in **under 500ms**
+- Tests requiring external services use `#[ignore]` attribute
+- Pre-commit script starts Docker services automatically
+- If a test takes longer, move it to Tier 2
+
+**Commands:**
+```bash
+cargo test --lib                    # Unit tests only
+cargo test --lib -- --ignored       # Storage-dependent tests only
+./scripts/pre-commit.sh             # Both (starts Docker services)
+```
+
+#### Tier 2: Integration & E2E Tests (Slower, CI-focused)
+
+Run in CI pipelines or manually. Can take longer.
+
+| Test Type | Location | Description |
+|-----------|----------|-------------|
+| Integration | `tests/*.rs` | Multi-component workflows |
+| End-to-end | `tests/*.rs` | Full system scenarios |
+
+**Rules for Tier 2 tests:**
+- Located in `tests/` directory (not `src/`)
+- Can take multiple seconds or longer
+- Run in CI pipelines, not pre-commit
+- Test complete workflows and cross-service interactions
+
+**Commands:**
+```bash
+cargo test --test '*'               # All integration tests
+cargo test --test queue_processor   # Specific integration test
+```
+
+#### Deciding Which Tier
+
+```
+Is test < 500ms?
+├── YES → Can it run without external services?
+│         ├── YES → Unit test (no marker)
+│         └── NO  → Storage-dependent test (#[ignore])
+└── NO  → Integration/E2E test (tests/ directory)
+```
+
+### Coverage
 - **Unit tests**: Co-located with code in same file
 - **Integration tests**: In `tests/` directory
-- **Command**: `cargo test`
-- **Coverage**: Aim for high coverage, especially for critical paths
+- **Coverage goal**: High coverage, especially for critical paths
 
 ## Pre-Commit Workflow
 
@@ -136,9 +192,12 @@ Before every commit, run:
 ```
 
 This runs:
-- `cargo fmt --check` (formatting)
-- `cargo clippy -- -D warnings` (linting)
-- `cargo test` (all tests)
+1. `cargo fmt --check` (formatting)
+2. `cargo clippy -- -D warnings` (linting)
+3. `cargo test --lib` (unit tests)
+4. `docker compose up -d` + `cargo test --lib -- --ignored` (storage-dependent tests)
+
+The script automatically starts Docker services (Cassandra, MinIO, Meilisearch) for storage-dependent tests.
 
 If any check fails, fix the issues before committing.
 
@@ -458,8 +517,14 @@ let db_host = env::var("CASSANDRA_HOSTS")
 ## Commands Reference
 
 ```bash
-# Run tests
-cargo test
+# Tier 1: Unit tests (fast, no dependencies)
+cargo test --lib
+
+# Tier 1: Storage-dependent tests (requires Docker services)
+cargo test --lib -- --ignored
+
+# Tier 2: Integration tests (slower, CI-focused)
+cargo test --test '*'
 
 # Run specific test
 cargo test test_name
@@ -476,7 +541,7 @@ cargo build
 # Run project
 cargo run
 
-# Pre-commit checks
+# Pre-commit checks (runs Tier 1 tests, starts Docker automatically)
 ./scripts/pre-commit.sh
 ```
 
