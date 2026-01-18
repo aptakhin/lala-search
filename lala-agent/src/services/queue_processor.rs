@@ -340,15 +340,15 @@ impl QueueProcessor {
         // Extract title from HTML content (simple extraction)
         let title = extract_title(content);
 
-        // Create excerpt from content (first 500 chars)
-        let excerpt = if content.len() > 500 {
-            format!("{}...", &content[..500])
-        } else {
-            content.to_string()
-        };
-
         // Remove HTML tags from content for indexing
         let clean_content = remove_html_tags(content);
+
+        // Create excerpt from clean content (first 500 chars)
+        let excerpt = if clean_content.len() > 500 {
+            format!("{}...", &clean_content[..500])
+        } else {
+            clean_content.clone()
+        };
 
         // Create document ID from URL hash
         let doc_id = format!("{:x}", md5::compute(entry.url.as_bytes()));
