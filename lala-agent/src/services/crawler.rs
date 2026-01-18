@@ -13,6 +13,7 @@ pub async fn crawl_url(request: CrawlRequest) -> Result<CrawlResult, Box<dyn std
             allowed_by_robots: false,
             content: None,
             error: Some(format!("Invalid URL: {}", e)),
+            x_robots_tag: None,
         });
     }
 
@@ -41,6 +42,7 @@ pub async fn crawl_url(request: CrawlRequest) -> Result<CrawlResult, Box<dyn std
             allowed_by_robots: false,
             content: None,
             error: None,
+            x_robots_tag: None,
         });
     }
 
@@ -53,12 +55,20 @@ pub async fn crawl_url(request: CrawlRequest) -> Result<CrawlResult, Box<dyn std
 
     match response {
         Ok(resp) => {
+            // Extract X-Robots-Tag header before consuming response
+            let x_robots_tag = resp
+                .headers()
+                .get("x-robots-tag")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+
             let content = resp.text().await?;
             Ok(CrawlResult {
                 url: request.url,
                 allowed_by_robots: true,
                 content: Some(content),
                 error: None,
+                x_robots_tag,
             })
         }
         Err(e) => Ok(CrawlResult {
@@ -66,6 +76,7 @@ pub async fn crawl_url(request: CrawlRequest) -> Result<CrawlResult, Box<dyn std
             allowed_by_robots: true,
             content: None,
             error: Some(format!("Failed to fetch content: {}", e)),
+            x_robots_tag: None,
         }),
     }
 }

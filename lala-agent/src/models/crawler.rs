@@ -23,4 +23,6 @@ pub struct CrawlResult {
     pub content: Option<String>,
     /// Any error message if the crawl failed
     pub error: Option<String>,
+    /// X-Robots-Tag HTTP header value (if present in response)
+    pub x_robots_tag: Option<String>,
 }

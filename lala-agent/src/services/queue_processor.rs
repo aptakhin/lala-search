@@ -231,9 +231,29 @@ impl QueueProcessor {
                 )
             })?;
 
-        // Stage 4: Index in search engine (MANDATORY if search client is configured)
-        if let Some(search_client) = &self.search_client {
-            self.index_document_to_search(search_client, entry, &crawled_page, content)
+        // Process indexing and link extraction based on robots directives
+        let robots_directives = get_robots_directives(content, result.x_robots_tag.as_deref());
+        self.process_post_crawl(entry, &crawled_page, content, robots_directives)
+            .await
+    }
+
+    /// Process post-crawl stages: indexing and link extraction
+    /// Respects robots directives (noindex/nofollow)
+    async fn process_post_crawl(
+        &self,
+        entry: &CrawlQueueEntry,
+        crawled_page: &CrawledPage,
+        content: &str,
+        robots_directives: RobotsMetaDirectives,
+    ) -> std::result::Result<(), (CrawlErrorType, String)> {
+        // Stage 4: Index in search engine (skip if noindex directive is present)
+        if robots_directives.noindex {
+            println!(
+                "Skipping indexing for {} due to noindex directive",
+                entry.url
+            );
+        } else if let Some(search_client) = &self.search_client {
+            self.index_document_to_search(search_client, entry, crawled_page, content)
                 .await
                 .map_err(|e| {
                     (
@@ -243,8 +263,13 @@ impl QueueProcessor {
                 })?;
         }
 
-        // Stage 5: Extract and enqueue links (non-critical, log but don't fail)
-        if let Err(e) = self.enqueue_meet_links(content, entry).await {
+        // Stage 5: Extract and enqueue links (skip if nofollow directive is present)
+        if robots_directives.nofollow {
+            println!(
+                "Skipping link extraction for {} due to nofollow directive",
+                entry.url
+            );
+        } else if let Err(e) = self.enqueue_meet_links(content, entry).await {
             eprintln!("Warning: Failed to enqueue meet links: {}", e);
         }
 
@@ -577,9 +602,10 @@ fn extract_title(html: &str) -> Option<String> {
     None
 }
 
-/// Extract all links from HTML content.
+/// Extract all links from HTML content, filtering out nofollow links.
 /// Uses the `scraper` crate for safe HTML parsing with proper UTF-8 handling.
 /// Resolves relative URLs against `base_url` and returns absolute URLs.
+/// Links with rel="nofollow" attribute are excluded.
 fn extract_links(html: &str, base_url: &str) -> Vec<String> {
     let mut links = Vec::new();
 
@@ -592,6 +618,14 @@ fn extract_links(html: &str, base_url: &str) -> Vec<String> {
     };
 
     for element in document.select(&selector) {
+        // Skip links with nofollow in rel attribute
+        if let Some(rel) = element.value().attr("rel") {
+            let rel_lower = rel.to_lowercase();
+            if rel_lower.contains("nofollow") {
+                continue;
+            }
+        }
+
         if let Some(href) = element.value().attr("href") {
             let href = href.trim();
             if !href.is_empty() {
@@ -616,6 +650,89 @@ fn resolve_url(base_url: &str, href: &str) -> String {
     base.join(href)
         .map(|url| url.to_string())
         .unwrap_or_else(|_| href.to_string())
+}
+
+/// Robots directives extracted from HTML meta tags or X-Robots-Tag header
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RobotsMetaDirectives {
+    /// Page should not be indexed
+    pub noindex: bool,
+    /// Links on the page should not be followed
+    pub nofollow: bool,
+}
+
+impl RobotsMetaDirectives {
+    /// Merge two directive sets, using the most restrictive values
+    fn merge(self, other: Self) -> Self {
+        Self {
+            noindex: self.noindex || other.noindex,
+            nofollow: self.nofollow || other.nofollow,
+        }
+    }
+}
+
+/// Parse robots directives from a directive string (used by both meta tag and X-Robots-Tag)
+fn parse_robots_directive_string(content: &str) -> RobotsMetaDirectives {
+    let content_lower = content.to_lowercase();
+    let mut directives = RobotsMetaDirectives::default();
+
+    // "none" is equivalent to "noindex, nofollow"
+    if content_lower.contains("none") {
+        directives.noindex = true;
+        directives.nofollow = true;
+        return directives;
+    }
+
+    if content_lower.contains("noindex") {
+        directives.noindex = true;
+    }
+    if content_lower.contains("nofollow") {
+        directives.nofollow = true;
+    }
+
+    directives
+}
+
+/// Parse X-Robots-Tag HTTP header value into directives
+fn parse_x_robots_tag(header_value: Option<&str>) -> RobotsMetaDirectives {
+    match header_value {
+        Some(value) => parse_robots_directive_string(value),
+        None => RobotsMetaDirectives::default(),
+    }
+}
+
+/// Get combined robots directives from HTML meta tag and X-Robots-Tag header.
+/// The most restrictive rule applies when there are conflicts.
+fn get_robots_directives(html: &str, x_robots_tag: Option<&str>) -> RobotsMetaDirectives {
+    let meta_directives = extract_robots_meta_directives(html);
+    let header_directives = parse_x_robots_tag(x_robots_tag);
+    meta_directives.merge(header_directives)
+}
+
+/// Extract robots meta directives from HTML content.
+/// Parses <meta name="robots" content="..."> tags and extracts noindex/nofollow directives.
+/// Handles case-insensitive matching and multiple directives separated by commas.
+fn extract_robots_meta_directives(html: &str) -> RobotsMetaDirectives {
+    let document = Html::parse_document(html);
+
+    // Select all <meta> tags with name attribute
+    let Ok(selector) = scraper::Selector::parse("meta[name]") else {
+        return RobotsMetaDirectives::default();
+    };
+
+    for element in document.select(&selector) {
+        // Check if this is a robots meta tag (case-insensitive)
+        let name = element.value().attr("name").unwrap_or("");
+        if !name.eq_ignore_ascii_case("robots") {
+            continue;
+        }
+
+        // Get the content attribute and parse directives
+        let content = element.value().attr("content").unwrap_or("");
+        return parse_robots_directive_string(content);
+    }
+
+    RobotsMetaDirectives::default()
 }
 
 #[cfg(test)]
@@ -716,5 +833,203 @@ mod tests {
         assert_eq!(links.len(), 2);
         assert!(links.iter().any(|l| l.contains("page1")));
         assert!(links.iter().any(|l| l.contains("page2")));
+    }
+
+    #[test]
+    fn test_extract_robots_meta_noindex() {
+        let html = r#"
+            <html>
+                <head>
+                    <meta name="robots" content="noindex">
+                </head>
+                <body><p>Content</p></body>
+            </html>
+        "#;
+        let directives = extract_robots_meta_directives(html);
+        assert!(directives.noindex);
+        assert!(!directives.nofollow);
+    }
+
+    #[test]
+    fn test_extract_robots_meta_nofollow() {
+        let html = r#"
+            <html>
+                <head>
+                    <meta name="robots" content="nofollow">
+                </head>
+                <body><p>Content</p></body>
+            </html>
+        "#;
+        let directives = extract_robots_meta_directives(html);
+        assert!(!directives.noindex);
+        assert!(directives.nofollow);
+    }
+
+    #[test]
+    fn test_extract_robots_meta_both_directives() {
+        let html = r#"
+            <html>
+                <head>
+                    <meta name="robots" content="noindex, nofollow">
+                </head>
+                <body><p>Content</p></body>
+            </html>
+        "#;
+        let directives = extract_robots_meta_directives(html);
+        assert!(directives.noindex);
+        assert!(directives.nofollow);
+    }
+
+    #[test]
+    fn test_extract_robots_meta_none_directive() {
+        let html = r#"
+            <html>
+                <head>
+                    <meta name="robots" content="none">
+                </head>
+                <body><p>Content</p></body>
+            </html>
+        "#;
+        let directives = extract_robots_meta_directives(html);
+        // "none" is equivalent to "noindex, nofollow"
+        assert!(directives.noindex);
+        assert!(directives.nofollow);
+    }
+
+    #[test]
+    fn test_extract_robots_meta_no_robots_tag() {
+        let html = r#"
+            <html>
+                <head>
+                    <title>Page</title>
+                </head>
+                <body><p>Content</p></body>
+            </html>
+        "#;
+        let directives = extract_robots_meta_directives(html);
+        assert!(!directives.noindex);
+        assert!(!directives.nofollow);
+    }
+
+    #[test]
+    fn test_extract_robots_meta_case_insensitive() {
+        let html = r#"
+            <html>
+                <head>
+                    <meta name="ROBOTS" content="NOINDEX, NOFOLLOW">
+                </head>
+                <body><p>Content</p></body>
+            </html>
+        "#;
+        let directives = extract_robots_meta_directives(html);
+        assert!(directives.noindex);
+        assert!(directives.nofollow);
+    }
+
+    #[test]
+    fn test_extract_links_filters_nofollow_attribute() {
+        let html = r#"
+            <html>
+                <body>
+                    <a href="/page1">Follow this</a>
+                    <a href="/page2" rel="nofollow">Do not follow this</a>
+                    <a href="/page3" rel="sponsored nofollow">Sponsored link</a>
+                    <a href="/page4" rel="ugc">User generated content</a>
+                </body>
+            </html>
+        "#;
+        let links = extract_links(html, "https://example.com/");
+
+        // Should only include links without nofollow
+        assert_eq!(links.len(), 2);
+        assert!(links.iter().any(|l| l.contains("page1")));
+        assert!(links.iter().any(|l| l.contains("page4")));
+        assert!(!links.iter().any(|l| l.contains("page2")));
+        assert!(!links.iter().any(|l| l.contains("page3")));
+    }
+
+    #[test]
+    fn test_parse_x_robots_tag_noindex() {
+        let directives = parse_x_robots_tag(Some("noindex"));
+        assert!(directives.noindex);
+        assert!(!directives.nofollow);
+    }
+
+    #[test]
+    fn test_parse_x_robots_tag_nofollow() {
+        let directives = parse_x_robots_tag(Some("nofollow"));
+        assert!(!directives.noindex);
+        assert!(directives.nofollow);
+    }
+
+    #[test]
+    fn test_parse_x_robots_tag_both() {
+        let directives = parse_x_robots_tag(Some("noindex, nofollow"));
+        assert!(directives.noindex);
+        assert!(directives.nofollow);
+    }
+
+    #[test]
+    fn test_parse_x_robots_tag_none() {
+        let directives = parse_x_robots_tag(Some("none"));
+        assert!(directives.noindex);
+        assert!(directives.nofollow);
+    }
+
+    #[test]
+    fn test_parse_x_robots_tag_missing() {
+        let directives = parse_x_robots_tag(None);
+        assert!(!directives.noindex);
+        assert!(!directives.nofollow);
+    }
+
+    #[test]
+    fn test_parse_x_robots_tag_case_insensitive() {
+        let directives = parse_x_robots_tag(Some("NOINDEX, NOFOLLOW"));
+        assert!(directives.noindex);
+        assert!(directives.nofollow);
+    }
+
+    #[test]
+    fn test_get_robots_directives_meta_only_noindex() {
+        let html = r#"<html><head><meta name="robots" content="noindex"></head></html>"#;
+        let directives = get_robots_directives(html, None);
+        assert!(directives.noindex);
+        assert!(!directives.nofollow);
+    }
+
+    #[test]
+    fn test_get_robots_directives_header_only_nofollow() {
+        let html = "<html><body>Content</body></html>";
+        let directives = get_robots_directives(html, Some("nofollow"));
+        assert!(!directives.noindex);
+        assert!(directives.nofollow);
+    }
+
+    #[test]
+    fn test_get_robots_directives_merge_most_restrictive() {
+        // Meta has noindex, header has nofollow - should merge to both
+        let html = r#"<html><head><meta name="robots" content="noindex"></head></html>"#;
+        let directives = get_robots_directives(html, Some("nofollow"));
+        assert!(directives.noindex);
+        assert!(directives.nofollow);
+    }
+
+    #[test]
+    fn test_get_robots_directives_header_overrides_permissive_meta() {
+        // Meta allows indexing, but header says noindex - noindex wins
+        let html = r#"<html><head><meta name="robots" content="index, follow"></head></html>"#;
+        let directives = get_robots_directives(html, Some("noindex"));
+        assert!(directives.noindex);
+        assert!(!directives.nofollow);
+    }
+
+    #[test]
+    fn test_get_robots_directives_meta_overrides_permissive_header() {
+        // Header allows, but meta says nofollow - nofollow wins
+        let html = r#"<html><head><meta name="robots" content="nofollow"></head></html>"#;
+        let directives = get_robots_directives(html, Some("index, follow"));
+        assert!(!directives.noindex);
+        assert!(directives.nofollow);
     }
 }
