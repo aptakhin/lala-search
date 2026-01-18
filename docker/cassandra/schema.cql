@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS crawled_pages (
     url_path text,
     url text,
     storage_id uuid,
+    storage_compression tinyint,
     last_crawled_at timestamp,
     next_crawl_at timestamp,
     crawl_frequency_hours int,
@@ -31,7 +32,7 @@ CREATE TABLE IF NOT EXISTS crawled_pages (
     updated_at timestamp,
     PRIMARY KEY (domain, url_path)
 ) WITH CLUSTERING ORDER BY (url_path ASC)
-  AND comment = 'Stores metadata about crawled web pages';
+  AND comment = 'Stores metadata about crawled web pages (storage_compression: 0=none, 1=gzip)';
 
 -- Table for tracking crawl queue
 -- Pages that need to be crawled or re-crawled

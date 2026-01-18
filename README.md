@@ -251,9 +251,10 @@ Set the following environment variables in your `.env` file:
 ### Storage Details
 
 - Content is stored with UUID v7 keys (time-ordered, sortable)
-- Files are named `{uuid}.html` or `{uuid}.html.gz` (if compressed)
-- The `storage_id` column in Cassandra references the S3 object
-- S3 failures are non-blocking - crawling continues without storage
+- Files are named `{uuid}.html` or `{uuid}.html.gz` (based on compression)
+- Cassandra stores both `storage_id` (UUID) and `storage_compression` (0=none, 1=gzip)
+- Compression type determines the correct S3 object key for retrieval
+- No trial-and-error lookups - compression metadata ensures single S3 request
 
 ## Current Status
 

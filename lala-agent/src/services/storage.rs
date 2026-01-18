@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Aleksandr Ptakhin
 
+use crate::models::storage::CompressionType;
 use anyhow::{anyhow, Result};
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
@@ -94,19 +95,24 @@ impl StorageClient {
         })
     }
 
-    /// Upload HTML content and return the storage ID (UUID v7)
-    pub async fn upload_content(&self, content: &str, _url: &str) -> Result<Uuid> {
+    /// Upload HTML content and return the storage ID (UUID v7) and compression type
+    pub async fn upload_content(
+        &self,
+        content: &str,
+        _url: &str,
+    ) -> Result<(Uuid, CompressionType)> {
         let storage_id = Uuid::now_v7();
 
-        let (data, key, content_type) =
+        let (data, compression_type) =
             if self.compress_content && content.len() > self.compress_min_size {
                 let compressed = Self::compress(content.as_bytes())?;
-                let key = format!("{}.html.gz", storage_id);
-                (compressed, key, "application/gzip")
+                (compressed, CompressionType::Gzip)
             } else {
-                let key = format!("{}.html", storage_id);
-                (content.as_bytes().to_vec(), key, "text/html")
+                (content.as_bytes().to_vec(), CompressionType::None)
             };
+
+        let key = format!("{}.{}", storage_id, compression_type.file_extension());
+        let content_type = compression_type.content_type();
 
         self.bucket
             .put_object_with_content_type(&key, &data, content_type)
@@ -120,29 +126,32 @@ impl StorageClient {
             content_type
         );
 
-        Ok(storage_id)
+        Ok((storage_id, compression_type))
     }
 
-    /// Retrieve content by storage ID
-    pub async fn get_content(&self, storage_id: Uuid) -> Result<String> {
-        // Try compressed first, then uncompressed
-        let compressed_key = format!("{}.html.gz", storage_id);
-        let uncompressed_key = format!("{}.html", storage_id);
-
-        if let Ok(response) = self.bucket.get_object(&compressed_key).await {
-            let decompressed = Self::decompress(response.bytes())?;
-            return String::from_utf8(decompressed)
-                .map_err(|e| anyhow!("Invalid UTF-8 in decompressed content: {}", e));
-        }
+    /// Retrieve content by storage ID and compression type
+    pub async fn get_content(
+        &self,
+        storage_id: Uuid,
+        compression_type: CompressionType,
+    ) -> Result<String> {
+        let key = format!("{}.{}", storage_id, compression_type.file_extension());
 
         let response = self
             .bucket
-            .get_object(&uncompressed_key)
+            .get_object(&key)
             .await
             .map_err(|e| anyhow!("Failed to get object from S3: {}", e))?;
 
-        String::from_utf8(response.bytes().to_vec())
-            .map_err(|e| anyhow!("Invalid UTF-8 in content: {}", e))
+        match compression_type {
+            CompressionType::Gzip => {
+                let decompressed = Self::decompress(response.bytes())?;
+                String::from_utf8(decompressed)
+                    .map_err(|e| anyhow!("Invalid UTF-8 in decompressed content: {}", e))
+            }
+            CompressionType::None => String::from_utf8(response.bytes().to_vec())
+                .map_err(|e| anyhow!("Invalid UTF-8 in content: {}", e)),
+        }
     }
 
     /// Compress data using gzip
@@ -208,8 +217,11 @@ mod tests {
         let content = "<html><body>Test content</body></html>";
         let url = "https://example.com/test";
 
-        let storage_id = client.upload_content(content, url).await.unwrap();
-        let retrieved = client.get_content(storage_id).await.unwrap();
+        let (storage_id, compression_type) = client.upload_content(content, url).await.unwrap();
+        let retrieved = client
+            .get_content(storage_id, compression_type)
+            .await
+            .unwrap();
 
         assert_eq!(content, retrieved);
     }

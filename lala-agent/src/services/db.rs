@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Aleksandr Ptakhin
 
 use crate::models::db::{CrawlError, CrawlQueueEntry, CrawledPage};
+use crate::models::storage::CompressionType;
 use anyhow::{anyhow, Result};
 use chrono::Timelike;
 use scylla::frame::value::{Counter, CqlTimestamp};
@@ -292,10 +293,10 @@ impl CassandraClient {
     /// Insert or update a crawled page
     pub async fn upsert_crawled_page(&self, page: &CrawledPage) -> Result<(), QueryError> {
         let query = "INSERT INTO crawled_pages
-                     (domain, url_path, url, storage_id, last_crawled_at, next_crawl_at,
+                     (domain, url_path, url, storage_id, storage_compression, last_crawled_at, next_crawl_at,
                       crawl_frequency_hours, http_status, content_hash, content_length,
                       robots_allowed, error_message, crawl_count, created_at, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         self.session
             .query_unpaged(
@@ -305,6 +306,7 @@ impl CassandraClient {
                     page.url_path.as_str(),
                     page.url.as_str(),
                     page.storage_id,
+                    page.storage_compression.to_db_value(),
                     page.last_crawled_at,
                     page.next_crawl_at,
                     page.crawl_frequency_hours,
@@ -372,7 +374,7 @@ impl CassandraClient {
         domain: &str,
         url_path: &str,
     ) -> Result<Option<CrawledPage>, QueryError> {
-        let query = "SELECT domain, url_path, url, storage_id, last_crawled_at, next_crawl_at,
+        let query = "SELECT domain, url_path, url, storage_id, storage_compression, last_crawled_at, next_crawl_at,
                             crawl_frequency_hours, http_status, content_hash, content_length,
                             robots_allowed, error_message, crawl_count, created_at, updated_at
                      FROM crawled_pages
@@ -400,6 +402,7 @@ impl CassandraClient {
                 String,
                 String,
                 Option<Uuid>,
+                i8,
                 CqlTimestamp,
                 CqlTimestamp,
                 i32,
@@ -428,6 +431,7 @@ impl CassandraClient {
             url_path,
             url,
             storage_id,
+            storage_compression_value,
             last_crawled_at,
             next_crawl_at,
             crawl_frequency_hours,
@@ -451,6 +455,7 @@ impl CassandraClient {
             url_path,
             url,
             storage_id,
+            storage_compression: CompressionType::from_db_value(storage_compression_value),
             last_crawled_at,
             next_crawl_at,
             crawl_frequency_hours,

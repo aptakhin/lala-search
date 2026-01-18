@@ -117,15 +117,6 @@ impl QueueProcessor {
     /// Process a single entry from the queue
     /// Returns true if an entry was processed, false if queue was empty
     pub async fn process_next_entry(&self) -> Result<bool> {
-        let count = self.db_client.count_crawled_pages().await?;
-        if count > 20 {
-            println!(
-                "Skipping queue processing: crawled_pages count {} > 20",
-                count
-            );
-            return Ok(false);
-        }
-
         // Get the next entry from the queue
         let entry = match self
             .db_client
@@ -203,14 +194,14 @@ impl QueueProcessor {
         })?;
 
         // Stage 2: Upload to S3 storage (MANDATORY)
-        let storage_id = self
+        let (storage_id, compression_type) = self
             .upload_to_storage_required(&result, &entry.url)
             .await
             .map_err(|e| (CrawlErrorType::StorageError, e))?;
 
         // Stage 3: Create and store crawled page in Cassandra
         let crawled_page = self
-            .create_crawled_page(entry, &result, Some(storage_id))
+            .create_crawled_page(entry, &result, Some(storage_id), compression_type)
             .await
             .map_err(|e| {
                 (
@@ -346,19 +337,11 @@ impl QueueProcessor {
 
     /// Extract meet links from crawled content and enqueue them if count allows
     async fn enqueue_meet_links(&self, content: &str, entry: &CrawlQueueEntry) -> Result<()> {
-        let total = self
+        let _ = self
             .db_client
             .count_crawled_pages()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to count crawled pages: {}", e))?;
-
-        if total > 20 {
-            println!(
-                "Skipping enqueueing meet links: crawled_pages count {} > 20",
-                total
-            );
-            return Ok(());
-        }
 
         let links = extract_links(content, &entry.url);
         for link in links {
@@ -432,12 +415,13 @@ impl QueueProcessor {
     }
 
     /// Upload content to S3 storage (REQUIRED operation)
+    /// Returns (storage_id, compression_type) tuple
     /// Returns error if storage client is not configured or upload fails
     async fn upload_to_storage_required(
         &self,
         result: &CrawlResult,
         url: &str,
-    ) -> std::result::Result<Uuid, String> {
+    ) -> std::result::Result<(Uuid, crate::models::storage::CompressionType), String> {
         let storage_client = self
             .storage_client
             .as_ref()
@@ -460,6 +444,7 @@ impl QueueProcessor {
         entry: &CrawlQueueEntry,
         result: &CrawlResult,
         storage_id: Option<Uuid>,
+        storage_compression: crate::models::storage::CompressionType,
     ) -> Result<CrawledPage> {
         let parsed_url = url::Url::parse(&entry.url)?;
         let domain = parsed_url.host_str().unwrap_or(&entry.domain).to_string();
@@ -510,6 +495,7 @@ impl QueueProcessor {
             url_path,
             url: entry.url.clone(),
             storage_id,
+            storage_compression,
             last_crawled_at: now_timestamp,
             next_crawl_at,
             crawl_frequency_hours,

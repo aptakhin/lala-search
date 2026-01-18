@@ -136,6 +136,8 @@ async fn test_upsert_crawled_page() {
         domain: test_domain.clone(),
         url_path: test_path.to_string(),
         url: test_url.clone(),
+        storage_id: None,
+        storage_compression: lala_agent::models::storage::CompressionType::None,
         last_crawled_at: now_timestamp,
         next_crawl_at,
         crawl_frequency_hours,
@@ -147,7 +149,6 @@ async fn test_upsert_crawled_page() {
         crawl_count: 1,
         created_at: now_timestamp,
         updated_at: now_timestamp,
-        storage_id: None,
     };
 
     // Insert the page
@@ -231,11 +232,14 @@ async fn test_full_crawl_workflow_with_storage() {
     println!("✓ Created test data for URL: {}", test_url);
 
     // Step 2: Upload content to S3 storage
-    let storage_id = storage_client
+    let (storage_id, compression_type) = storage_client
         .upload_content(&test_content, &test_url)
         .await
         .expect("Failed to upload content to S3");
-    println!("✓ Uploaded content to S3 with storage_id: {}", storage_id);
+    println!(
+        "✓ Uploaded content to S3 with storage_id: {} (compression: {})",
+        storage_id, compression_type
+    );
 
     // Step 3: Create and store CrawledPage in Cassandra
     let now = Utc::now();
@@ -250,6 +254,7 @@ async fn test_full_crawl_workflow_with_storage() {
         url_path: test_path.to_string(),
         url: test_url.clone(),
         storage_id: Some(storage_id),
+        storage_compression: compression_type,
         last_crawled_at: now_timestamp,
         next_crawl_at,
         crawl_frequency_hours,
@@ -290,8 +295,9 @@ async fn test_full_crawl_workflow_with_storage() {
     let retrieved_storage_id = retrieved_page
         .storage_id
         .expect("storage_id should be present");
+    let retrieved_compression = retrieved_page.storage_compression;
     let retrieved_content = storage_client
-        .get_content(retrieved_storage_id)
+        .get_content(retrieved_storage_id, retrieved_compression)
         .await
         .expect("Failed to retrieve content from S3");
 
@@ -519,8 +525,9 @@ async fn test_crawl_pipeline_end_to_end() {
     // 4b: Check content exists in S3 and matches
     let storage_client = create_storage_client().await;
     let storage_id = crawled_page.storage_id.unwrap();
+    let compression_type = crawled_page.storage_compression;
     let retrieved_content = storage_client
-        .get_content(storage_id)
+        .get_content(storage_id, compression_type)
         .await
         .expect("Failed to retrieve content from S3");
 

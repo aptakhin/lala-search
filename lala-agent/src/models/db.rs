@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Aleksandr Ptakhin
 
+use crate::models::storage::CompressionType;
 use chrono::{DateTime, Utc};
 use scylla::frame::value::CqlTimestamp;
 use uuid::Uuid;
@@ -31,6 +32,7 @@ pub struct CrawledPage {
     pub url_path: String,
     pub url: String,
     pub storage_id: Option<Uuid>,
+    pub storage_compression: CompressionType,
     pub last_crawled_at: CqlTimestamp,
     pub next_crawl_at: CqlTimestamp,
     pub crawl_frequency_hours: i32,
