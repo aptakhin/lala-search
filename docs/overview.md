@@ -40,6 +40,3 @@ The core agent responsible for:
 
 🚀 **Early Stage**: Currently bootstrapping the core agent infrastructure.
 
-## Getting Started
-
-See [docs/claude-guidelines.md](claude-guidelines.md) for development workflow and contribution guidelines.
