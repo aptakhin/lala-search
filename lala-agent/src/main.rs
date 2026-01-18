@@ -4,7 +4,7 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use chrono::Utc;
@@ -15,6 +15,7 @@ use lala_agent::models::domain::{
 };
 use lala_agent::models::queue::{AddToQueueRequest, AddToQueueResponse};
 use lala_agent::models::search::{SearchRequest, SearchResponse};
+use lala_agent::models::settings::{CrawlingEnabledResponse, SetCrawlingEnabledRequest};
 use lala_agent::models::version::VersionResponse;
 use lala_agent::services::db::CassandraClient;
 use lala_agent::services::queue_processor::QueueProcessor;
@@ -217,6 +218,39 @@ async fn delete_domain_handler(
     }))
 }
 
+async fn get_crawling_enabled_handler(
+    State(state): State<AppState>,
+) -> Result<Json<CrawlingEnabledResponse>, (StatusCode, String)> {
+    let enabled = state.db_client.is_crawling_enabled().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {}", e),
+        )
+    })?;
+
+    Ok(Json(CrawlingEnabledResponse { enabled }))
+}
+
+async fn set_crawling_enabled_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<SetCrawlingEnabledRequest>,
+) -> Result<Json<CrawlingEnabledResponse>, (StatusCode, String)> {
+    state
+        .db_client
+        .set_crawling_enabled(payload.enabled)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Database error: {}", e),
+            )
+        })?;
+
+    Ok(Json(CrawlingEnabledResponse {
+        enabled: payload.enabled,
+    }))
+}
+
 #[tokio::main]
 async fn main() {
     // Get configuration from environment variables
@@ -390,6 +424,14 @@ fn create_app(state: AppState) -> Router {
         .route(
             "/admin/allowed-domains/{domain}",
             delete(delete_domain_handler),
+        )
+        .route(
+            "/admin/settings/crawling-enabled",
+            get(get_crawling_enabled_handler),
+        )
+        .route(
+            "/admin/settings/crawling-enabled",
+            put(set_crawling_enabled_handler),
         )
         .with_state(state)
 }
@@ -900,5 +942,105 @@ mod tests {
 
         assert!(response_data.success);
         assert_eq!(response_data.domain, nonexistent_domain);
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires Cassandra connection
+    async fn test_get_crawling_enabled() {
+        let app = create_test_app().await;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/admin/settings/crawling-enabled")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let response_data: CrawlingEnabledResponse = serde_json::from_slice(&body).unwrap();
+
+        // Should return a boolean value (either true or false)
+        // We just verify the response structure is valid
+        let _ = response_data.enabled;
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires Cassandra connection
+    async fn test_set_crawling_enabled() {
+        let app = create_test_app().await;
+
+        // Set crawling to false
+        let request_body = SetCrawlingEnabledRequest { enabled: false };
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/admin/settings/crawling-enabled")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let response_data: CrawlingEnabledResponse = serde_json::from_slice(&body).unwrap();
+        assert!(!response_data.enabled);
+
+        // Verify it persisted by reading it back
+        let get_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/admin/settings/crawling-enabled")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let body = axum::body::to_bytes(get_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let response_data: CrawlingEnabledResponse = serde_json::from_slice(&body).unwrap();
+        assert!(!response_data.enabled, "Crawling should be disabled");
+
+        // Set crawling back to true
+        let request_body = SetCrawlingEnabledRequest { enabled: true };
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/admin/settings/crawling-enabled")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let response_data: CrawlingEnabledResponse = serde_json::from_slice(&body).unwrap();
+        assert!(response_data.enabled);
     }
 }

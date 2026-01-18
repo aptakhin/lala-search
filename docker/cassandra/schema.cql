@@ -104,3 +104,11 @@ ON crawled_pages (http_status);
 -- Secondary index for finding errors by type
 CREATE INDEX IF NOT EXISTS idx_error_type
 ON crawl_errors (error_type);
+
+-- Table for global agent settings
+-- Stores configuration flags like enable_crawling
+CREATE TABLE IF NOT EXISTS settings (
+    setting_key text PRIMARY KEY,
+    setting_value text,
+    updated_at timestamp
+) WITH comment = 'Global agent settings (crawling_enabled, etc)';

@@ -514,6 +514,67 @@ impl CassandraClient {
         Ok(())
     }
 
+    // ========== Settings Methods ==========
+
+    /// Get a setting value by key
+    pub async fn get_setting(&self, key: &str) -> Result<Option<String>, QueryError> {
+        let query = "SELECT setting_value FROM settings WHERE setting_key = ?";
+        let result = self.session.query_unpaged(query, (key,)).await?;
+        let rows_result = match result.into_rows_result() {
+            Ok(rows_result) => rows_result,
+            Err(_) => return Ok(None),
+        };
+
+        let mut rows_iter = rows_result.rows::<(Option<String>,)>().map_err(|e| {
+            QueryError::DbError(
+                scylla::transport::errors::DbError::Other(0),
+                format!("Failed to parse setting row: {}", e),
+            )
+        })?;
+
+        if let Some(row_result) = rows_iter.next() {
+            let (value,) = row_result.map_err(|e| {
+                QueryError::DbError(
+                    scylla::transport::errors::DbError::Other(0),
+                    format!("Failed to parse setting value: {}", e),
+                )
+            })?;
+            return Ok(value);
+        }
+
+        Ok(None)
+    }
+
+    /// Set a setting value by key
+    pub async fn set_setting(&self, key: &str, value: &str) -> Result<(), QueryError> {
+        let query =
+            "INSERT INTO settings (setting_key, setting_value, updated_at) VALUES (?, ?, toTimestamp(now()))";
+        self.session.query_unpaged(query, (key, value)).await?;
+        Ok(())
+    }
+
+    /// Check if crawling is enabled
+    /// Returns the value from settings table, or the default from CRAWLING_ENABLED_DEFAULT env var
+    /// If env var is not set, defaults to false (safe for production)
+    pub async fn is_crawling_enabled(&self) -> Result<bool, QueryError> {
+        match self.get_setting("crawling_enabled").await? {
+            Some(value) => Ok(value == "true"),
+            None => {
+                // No setting in DB - use environment default
+                let default = std::env::var("CRAWLING_ENABLED_DEFAULT")
+                    .map(|v| v == "true")
+                    .unwrap_or(false);
+                Ok(default)
+            }
+        }
+    }
+
+    /// Set crawling enabled/disabled
+    pub async fn set_crawling_enabled(&self, enabled: bool) -> Result<(), QueryError> {
+        let value = if enabled { "true" } else { "false" };
+        self.set_setting("crawling_enabled", value).await
+    }
+
     /// Re-queue an entry with incremented attempt count for retry
     /// Schedules the retry with exponential backoff based on attempt count
     pub async fn requeue_with_retry(&self, entry: &CrawlQueueEntry) -> Result<(), QueryError> {
@@ -618,5 +679,67 @@ mod tests {
             .delete_allowed_domain(&test_domain)
             .await
             .expect("Failed to clean up test domain");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_get_and_set_setting() {
+        let client = create_test_client().await;
+
+        // Use a unique setting key to avoid collision
+        let test_key = format!("test_setting_{}", chrono::Utc::now().timestamp_millis());
+
+        // Test: Initially no setting exists
+        let result = client.get_setting(&test_key).await;
+        assert!(result.is_ok());
+        assert!(
+            result.unwrap().is_none(),
+            "Setting should not exist initially"
+        );
+
+        // Test: Set a setting value
+        client
+            .set_setting(&test_key, "test_value")
+            .await
+            .expect("Failed to set setting");
+
+        // Test: Retrieve the setting
+        let result = client.get_setting(&test_key).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some("test_value".to_string()));
+
+        // Cleanup: Delete the test setting
+        let delete_query = "DELETE FROM settings WHERE setting_key = ?";
+        client
+            .session
+            .query_unpaged(delete_query, (&test_key,))
+            .await
+            .ok();
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_crawling_enabled_flag() {
+        let client = create_test_client().await;
+
+        // Set crawling to enabled
+        client
+            .set_crawling_enabled(true)
+            .await
+            .expect("Failed to enable crawling");
+
+        let result = client.is_crawling_enabled().await;
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "Crawling should be enabled");
+
+        // Set crawling to disabled
+        client
+            .set_crawling_enabled(false)
+            .await
+            .expect("Failed to disable crawling");
+
+        let result = client.is_crawling_enabled().await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "Crawling should be disabled");
     }
 }

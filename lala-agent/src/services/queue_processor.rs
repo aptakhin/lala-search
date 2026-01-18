@@ -115,8 +115,19 @@ impl QueueProcessor {
     }
 
     /// Process a single entry from the queue
-    /// Returns true if an entry was processed, false if queue was empty
+    /// Returns true if an entry was processed, false if queue was empty or crawling is disabled
     pub async fn process_next_entry(&self) -> Result<bool> {
+        // Check if crawling is enabled before processing
+        let crawling_enabled = self
+            .db_client
+            .is_crawling_enabled()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to check crawling enabled: {}", e))?;
+
+        if !crawling_enabled {
+            return Ok(false);
+        }
+
         // Get the next entry from the queue
         let entry = match self
             .db_client

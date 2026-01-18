@@ -55,6 +55,11 @@ docker compose up -d cassandra minio meilisearch cassandra-init minio-init
 echo "    Waiting for services to be ready..."
 docker compose exec -T cassandra cqlsh -e "SELECT now() FROM system.local" > /dev/null 2>&1 || sleep 30
 
+# Load environment variables from .env file for tests
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    export $(grep -v '^#' "$PROJECT_ROOT/.env" | grep -v '^$' | xargs)
+fi
+
 cd "$PROJECT_ROOT/lala-agent"
 cargo test --lib -- --ignored
 if [ $? -ne 0 ]; then
