@@ -639,6 +639,43 @@ docker compose up -d cassandra cassandra-init
 4. **Document changes**: Each migration file explains what and why
 5. **Update schema.cql**: Always keep schema.cql in sync with migrations
 
+### Handling New Columns in Rust Code
+
+**CRITICAL**: When adding columns to existing tables, existing rows will have NULL values for the new column. Always use `Option<T>` in Rust deserialization.
+
+**BAD** - Non-nullable type for new column:
+```rust
+// This will fail for existing rows where storage_compression is NULL
+rows::<(String, String, i8)>()  // i8 can't deserialize NULL
+
+pub fn from_db_value(value: i8) -> Self {
+    match value {
+        1 => CompressionType::Gzip,
+        _ => CompressionType::None,
+    }
+}
+```
+
+**GOOD** - Use Option for new columns:
+```rust
+// Option<i8> handles NULL values from existing rows
+rows::<(String, String, Option<i8>)>()
+
+pub fn from_db_value(value: Option<i8>) -> Self {
+    match value {
+        Some(1) => CompressionType::Gzip,
+        _ => CompressionType::None,  // NULL defaults to None
+    }
+}
+```
+
+**Checklist when adding a column to existing table:**
+1. ✅ Create migration file with ALTER TABLE ADD
+2. ✅ Update schema.cql with new column
+3. ✅ Use `Option<T>` in Rust deserialization tuple
+4. ✅ Handle `None` case with sensible default
+5. ✅ Add test for NULL/None handling
+
 ## Cross-Platform Compatibility
 
 **CRITICAL**: Code must work across all major platforms and architectures.
