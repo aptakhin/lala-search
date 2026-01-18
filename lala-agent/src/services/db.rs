@@ -554,17 +554,18 @@ impl CassandraClient {
     }
 
     /// Check if crawling is enabled
-    /// Returns the value from settings table, or the default from CRAWLING_ENABLED_DEFAULT env var
-    /// If env var is not set, defaults to false (safe for production)
+    /// Returns the value from settings table, or defaults based on ENVIRONMENT:
+    /// - dev: defaults to true (enabled)
+    /// - prod: defaults to false (disabled for safety)
     pub async fn is_crawling_enabled(&self) -> Result<bool, QueryError> {
         match self.get_setting("crawling_enabled").await? {
             Some(value) => Ok(value == "true"),
             None => {
-                // No setting in DB - use environment default
-                let default = std::env::var("CRAWLING_ENABLED_DEFAULT")
-                    .map(|v| v == "true")
+                // No setting in DB - use environment-based default
+                let is_dev = std::env::var("ENVIRONMENT")
+                    .map(|v| v == "dev")
                     .unwrap_or(false);
-                Ok(default)
+                Ok(is_dev)
             }
         }
     }
