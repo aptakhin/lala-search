@@ -402,7 +402,7 @@ impl CassandraClient {
                 String,
                 String,
                 Option<Uuid>,
-                i8,
+                Option<i8>, // storage_compression can be NULL for old rows
                 CqlTimestamp,
                 CqlTimestamp,
                 i32,

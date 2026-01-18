@@ -36,9 +36,10 @@ impl CompressionType {
     }
 
     /// Parse from database tinyint representation
-    pub fn from_db_value(value: i8) -> Self {
+    /// Handles NULL values (from rows created before the column existed)
+    pub fn from_db_value(value: Option<i8>) -> Self {
         match value {
-            1 => CompressionType::Gzip,
+            Some(1) => CompressionType::Gzip,
             _ => CompressionType::None,
         }
     }
@@ -80,15 +81,27 @@ mod tests {
 
         for compression_type in types {
             let db_value = compression_type.to_db_value();
-            let parsed = CompressionType::from_db_value(db_value);
+            let parsed = CompressionType::from_db_value(Some(db_value));
             assert_eq!(compression_type, parsed);
         }
     }
 
     #[test]
     fn test_compression_type_from_db_value_invalid() {
-        assert_eq!(CompressionType::from_db_value(99), CompressionType::None);
-        assert_eq!(CompressionType::from_db_value(-1), CompressionType::None);
+        assert_eq!(
+            CompressionType::from_db_value(Some(99)),
+            CompressionType::None
+        );
+        assert_eq!(
+            CompressionType::from_db_value(Some(-1)),
+            CompressionType::None
+        );
+    }
+
+    #[test]
+    fn test_compression_type_from_db_value_null() {
+        // NULL values (from old rows) should default to None compression
+        assert_eq!(CompressionType::from_db_value(None), CompressionType::None);
     }
 
     #[test]
