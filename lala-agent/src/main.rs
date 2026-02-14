@@ -10,6 +10,7 @@ use axum::{
 use chrono::Utc;
 use lala_agent::models::agent::AgentMode;
 use lala_agent::models::db::CrawlQueueEntry;
+use lala_agent::models::deployment::DeploymentMode;
 use lala_agent::models::domain::{
     AddDomainRequest, AddDomainResponse, DeleteDomainResponse, DomainInfo, ListDomainsResponse,
 };
@@ -35,6 +36,7 @@ const VERSION: &str = env!("LALA_VERSION");
 struct AppState {
     db_client: Arc<CassandraClient>,
     search_client: Option<Arc<SearchClient>>,
+    deployment_mode: DeploymentMode,
 }
 
 struct QueueProcessorConfig {
@@ -45,10 +47,11 @@ struct QueueProcessorConfig {
     poll_interval_secs: u64,
 }
 
-async fn version_handler() -> Json<VersionResponse> {
+async fn version_handler(State(state): State<AppState>) -> Json<VersionResponse> {
     Json(VersionResponse {
         agent: "lala-agent".to_string(),
         version: VERSION.to_string(),
+        deployment_mode: state.deployment_mode.to_string(),
     })
 }
 
@@ -264,6 +267,10 @@ async fn main() {
         .expect("CASSANDRA_KEYSPACE environment variable must be set");
 
     let agent_mode = AgentMode::from_env();
+    let deployment_mode = DeploymentMode::from_env();
+
+    let cassandra_system_keyspace = env::var("CASSANDRA_SYSTEM_KEYSPACE")
+        .expect("CASSANDRA_SYSTEM_KEYSPACE environment variable must be set");
 
     let poll_interval_secs = env::var("QUEUE_POLL_INTERVAL_SECS")
         .expect("QUEUE_POLL_INTERVAL_SECS environment variable must be set")
@@ -279,9 +286,17 @@ async fn main() {
         env::var("MEILISEARCH_INDEX").unwrap_or_else(|_| "documents".to_string());
 
     // Initialize database, search, and storage clients
+    let system_db = init_cassandra_client(&cassandra_hosts, &cassandra_system_keyspace).await;
     let db_client = init_cassandra_client(&cassandra_hosts, &cassandra_keyspace).await;
     let search_client = init_search_client(&meilisearch_host, &meilisearch_index).await;
     let storage_client = init_storage_client().await;
+
+    // Ensure the default tenant row exists in the system keyspace
+    if let Err(e) = system_db.ensure_default_tenant().await {
+        eprintln!("Failed to ensure default tenant in system keyspace: {}", e);
+    }
+
+    println!("Deployment mode: {}", deployment_mode);
 
     // Start queue processor if needed
     start_queue_processor_if_needed(
@@ -296,7 +311,7 @@ async fn main() {
     );
 
     // Start HTTP server
-    start_http_server(db_client, search_client).await;
+    start_http_server(db_client, search_client, deployment_mode).await;
 }
 
 /// Initialize Cassandra database client
@@ -398,10 +413,12 @@ fn start_queue_processor_if_needed(agent_mode: AgentMode, config: QueueProcessor
 async fn start_http_server(
     db_client: Arc<CassandraClient>,
     search_client: Option<Arc<SearchClient>>,
+    deployment_mode: DeploymentMode,
 ) {
     let state = AppState {
         db_client,
         search_client,
+        deployment_mode,
     };
 
     let app = create_app(state);
@@ -455,11 +472,11 @@ mod tests {
         {
             Ok(client) => Arc::new(client),
             Err(_) => {
-                // If test database is not available, use main keyspace
+                // If test database is not available, use default keyspace
                 Arc::new(
                     CassandraClient::new(
                         vec!["127.0.0.1:9042".to_string()],
-                        "lalasearch".to_string(),
+                        "lalasearch_default".to_string(),
                     )
                     .await
                     .expect("Failed to connect to database"),
@@ -470,6 +487,7 @@ mod tests {
         let state = AppState {
             db_client,
             search_client: None,
+            deployment_mode: DeploymentMode::SingleTenant,
         };
         create_app(state)
     }

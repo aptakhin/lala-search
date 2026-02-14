@@ -7,4 +7,5 @@ use serde::{Deserialize, Serialize};
 pub struct VersionResponse {
     pub agent: String,
     pub version: String,
+    pub deployment_mode: String,
 }

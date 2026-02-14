@@ -93,16 +93,19 @@ services:
         condition: service_healthy
     volumes:
       - ./docker/cassandra/schema.cql:/schema.cql.template:ro
-    environment:
-      - KEYSPACE_NAME=${CASSANDRA_KEYSPACE:-lalasearch}
+      - ./docker/cassandra/schema_system.cql:/schema_system.cql.template:ro
+    env_file:
+      - .env
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
         echo 'Waiting for Cassandra to be ready...'
         sleep 10
-        echo 'Initializing Cassandra schema for keyspace: '$$KEYSPACE_NAME
-        # Substitute KEYSPACE_NAME in template
-        sed "s/\$${KEYSPACE_NAME}/$$KEYSPACE_NAME/g" /schema.cql.template > /schema.cql
+        echo 'Initializing system keyspace: '$$CASSANDRA_SYSTEM_KEYSPACE
+        sed "s/\$${SYSTEM_KEYSPACE_NAME}/$$CASSANDRA_SYSTEM_KEYSPACE/g" /schema_system.cql.template > /schema_system.cql
+        cqlsh cassandra -f /schema_system.cql
+        echo 'Initializing tenant keyspace: '$$CASSANDRA_KEYSPACE
+        sed "s/\$${KEYSPACE_NAME}/$$CASSANDRA_KEYSPACE/g" /schema.cql.template > /schema.cql
         cqlsh cassandra -f /schema.cql
         echo 'Schema initialized successfully!'
     networks:

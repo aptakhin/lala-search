@@ -32,32 +32,63 @@ impl CassandraConfig {
     }
 }
 
-/// Apache Cassandra client for managing crawl queue and crawled pages
+/// Apache Cassandra client for managing crawl queue and crawled pages.
+///
+/// All queries use fully qualified table names (`keyspace.table`) so that multiple
+/// instances can share the same connection pool while targeting different keyspaces.
+/// This is the foundation for multi-tenant operation: call `with_keyspace()` to create
+/// a tenant-scoped client that reuses the same underlying connections.
 #[derive(Clone)]
 pub struct CassandraClient {
     session: Arc<Session>,
-    _keyspace: String,
+    pub keyspace: String,
 }
 
 impl CassandraClient {
-    /// Create a new Apache Cassandra client
+    /// Create a new Apache Cassandra client.
+    ///
+    /// Does not issue a USE statement. All queries use fully qualified table names
+    /// so the same connection pool can serve multiple keyspaces concurrently.
     pub async fn new(hosts: Vec<String>, keyspace: String) -> Result<Self, NewSessionError> {
         let session = SessionBuilder::new().known_nodes(&hosts).build().await?;
 
-        let session = Arc::new(session);
-
-        // Set the keyspace
-        session.use_keyspace(&keyspace, false).await?;
-
         Ok(Self {
-            session,
-            _keyspace: keyspace,
+            session: Arc::new(session),
+            keyspace,
         })
     }
 
     /// Create a new Apache Cassandra client from configuration
     pub async fn from_config(config: CassandraConfig) -> Result<Self, NewSessionError> {
         Self::new(config.hosts, config.keyspace).await
+    }
+
+    /// Create a new client targeting a different keyspace, sharing the same connection pool.
+    ///
+    /// Used in multi-tenant mode to scope a request to a specific tenant's keyspace:
+    /// ```rust,ignore
+    /// let tenant_db = state.db_client.with_keyspace("lalasearch_acme");
+    /// tenant_db.is_domain_allowed(&domain).await?;
+    /// ```
+    pub fn with_keyspace(&self, keyspace: impl Into<String>) -> Self {
+        Self {
+            session: self.session.clone(),
+            keyspace: keyspace.into(),
+        }
+    }
+
+    /// Ensure the default tenant row exists in this client's keyspace.
+    ///
+    /// Called on startup against the system keyspace client to initialize the tenant registry.
+    /// Uses IF NOT EXISTS so it is safe to call repeatedly.
+    pub async fn ensure_default_tenant(&self) -> Result<(), QueryError> {
+        let query = format!(
+            "INSERT INTO {}.tenants (tenant_id, name, created_at) \
+             VALUES ('default', 'Default', toTimestamp(now())) IF NOT EXISTS",
+            self.keyspace
+        );
+        self.session.query_unpaged(query, &[]).await?;
+        Ok(())
     }
 
     /// Insert an allowed domain
@@ -67,7 +98,10 @@ impl CassandraClient {
         added_by: &str,
         notes: Option<&str>,
     ) -> Result<(), QueryError> {
-        let query = "INSERT INTO allowed_domains (domain, added_at, added_by, notes) VALUES (?, toTimestamp(now()), ?, ?)";
+        let query = format!(
+            "INSERT INTO {}.allowed_domains (domain, added_at, added_by, notes) VALUES (?, toTimestamp(now()), ?, ?)",
+            self.keyspace
+        );
         self.session
             .query_unpaged(query, (domain, added_by, notes))
             .await?;
@@ -76,7 +110,10 @@ impl CassandraClient {
 
     /// Delete an allowed domain (used for test cleanup)
     pub async fn delete_allowed_domain(&self, domain: &str) -> Result<(), QueryError> {
-        let query = "DELETE FROM allowed_domains WHERE domain = ?";
+        let query = format!(
+            "DELETE FROM {}.allowed_domains WHERE domain = ?",
+            self.keyspace
+        );
         self.session.query_unpaged(query, (domain,)).await?;
         Ok(())
     }
@@ -85,7 +122,10 @@ impl CassandraClient {
     pub async fn list_allowed_domains(
         &self,
     ) -> Result<Vec<(String, Option<String>, Option<String>, Option<String>)>, QueryError> {
-        let query = "SELECT domain, added_by, notes, added_at FROM allowed_domains";
+        let query = format!(
+            "SELECT domain, added_by, notes, added_at FROM {}.allowed_domains",
+            self.keyspace
+        );
         let result = self.session.query_unpaged(query, &[]).await?;
         let rows_result = match result.into_rows_result() {
             Ok(rows_result) => rows_result,
@@ -130,7 +170,10 @@ impl CassandraClient {
         domain: &str,
         url_path: &str,
     ) -> Result<(), QueryError> {
-        let query = "DELETE FROM crawled_pages WHERE domain = ? AND url_path = ?";
+        let query = format!(
+            "DELETE FROM {}.crawled_pages WHERE domain = ? AND url_path = ?",
+            self.keyspace
+        );
         self.session
             .query_unpaged(query, (domain, url_path))
             .await?;
@@ -140,10 +183,12 @@ impl CassandraClient {
     /// Get the next entry from the crawl queue (with lowest priority and earliest scheduled_at)
     /// This performs a SELECT to find entries to process
     pub async fn get_next_queue_entry(&self) -> Result<Option<CrawlQueueEntry>, QueryError> {
-        let query =
+        let query = format!(
             "SELECT priority, scheduled_at, url, domain, last_attempt_at, attempt_count, created_at
-                     FROM crawl_queue
-                     LIMIT 1";
+             FROM {}.crawl_queue
+             LIMIT 1",
+            self.keyspace
+        );
 
         let result = self.session.query_unpaged(query, &[]).await?;
         let rows_result = match result.into_rows_result() {
@@ -200,10 +245,10 @@ impl CassandraClient {
         let date = now.date_naive();
         let hour = now.hour() as i32;
 
-        // Query crawl_stats for the current hour
-        let query = "SELECT pages_crawled FROM crawl_stats
-                     WHERE date = ? AND hour = ?";
-
+        let query = format!(
+            "SELECT pages_crawled FROM {}.crawl_stats WHERE date = ? AND hour = ?",
+            self.keyspace
+        );
         let result = self.session.query_unpaged(query, (date, hour)).await?;
         let rows_result = match result.into_rows_result() {
             Ok(r) => r,
@@ -250,9 +295,12 @@ impl CassandraClient {
 
     /// Insert an entry into the crawl queue
     pub async fn insert_queue_entry(&self, entry: &CrawlQueueEntry) -> Result<(), QueryError> {
-        let query = "INSERT INTO crawl_queue
-                     (priority, scheduled_at, url, domain, last_attempt_at, attempt_count, created_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)";
+        let query = format!(
+            "INSERT INTO {}.crawl_queue
+             (priority, scheduled_at, url, domain, last_attempt_at, attempt_count, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            self.keyspace
+        );
 
         self.session
             .query_unpaged(
@@ -277,8 +325,10 @@ impl CassandraClient {
     /// for multiple workers. If the entry was already processed by another worker, the DELETE
     /// will simply affect 0 rows.
     pub async fn delete_queue_entry(&self, entry: &CrawlQueueEntry) -> Result<(), QueryError> {
-        let query = "DELETE FROM crawl_queue
-                     WHERE priority = ? AND scheduled_at = ? AND url = ?";
+        let query = format!(
+            "DELETE FROM {}.crawl_queue WHERE priority = ? AND scheduled_at = ? AND url = ?",
+            self.keyspace
+        );
 
         self.session
             .query_unpaged(
@@ -292,11 +342,14 @@ impl CassandraClient {
 
     /// Insert or update a crawled page
     pub async fn upsert_crawled_page(&self, page: &CrawledPage) -> Result<(), QueryError> {
-        let query = "INSERT INTO crawled_pages
-                     (domain, url_path, url, storage_id, storage_compression, last_crawled_at, next_crawl_at,
-                      crawl_frequency_hours, http_status, content_hash, content_length,
-                      robots_allowed, error_message, crawl_count, created_at, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        let query = format!(
+            "INSERT INTO {}.crawled_pages
+             (domain, url_path, url, storage_id, storage_compression, last_crawled_at, next_crawl_at,
+              crawl_frequency_hours, http_status, content_hash, content_length,
+              robots_allowed, error_message, crawl_count, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            self.keyspace
+        );
 
         self.session
             .query_unpaged(
@@ -335,9 +388,10 @@ impl CassandraClient {
         let date = now.date_naive();
         let hour = now.hour() as i32;
 
-        let query = "UPDATE crawl_stats
-                     SET pages_crawled = pages_crawled + 1
-                     WHERE date = ? AND hour = ? AND domain = ?";
+        let query = format!(
+            "UPDATE {}.crawl_stats SET pages_crawled = pages_crawled + 1 WHERE date = ? AND hour = ? AND domain = ?",
+            self.keyspace
+        );
 
         self.session
             .query_unpaged(query, (date, hour, domain))
@@ -349,7 +403,10 @@ impl CassandraClient {
     /// Check if a domain is in the allowed domains list
     /// Returns true if the domain is allowed, false otherwise
     pub async fn is_domain_allowed(&self, domain: &str) -> Result<bool, QueryError> {
-        let query = "SELECT domain FROM allowed_domains WHERE domain = ?";
+        let query = format!(
+            "SELECT domain FROM {}.allowed_domains WHERE domain = ?",
+            self.keyspace
+        );
 
         let result = self.session.query_unpaged(query, (domain,)).await?;
         let rows_result = match result.into_rows_result() {
@@ -374,11 +431,14 @@ impl CassandraClient {
         domain: &str,
         url_path: &str,
     ) -> Result<Option<CrawledPage>, QueryError> {
-        let query = "SELECT domain, url_path, url, storage_id, storage_compression, last_crawled_at, next_crawl_at,
-                            crawl_frequency_hours, http_status, content_hash, content_length,
-                            robots_allowed, error_message, crawl_count, created_at, updated_at
-                     FROM crawled_pages
-                     WHERE domain = ? AND url_path = ?";
+        let query = format!(
+            "SELECT domain, url_path, url, storage_id, storage_compression, last_crawled_at, next_crawl_at,
+                    crawl_frequency_hours, http_status, content_hash, content_length,
+                    robots_allowed, error_message, crawl_count, created_at, updated_at
+             FROM {}.crawled_pages
+             WHERE domain = ? AND url_path = ?",
+            self.keyspace
+        );
 
         let result = self
             .session
@@ -472,9 +532,12 @@ impl CassandraClient {
 
     /// Log a crawl error to the crawl_errors table
     pub async fn log_crawl_error(&self, error: &CrawlError) -> Result<(), QueryError> {
-        let query = "INSERT INTO crawl_errors
-                     (domain, occurred_at, url, error_type, error_message, attempt_count, stack_trace)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)";
+        let query = format!(
+            "INSERT INTO {}.crawl_errors
+             (domain, occurred_at, url, error_type, error_message, attempt_count, stack_trace)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            self.keyspace
+        );
 
         self.session
             .query_unpaged(
@@ -503,9 +566,10 @@ impl CassandraClient {
         let date = now.date_naive();
         let hour = now.hour() as i32;
 
-        let query = "UPDATE crawl_stats
-                     SET pages_failed = pages_failed + 1
-                     WHERE date = ? AND hour = ? AND domain = ?";
+        let query = format!(
+            "UPDATE {}.crawl_stats SET pages_failed = pages_failed + 1 WHERE date = ? AND hour = ? AND domain = ?",
+            self.keyspace
+        );
 
         self.session
             .query_unpaged(query, (date, hour, domain))
@@ -518,7 +582,10 @@ impl CassandraClient {
 
     /// Get a setting value by key
     pub async fn get_setting(&self, key: &str) -> Result<Option<String>, QueryError> {
-        let query = "SELECT setting_value FROM settings WHERE setting_key = ?";
+        let query = format!(
+            "SELECT setting_value FROM {}.settings WHERE setting_key = ?",
+            self.keyspace
+        );
         let result = self.session.query_unpaged(query, (key,)).await?;
         let rows_result = match result.into_rows_result() {
             Ok(rows_result) => rows_result,
@@ -547,8 +614,10 @@ impl CassandraClient {
 
     /// Set a setting value by key
     pub async fn set_setting(&self, key: &str, value: &str) -> Result<(), QueryError> {
-        let query =
-            "INSERT INTO settings (setting_key, setting_value, updated_at) VALUES (?, ?, toTimestamp(now()))";
+        let query = format!(
+            "INSERT INTO {}.settings (setting_key, setting_value, updated_at) VALUES (?, ?, toTimestamp(now()))",
+            self.keyspace
+        );
         self.session.query_unpaged(query, (key, value)).await?;
         Ok(())
     }
@@ -605,14 +674,24 @@ mod tests {
 
     // Integration tests requiring Cassandra.
     // Run with: cargo test -- --ignored
-    // Requires CASSANDRA_HOSTS and CASSANDRA_KEYSPACE environment variables.
+    // Requires CASSANDRA_HOSTS, CASSANDRA_KEYSPACE, and CASSANDRA_SYSTEM_KEYSPACE env variables.
 
-    /// Helper to create a CassandraClient from environment variables.
-    /// Fails if required environment variables are not set.
+    /// Helper to create a CassandraClient for the tenant keyspace from environment variables.
     async fn create_test_client() -> CassandraClient {
         let config = CassandraConfig::from_env()
             .expect("CASSANDRA_HOSTS and CASSANDRA_KEYSPACE must be set");
         CassandraClient::from_config(config)
+            .await
+            .expect("Failed to connect to Cassandra")
+    }
+
+    /// Helper to create a CassandraClient for the system keyspace from environment variables.
+    async fn create_system_test_client() -> CassandraClient {
+        let hosts_str = std::env::var("CASSANDRA_HOSTS").expect("CASSANDRA_HOSTS must be set");
+        let hosts: Vec<String> = hosts_str.split(',').map(|s| s.trim().to_string()).collect();
+        let system_keyspace = std::env::var("CASSANDRA_SYSTEM_KEYSPACE")
+            .expect("CASSANDRA_SYSTEM_KEYSPACE must be set");
+        CassandraClient::new(hosts, system_keyspace)
             .await
             .expect("Failed to connect to Cassandra")
     }
@@ -710,7 +789,10 @@ mod tests {
         assert_eq!(result.unwrap(), Some("test_value".to_string()));
 
         // Cleanup: Delete the test setting
-        let delete_query = "DELETE FROM settings WHERE setting_key = ?";
+        let delete_query = format!(
+            "DELETE FROM {}.settings WHERE setting_key = ?",
+            client.keyspace
+        );
         client
             .session
             .query_unpaged(delete_query, (&test_key,))
@@ -742,5 +824,38 @@ mod tests {
         let result = client.is_crawling_enabled().await;
         assert!(result.is_ok());
         assert!(!result.unwrap(), "Crawling should be disabled");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_ensure_default_tenant_is_idempotent() {
+        let system_client = create_system_test_client().await;
+
+        // Should be idempotent - calling twice should not error
+        system_client
+            .ensure_default_tenant()
+            .await
+            .expect("First call should succeed");
+        system_client
+            .ensure_default_tenant()
+            .await
+            .expect("Second call should also succeed (IF NOT EXISTS)");
+
+        // Verify the default tenant row exists
+        let query = format!(
+            "SELECT tenant_id FROM {}.tenants WHERE tenant_id = 'default'",
+            system_client.keyspace
+        );
+        let result = system_client
+            .session
+            .query_unpaged(query, &[])
+            .await
+            .unwrap();
+        let rows_result = result.into_rows_result().unwrap();
+        let mut rows = rows_result.rows::<(String,)>().unwrap();
+        assert!(
+            rows.next().is_some(),
+            "Default tenant row should exist after ensure_default_tenant"
+        );
     }
 }
