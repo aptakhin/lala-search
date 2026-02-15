@@ -257,6 +257,8 @@ LalaSearch supports two deployment modes controlled by the `DEPLOYMENT_MODE` env
 
 In single-tenant mode there is one tenant (`default`) and one data keyspace (`lalasearch_default`). The multi-tenant mode is the same codebase — only the auth middleware changes to route requests to per-tenant keyspaces.
 
+> **Note**: Multi-tenant features (tenant management, billing, payments) may be moved to a separate proprietary repository in the future as part of an open-core model. The single-tenant self-hosted version will always remain open source.
+
 See [docs/multi-tenancy.md](docs/multi-tenancy.md) for the full architecture.
 
 ## Current Status
