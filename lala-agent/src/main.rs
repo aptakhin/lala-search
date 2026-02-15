@@ -18,7 +18,11 @@ use lala_agent::models::queue::{AddToQueueRequest, AddToQueueResponse};
 use lala_agent::models::search::{SearchRequest, SearchResponse};
 use lala_agent::models::settings::{CrawlingEnabledResponse, SetCrawlingEnabledRequest};
 use lala_agent::models::version::VersionResponse;
+use lala_agent::routes::{auth_router, AuthState};
+use lala_agent::services::auth::AuthConfig;
+use lala_agent::services::auth_db::AuthDbClient;
 use lala_agent::services::db::CassandraClient;
+use lala_agent::services::email::{EmailConfig, EmailService};
 use lala_agent::services::queue_processor::QueueProcessor;
 use lala_agent::services::search::SearchClient;
 use lala_agent::services::storage::{S3Config, StorageClient};
@@ -27,6 +31,7 @@ use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use tower_cookies::CookieManagerLayer;
 
 // Version is extracted from Cargo.toml at compile time via build.rs
 // In CI/CD, the patch version can be overridden via LALA_PATCH_VERSION env var
@@ -311,7 +316,7 @@ async fn main() {
     );
 
     // Start HTTP server
-    start_http_server(db_client, search_client, deployment_mode).await;
+    start_http_server(db_client, system_db, search_client, deployment_mode).await;
 }
 
 /// Initialize Cassandra database client
@@ -412,6 +417,7 @@ fn start_queue_processor_if_needed(agent_mode: AgentMode, config: QueueProcessor
 /// Start the HTTP server
 async fn start_http_server(
     db_client: Arc<CassandraClient>,
+    system_db: Arc<CassandraClient>,
     search_client: Option<Arc<SearchClient>>,
     deployment_mode: DeploymentMode,
 ) {
@@ -421,7 +427,10 @@ async fn start_http_server(
         deployment_mode,
     };
 
-    let app = create_app(state);
+    // Initialize auth services (optional - only if email is configured)
+    let auth_state = init_auth_state(system_db).await;
+
+    let app = create_app(state, auth_state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
@@ -431,8 +440,52 @@ async fn start_http_server(
     axum::serve(listener, app).await.unwrap();
 }
 
-fn create_app(state: AppState) -> Router {
-    Router::new()
+/// Initialize auth state if email service is configured.
+async fn init_auth_state(system_db: Arc<CassandraClient>) -> Option<AuthState> {
+    // Check if email service is configured
+    let email_config = match EmailConfig::from_env() {
+        Ok(config) => config,
+        Err(e) => {
+            println!(
+                "Email service not configured ({}), authentication disabled",
+                e
+            );
+            return None;
+        }
+    };
+
+    let email_service = match EmailService::new(email_config) {
+        Ok(service) => {
+            println!("Email service configured, authentication enabled");
+            service
+        }
+        Err(e) => {
+            println!(
+                "Failed to initialize email service ({}), authentication disabled",
+                e
+            );
+            return None;
+        }
+    };
+
+    let keyspace =
+        env::var("CASSANDRA_SYSTEM_KEYSPACE").unwrap_or_else(|_| "lalasearch_system".to_string());
+
+    let auth_db = AuthDbClient::new(system_db.session(), keyspace);
+    let auth_config = AuthConfig::from_env();
+    let default_tenant_id =
+        env::var("CASSANDRA_KEYSPACE").unwrap_or_else(|_| "lalasearch_default".to_string());
+
+    Some(AuthState::new(
+        auth_db,
+        email_service,
+        auth_config,
+        default_tenant_id,
+    ))
+}
+
+fn create_app(state: AppState, auth_state: Option<AuthState>) -> Router {
+    let mut app = Router::new()
         .route("/version", get(version_handler))
         .route("/queue/add", post(add_to_queue_handler))
         .route("/search", post(search_handler))
@@ -450,7 +503,16 @@ fn create_app(state: AppState) -> Router {
             "/admin/settings/crawling-enabled",
             put(set_crawling_enabled_handler),
         )
-        .with_state(state)
+        .with_state(state);
+
+    // Add auth routes if configured
+    if let Some(auth_state) = auth_state {
+        let auth_routes = auth_router().with_state(auth_state);
+        app = app.nest("/auth", auth_routes);
+    }
+
+    // Add cookie layer for session management
+    app.layer(CookieManagerLayer::new())
 }
 
 #[cfg(test)]
@@ -489,7 +551,7 @@ mod tests {
             search_client: None,
             deployment_mode: DeploymentMode::SingleTenant,
         };
-        create_app(state)
+        create_app(state, None)
     }
 
     #[tokio::test]

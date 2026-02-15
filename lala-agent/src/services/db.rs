@@ -77,6 +77,12 @@ impl CassandraClient {
         }
     }
 
+    /// Get a reference to the underlying Scylla session.
+    /// Used for creating specialized clients like AuthDbClient.
+    pub fn session(&self) -> Arc<Session> {
+        self.session.clone()
+    }
+
     /// Ensure the default tenant row exists in this client's keyspace.
     ///
     /// Called on startup against the system keyspace client to initialize the tenant registry.
