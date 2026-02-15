@@ -14,16 +14,28 @@ lalasearch/
 │   ├── overview.md                # Project vision and architecture
 │   ├── api.md                     # API reference with curl examples
 │   ├── docker.md                  # Docker setup and usage guide
-│   └── versioning.md              # Version management
+│   ├── versioning.md              # Version management
+│   └── multi-tenancy.md           # Multi-tenancy architecture decisions
 ├── lala-agent/                    # Core agent implementation
 │   ├── src/
 │   │   ├── main.rs                # HTTP server entry point
 │   │   ├── lib.rs                 # Library root
 │   │   ├── models/                # Data models
-│   │   │   ├── version.rs        # Version response model
-│   │   │   └── crawler.rs        # Crawler request/result models
+│   │   │   ├── agent.rs          # AgentMode enum (worker/manager/all)
+│   │   │   ├── deployment.rs     # DeploymentMode enum (single/multi tenant)
+│   │   │   ├── db.rs             # Cassandra row types
+│   │   │   ├── crawler.rs        # Crawler request/result models
+│   │   │   ├── queue.rs          # Crawl queue entry model
+│   │   │   ├── search.rs         # Search request/response models
+│   │   │   ├── settings.rs       # Settings model
+│   │   │   ├── storage.rs        # S3 storage models
+│   │   │   └── version.rs        # Version response model
 │   │   └── services/              # Business logic
-│   │       └── crawler.rs        # Web crawler with robots.txt support
+│   │       ├── crawler.rs        # Web crawler with robots.txt support
+│   │       ├── db.rs             # Cassandra client (fully qualified table names)
+│   │       ├── queue_processor.rs # Queue processing and crawl pipeline
+│   │       ├── search.rs         # Meilisearch client
+│   │       └── storage.rs        # S3 storage client with gzip compression
 │   ├── tests/                     # Integration tests
 │   │   ├── crawler_integration_test.rs
 │   │   └── queue_processor_integration_test.rs
@@ -32,8 +44,10 @@ lalasearch/
 │   └── build.rs                   # Build-time version extraction
 ├── docker/                        # Docker configuration
 │   └── cassandra/
-│       └── schema.cql             # Apache Cassandra database schema
+│       ├── schema.cql             # Tenant keyspace schema (lalasearch_default)
+│       └── schema_system.cql      # System keyspace schema (lalasearch_system)
 ├── docker-compose.yml             # Multi-container setup
+├── .env.example                   # Environment variables template
 └── scripts/
     └── pre-commit.sh              # Pre-commit validation script
 ```
@@ -90,7 +104,7 @@ See [docs/api.md](docs/api.md) for complete API reference with curl examples.
 
 ## Development
 
-This project follows Test-Driven Development (TDD). See [docs/claude-guidelines.md](docs/claude-guidelines.md) for detailed development workflow.
+This project follows Test-Driven Development (TDD). See [CLAUDE.md](CLAUDE.md) for detailed development workflow.
 
 ### Manual Testing with Crawl Queue
 
@@ -114,17 +128,17 @@ You can also query the database directly to see queue and crawled page status:
 # Connect to Cassandra via Docker
 docker exec -it lalasearch-cassandra cqlsh
 
-# Switch to lalasearch keyspace
-USE lalasearch;
-
-# View the queue
-SELECT * FROM crawl_queue;
+# View the queue (fully qualified keyspace.table)
+SELECT * FROM lalasearch_default.crawl_queue;
 
 # View crawled pages (after the agent processes the queue)
-SELECT * FROM crawled_pages;
+SELECT * FROM lalasearch_default.crawled_pages;
 
 # Check for a specific crawled page
-SELECT * FROM crawled_pages WHERE domain = 'en.wikipedia.org' AND url_path = '/wiki/Main_Page';
+SELECT * FROM lalasearch_default.crawled_pages WHERE domain = 'en.wikipedia.org' AND url_path = '/wiki/Main_Page';
+
+# View tenant registry
+SELECT * FROM lalasearch_system.tenants;
 ```
 
 ### First-Time Setup
@@ -232,23 +246,39 @@ Set the following environment variables in your `.env` file:
 - Compression type determines the correct S3 object key for retrieval
 - No trial-and-error lookups - compression metadata ensures single S3 request
 
+## Deployment Modes
+
+LalaSearch supports two deployment modes controlled by the `DEPLOYMENT_MODE` environment variable:
+
+| Mode | Value | Description |
+|------|-------|-------------|
+| Single-tenant | `single_tenant` | Self-hosted open source installation (default) |
+| Multi-tenant | `multi_tenant` | SaaS/hosted version — one Cassandra keyspace per customer |
+
+In single-tenant mode there is one tenant (`default`) and one data keyspace (`lalasearch_default`). The multi-tenant mode is the same codebase — only the auth middleware changes to route requests to per-tenant keyspaces.
+
+See [docs/multi-tenancy.md](docs/multi-tenancy.md) for the full architecture.
+
 ## Current Status
 
 ✅ **Implemented:**
-- HTTP server with version endpoint
+- HTTP server with version and health endpoints
 - Web crawler with robots.txt compliance
+- Apache Cassandra for crawl metadata storage (fully qualified table names)
+- Crawl queue management and distributed queue processing
+- S3-compatible storage for crawled HTML content with gzip compression
+- Meilisearch integration for full-text search
+- Single-tenant / multi-tenant deployment modes
+- System keyspace (`lalasearch_system`) with global tenant registry
+- Docker and Docker Compose setup with proper startup ordering
 - Modular architecture (models, services, handlers)
-- Docker and Docker Compose setup
-- Apache Cassandra for crawl metadata storage
-- S3-compatible storage for crawled HTML content
 - Test-driven development workflow
 - Code quality tooling and pre-commit hooks
 - Build-time version extraction
 
 🚧 **In Progress:**
-- Apache Cassandra client integration in Rust
-- Crawl queue management
-- Distributed worker coordination
+- Distributed worker coordination (leader-follower)
+- Multi-tenant auth middleware and tenant provisioning API
 
 ## License
 

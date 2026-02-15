@@ -204,9 +204,10 @@ If any check fails, fix the issues before committing.
 ## Completing Features
 
 **Every feature MUST be completed with**:
-1. Update README.md if project structure changed (new files, directories, tests)
-2. Run `./scripts/pre-commit.sh`
-3. Commit: `git add . && git commit -m "feat: description"`
+1. Update `README.md` if project structure changed (new files, directories, tests, status)
+2. Update any relevant files in `docs/` — keep architecture docs, keyspace names, env vars, and feature descriptions in sync with the code
+3. Run `./scripts/pre-commit.sh`
+4. Commit: `git add . && git commit -m "feat: description"`
 
 **Never consider a feature complete until it is committed!**
 
