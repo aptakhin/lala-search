@@ -19,8 +19,6 @@ use lala_agent::models::search::{SearchRequest, SearchResponse};
 use lala_agent::models::settings::{CrawlingEnabledResponse, SetCrawlingEnabledRequest};
 use lala_agent::models::version::VersionResponse;
 use lala_agent::routes::{auth_router, AuthApiDoc, AuthState};
-use utoipa::OpenApi;
-use utoipa_swagger_ui::SwaggerUi;
 use lala_agent::services::auth::AuthConfig;
 use lala_agent::services::auth_db::AuthDbClient;
 use lala_agent::services::db::CassandraClient;
@@ -34,6 +32,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tower_cookies::CookieManagerLayer;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 // Version is extracted from Cargo.toml at compile time via build.rs
 // In CI/CD, the patch version can be overridden via LALA_PATCH_VERSION env var
@@ -510,9 +510,9 @@ fn create_app(state: AppState, auth_state: Option<AuthState>) -> Router {
     // Add auth routes and Swagger UI if configured
     if let Some(auth_state) = auth_state {
         let auth_routes = auth_router().with_state(auth_state);
-        app = app
-            .nest("/auth", auth_routes)
-            .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", AuthApiDoc::openapi()));
+        app = app.nest("/auth", auth_routes).merge(
+            SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", AuthApiDoc::openapi()),
+        );
     }
 
     // Add cookie layer for session management

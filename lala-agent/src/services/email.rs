@@ -13,8 +13,10 @@ use std::env;
 pub struct EmailConfig {
     pub smtp_host: String,
     pub smtp_port: u16,
-    pub smtp_username: String,
-    pub smtp_password: String,
+    /// SMTP username (optional for local Postfix)
+    pub smtp_username: Option<String>,
+    /// SMTP password (optional for local Postfix)
+    pub smtp_password: Option<String>,
     pub smtp_tls: bool,
     pub from_email: String,
     pub from_name: String,
@@ -32,8 +34,9 @@ impl EmailConfig {
                 .unwrap_or_else(|_| "587".to_string())
                 .parse()
                 .context("SMTP_PORT must be a valid port number")?,
-            smtp_username: env::var("SMTP_USERNAME").context("SMTP_USERNAME must be set")?,
-            smtp_password: env::var("SMTP_PASSWORD").context("SMTP_PASSWORD must be set")?,
+            // Username/password are optional for local SMTP servers like Postfix
+            smtp_username: env::var("SMTP_USERNAME").ok().filter(|s| !s.is_empty()),
+            smtp_password: env::var("SMTP_PASSWORD").ok().filter(|s| !s.is_empty()),
             smtp_tls: env::var("SMTP_TLS").map(|v| v == "true").unwrap_or(true),
             from_email: env::var("SMTP_FROM_EMAIL").context("SMTP_FROM_EMAIL must be set")?,
             from_name: env::var("SMTP_FROM_NAME").unwrap_or_else(|_| "LalaSearch".to_string()),
@@ -85,19 +88,37 @@ pub struct EmailService {
 impl EmailService {
     /// Create a new email service with the given configuration.
     pub fn new(config: EmailConfig) -> Result<Self> {
-        let creds = Credentials::new(config.smtp_username.clone(), config.smtp_password.clone());
-
-        let transport = if config.smtp_tls {
-            AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_host)
-                .context("Failed to create SMTP relay")?
-                .port(config.smtp_port)
-                .credentials(creds)
-                .build()
-        } else {
-            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.smtp_host)
-                .port(config.smtp_port)
-                .credentials(creds)
-                .build()
+        // Build transport based on TLS and authentication settings
+        let transport = match (&config.smtp_username, &config.smtp_password) {
+            // With credentials (external SMTP services)
+            (Some(username), Some(password)) => {
+                let creds = Credentials::new(username.clone(), password.clone());
+                if config.smtp_tls {
+                    AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_host)
+                        .context("Failed to create SMTP relay")?
+                        .port(config.smtp_port)
+                        .credentials(creds)
+                        .build()
+                } else {
+                    AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.smtp_host)
+                        .port(config.smtp_port)
+                        .credentials(creds)
+                        .build()
+                }
+            }
+            // Without credentials (local Postfix)
+            _ => {
+                if config.smtp_tls {
+                    AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_host)
+                        .context("Failed to create SMTP relay")?
+                        .port(config.smtp_port)
+                        .build()
+                } else {
+                    AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.smtp_host)
+                        .port(config.smtp_port)
+                        .build()
+                }
+            }
         };
 
         let from_mailbox: Mailbox = format!("{} <{}>", config.from_name, config.from_email)
