@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Aleksandr Ptakhin
 
 pub mod agent;
+pub mod auth;
 pub mod crawler;
 pub mod db;
 pub mod deployment;

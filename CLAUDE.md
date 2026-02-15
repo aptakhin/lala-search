@@ -277,6 +277,35 @@ lalasearch/
 8. **Document assumptions**: Use comments for non-obvious decisions
 9. **Always finish with commit**: Run pre-commit.sh and commit before moving to next feature
 
+## Avoid Hardcoded Values in Comments
+
+**CRITICAL**: Never put specific values in comments that are configured elsewhere.
+
+Comments with hardcoded values become stale when configuration changes, leading to confusion.
+
+**BAD** - Hardcoded values in comments:
+```sql
+-- Session expires in 1 year
+expires_at timestamp,
+
+-- Magic link valid for 15 minutes
+expires_at timestamp,
+```
+
+**GOOD** - Reference configuration source:
+```sql
+-- Expiry configured via SESSION_MAX_AGE_DAYS env var
+expires_at timestamp,
+
+-- Expiry configured via MAGIC_LINK_EXPIRY_MINUTES env var
+expires_at timestamp,
+```
+
+**Why this matters**:
+- Comments become incorrect when config values change
+- Developers may trust stale comments over actual configuration
+- Single source of truth (config) is more reliable than scattered comments
+
 ## Integration Tests
 
 ### Reuse Existing Code

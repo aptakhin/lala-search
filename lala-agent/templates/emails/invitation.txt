@@ -1,0 +1,13 @@
+You've been invited to join {{org_name}}
+
+{{inviter_email}} has invited you to join their organization on LalaSearch.
+
+Click the link below to accept:
+
+{{invite_link}}
+
+This invitation will expire in {{expiry_days}} days.
+
+If you didn't expect this invitation, you can safely ignore it.
+
+- The LalaSearch Team

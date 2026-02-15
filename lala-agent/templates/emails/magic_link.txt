@@ -1,0 +1,11 @@
+Sign in to LalaSearch
+
+Click the link below to sign in:
+
+{{verify_link}}
+
+This link will expire in {{expiry_minutes}} minutes.
+
+If you didn't request this email, you can safely ignore it.
+
+- The LalaSearch Team

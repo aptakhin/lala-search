@@ -31,3 +31,15 @@ url = "2.5.8"
 rust-s3 = "0.35"
 uuid = { version = "1.11", features = ["v7", "serde"] }
 flate2 = "1.0"
+
+# Authentication
+tower-cookies = "0.11"                    # Cookie handling for Axum
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "builder"] }
+rand = "0.8"                              # Token generation
+sha2 = "0.10"                             # Token hashing
+hex = "0.4"                               # Hex encoding for tokens
+
+# OpenAPI documentation
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-axum = "0.2"
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
