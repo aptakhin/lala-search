@@ -5,4 +5,4 @@
 
 pub mod auth;
 
-pub use auth::{auth_router, AuthState};
+pub use auth::{auth_router, AuthApiDoc, AuthState};

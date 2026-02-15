@@ -23,6 +23,7 @@ use axum::{
 };
 use std::sync::Arc;
 use tower_cookies::Cookies;
+use utoipa::OpenApi;
 
 /// State for auth routes.
 #[derive(Clone)]
@@ -81,6 +82,41 @@ pub fn auth_router() -> Router<AuthState> {
         )
 }
 
+/// OpenAPI documentation for authentication endpoints.
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        request_link_handler,
+        verify_link_handler,
+        accept_invitation_handler,
+        me_handler,
+        signout_handler,
+        list_organizations_handler,
+        list_members_handler,
+        invite_user_handler,
+        remove_member_handler,
+    ),
+    components(
+        schemas(
+            RequestLinkRequest,
+            RequestLinkResponse,
+            VerifyLinkResponse,
+            MeResponse,
+            OrgInfo,
+            OrgMembersResponse,
+            MemberInfo,
+            InviteUserRequest,
+            InviteUserResponse,
+            ListOrgsResponse,
+            MessageResponse,
+        )
+    ),
+    tags(
+        (name = "auth", description = "Authentication endpoints")
+    )
+)]
+pub struct AuthApiDoc;
+
 // ============================================================================
 // Helper to extract authenticated user
 // ============================================================================
@@ -128,6 +164,16 @@ async fn get_auth_user(
 // ============================================================================
 
 /// POST /auth/request-link - Request a magic link email.
+#[utoipa::path(
+    post,
+    path = "/auth/request-link",
+    tag = "auth",
+    request_body = RequestLinkRequest,
+    responses(
+        (status = 200, description = "Magic link sent successfully", body = RequestLinkResponse),
+        (status = 500, description = "Internal server error", body = RequestLinkResponse)
+    )
+)]
 async fn request_link_handler(
     State(state): State<AuthState>,
     Json(payload): Json<RequestLinkRequest>,
@@ -153,6 +199,18 @@ async fn request_link_handler(
 }
 
 /// GET /auth/verify/{token} - Verify magic link and create session.
+#[utoipa::path(
+    get,
+    path = "/auth/verify/{token}",
+    tag = "auth",
+    params(
+        ("token" = String, Path, description = "Magic link verification token")
+    ),
+    responses(
+        (status = 302, description = "Redirect to app on success"),
+        (status = 400, description = "Invalid or expired token", body = VerifyLinkResponse)
+    )
+)]
 async fn verify_link_handler(
     State(state): State<AuthState>,
     cookies: Cookies,
@@ -184,6 +242,18 @@ async fn verify_link_handler(
 }
 
 /// GET /auth/invitations/{token}/accept - Accept an organization invitation.
+#[utoipa::path(
+    get,
+    path = "/auth/invitations/{token}/accept",
+    tag = "auth",
+    params(
+        ("token" = String, Path, description = "Invitation token")
+    ),
+    responses(
+        (status = 302, description = "Redirect to app on success"),
+        (status = 400, description = "Invalid or expired invitation", body = MessageResponse)
+    )
+)]
 async fn accept_invitation_handler(
     State(state): State<AuthState>,
     cookies: Cookies,
@@ -218,6 +288,19 @@ async fn accept_invitation_handler(
 // ============================================================================
 
 /// GET /auth/me - Get current authenticated user info.
+#[utoipa::path(
+    get,
+    path = "/auth/me",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Current user info", body = MeResponse),
+        (status = 401, description = "Not authenticated", body = MessageResponse),
+        (status = 500, description = "Internal server error", body = MessageResponse)
+    ),
+    security(
+        ("session_cookie" = [])
+    )
+)]
 async fn me_handler(
     State(state): State<AuthState>,
     cookies: Cookies,
@@ -257,6 +340,17 @@ async fn me_handler(
 }
 
 /// POST /auth/signout - Sign out and clear session.
+#[utoipa::path(
+    post,
+    path = "/auth/signout",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Successfully signed out", body = MessageResponse)
+    ),
+    security(
+        ("session_cookie" = [])
+    )
+)]
 async fn signout_handler(
     State(state): State<AuthState>,
     cookies: Cookies,
@@ -275,6 +369,19 @@ async fn signout_handler(
 }
 
 /// GET /auth/organizations - List user's organizations.
+#[utoipa::path(
+    get,
+    path = "/auth/organizations",
+    tag = "auth",
+    responses(
+        (status = 200, description = "List of organizations", body = ListOrgsResponse),
+        (status = 401, description = "Not authenticated", body = MessageResponse),
+        (status = 500, description = "Internal server error", body = MessageResponse)
+    ),
+    security(
+        ("session_cookie" = [])
+    )
+)]
 async fn list_organizations_handler(
     State(state): State<AuthState>,
     cookies: Cookies,
@@ -312,6 +419,23 @@ async fn list_organizations_handler(
 }
 
 /// GET /auth/organizations/{tenant_id}/members - List organization members.
+#[utoipa::path(
+    get,
+    path = "/auth/organizations/{tenant_id}/members",
+    tag = "auth",
+    params(
+        ("tenant_id" = String, Path, description = "Organization/tenant ID")
+    ),
+    responses(
+        (status = 200, description = "List of organization members", body = OrgMembersResponse),
+        (status = 401, description = "Not authenticated", body = MessageResponse),
+        (status = 403, description = "Not authorized", body = MessageResponse),
+        (status = 500, description = "Internal server error", body = MessageResponse)
+    ),
+    security(
+        ("session_cookie" = [])
+    )
+)]
 async fn list_members_handler(
     State(state): State<AuthState>,
     cookies: Cookies,
@@ -358,6 +482,25 @@ async fn list_members_handler(
 }
 
 /// POST /auth/organizations/{tenant_id}/invite - Invite a user to an organization.
+#[utoipa::path(
+    post,
+    path = "/auth/organizations/{tenant_id}/invite",
+    tag = "auth",
+    params(
+        ("tenant_id" = String, Path, description = "Organization/tenant ID")
+    ),
+    request_body = InviteUserRequest,
+    responses(
+        (status = 200, description = "Invitation sent", body = InviteUserResponse),
+        (status = 400, description = "Invalid request", body = InviteUserResponse),
+        (status = 401, description = "Not authenticated", body = InviteUserResponse),
+        (status = 403, description = "Not authorized", body = InviteUserResponse),
+        (status = 500, description = "Internal server error", body = InviteUserResponse)
+    ),
+    security(
+        ("session_cookie" = [])
+    )
+)]
 async fn invite_user_handler(
     State(state): State<AuthState>,
     cookies: Cookies,
@@ -416,6 +559,25 @@ async fn invite_user_handler(
 }
 
 /// DELETE /auth/organizations/{tenant_id}/members/{user_id} - Remove a member.
+#[utoipa::path(
+    delete,
+    path = "/auth/organizations/{tenant_id}/members/{user_id}",
+    tag = "auth",
+    params(
+        ("tenant_id" = String, Path, description = "Organization/tenant ID"),
+        ("user_id" = String, Path, description = "User ID to remove")
+    ),
+    responses(
+        (status = 200, description = "Member removed", body = MessageResponse),
+        (status = 400, description = "Invalid user ID", body = MessageResponse),
+        (status = 401, description = "Not authenticated", body = MessageResponse),
+        (status = 403, description = "Not authorized", body = MessageResponse),
+        (status = 500, description = "Internal server error", body = MessageResponse)
+    ),
+    security(
+        ("session_cookie" = [])
+    )
+)]
 async fn remove_member_handler(
     State(state): State<AuthState>,
     cookies: Cookies,
