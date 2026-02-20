@@ -19,7 +19,8 @@
       "Bash(cargo doc:*)",
       "Bash(docker ps:*)",
       "Bash(./tests/e2e/run_tests.sh:*)",
-      "Bash(uv run pytest:*)"
+      "Bash(uv run pytest:*)",
+      "Bash(CARGO_INCREMENTAL=0 cargo test:*)"
     ]
   }
 }

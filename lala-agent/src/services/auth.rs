@@ -447,6 +447,22 @@ impl AuthService {
             .context("Failed to get user organizations")
     }
 
+    /// Get user by ID.
+    pub async fn get_user_by_id(&self, user_id: uuid::Uuid) -> Result<Option<User>> {
+        self.db
+            .get_user_by_id(user_id)
+            .await
+            .context("Failed to get user")
+    }
+
+    /// Get multiple users by IDs in a single query.
+    pub async fn get_users_by_ids(&self, user_ids: Vec<uuid::Uuid>) -> Result<Vec<User>> {
+        self.db
+            .get_users_by_ids(user_ids)
+            .await
+            .context("Failed to get users")
+    }
+
     /// Get organization members.
     pub async fn get_org_members(
         &self,

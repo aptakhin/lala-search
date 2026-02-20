@@ -462,11 +462,32 @@ async fn list_members_handler(
             )
         })?;
 
+    // Batch fetch all user emails in a single query
+    let user_ids: Vec<uuid::Uuid> = members.iter().map(|m| m.user_id).collect();
+    let users = state
+        .auth_service
+        .get_users_by_ids(user_ids)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(MessageResponse {
+                    success: false,
+                    message: format!("Failed to fetch user info: {}", e),
+                }),
+            )
+        })?;
+
+    // Create a map of user_id -> email for fast lookup
+    let email_map: std::collections::HashMap<uuid::Uuid, String> =
+        users.into_iter().map(|u| (u.user_id, u.email)).collect();
+
+    // Build member info with emails
     let member_infos: Vec<MemberInfo> = members
         .into_iter()
         .map(|m| MemberInfo {
             user_id: m.user_id.to_string(),
-            email: String::new(), // TODO: fetch user emails
+            email: email_map.get(&m.user_id).cloned().unwrap_or_default(),
             role: m.role.as_str().to_string(),
             joined_at: chrono::DateTime::from_timestamp_millis(m.joined_at)
                 .map(|dt| dt.to_rfc3339())

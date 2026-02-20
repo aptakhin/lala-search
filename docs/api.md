@@ -171,7 +171,7 @@ Response:
   "members": [
     {
       "user_id": "550e8400-e29b-41d4-a716-446655440000",
-      "email": "",
+      "email": "user@example.com",
       "role": "owner",
       "joined_at": "2026-01-18T12:00:00Z"
     }

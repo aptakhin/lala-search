@@ -95,6 +95,65 @@ impl AuthDbClient {
         self.parse_user_row(rows_result)
     }
 
+    /// Get multiple users by their IDs in a single query.
+    pub async fn get_users_by_ids(&self, user_ids: Vec<Uuid>) -> Result<Vec<User>, QueryError> {
+        if user_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let query = format!(
+            "SELECT user_id, email, email_verified, created_at, updated_at, last_login_at, status
+             FROM {}.users WHERE user_id IN ?",
+            self.keyspace
+        );
+
+        let result = self.session.query_unpaged(query, (user_ids,)).await?;
+        let rows_result = match result.into_rows_result() {
+            Ok(r) => r,
+            Err(_) => return Ok(Vec::new()),
+        };
+
+        let rows = rows_result
+            .rows::<(
+                Uuid,
+                String,
+                bool,
+                CqlTimestamp,
+                CqlTimestamp,
+                Option<CqlTimestamp>,
+                String,
+            )>()
+            .map_err(|e| {
+                QueryError::DbError(
+                    scylla::transport::errors::DbError::Other(0),
+                    format!("Failed to deserialize users: {}", e),
+                )
+            })?;
+
+        let mut users = Vec::new();
+        for row_result in rows {
+            let (user_id, email, email_verified, created_at, updated_at, last_login_at, status) =
+                row_result.map_err(|e| {
+                    QueryError::DbError(
+                        scylla::transport::errors::DbError::Other(0),
+                        format!("Failed to parse user row: {}", e),
+                    )
+                })?;
+
+            users.push(User {
+                user_id,
+                email,
+                email_verified,
+                created_at: created_at.0,
+                updated_at: updated_at.0,
+                last_login_at: last_login_at.map(|t| t.0),
+                status: UserStatus::parse(&status).unwrap_or(UserStatus::Active),
+            });
+        }
+
+        Ok(users)
+    }
+
     /// Create a new user.
     pub async fn create_user(&self, email: &str) -> Result<Uuid, QueryError> {
         let user_id = Uuid::now_v7();
