@@ -119,7 +119,7 @@ services:
       dockerfile: Dockerfile
     container_name: lalasearch-web
     ports:
-      - "8080:80"  # Frontend on port 8080
+      - "8081:80"  # Frontend on port 8081
     volumes:
       # Mount index.html for live updates
       - ./lala-web/index.html:/usr/share/nginx/html/index.html:ro
@@ -147,9 +147,9 @@ services:
       - seaweedfs-data:/data
     environment:
       - WEED_MASTER_VOLUME_SIZE_LIMIT_MB=1024
-    command: 'server -s3 -s3.port=8333 -s3.config=/data/s3.json -dir=/data -volume.max=0'
+    command: 'server -s3 -s3.port=8333 -dir=/data -volume.max=0'
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9333/cluster/status"]
+      test: ["CMD-SHELL", "curl -f http://localhost:9333/cluster/status || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
