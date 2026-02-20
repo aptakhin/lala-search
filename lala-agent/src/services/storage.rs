@@ -209,7 +209,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires MinIO running
+    #[ignore] // Requires SeaweedFS running
     async fn test_upload_and_retrieve_content() {
         let config = S3Config::from_env().unwrap();
         let client = StorageClient::new(config).await.unwrap();

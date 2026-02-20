@@ -19,7 +19,7 @@ docker compose up -d --build
 This removes:
 - All Cassandra data (crawled pages, queue, settings)
 - All Meilisearch indexes (search data)
-- All MinIO objects (stored HTML content)
+- All SeaweedFS objects (stored HTML content)
 
 ### Selective Cleanup
 
@@ -81,27 +81,27 @@ curl -X DELETE http://localhost:7700/indexes/pages
 curl http://localhost:7700/indexes
 ```
 
-#### Reset MinIO (S3 Storage) Only
+#### Reset SeaweedFS (S3 Storage) Only
 
 ```bash
 # Stop all services
 docker compose down
 
-# Remove only MinIO volume
-docker volume rm lalasearch_minio-data
+# Remove only SeaweedFS volume
+docker volume rm lalasearch_seaweedfs-data
 
-# Restart (will recreate bucket)
+# Restart
 docker compose up -d --build
 ```
 
-Or delete objects via MinIO client:
+Or delete objects manually:
 
 ```bash
-# Enter MinIO container
-docker exec -it lalasearch-minio sh
+# Enter SeaweedFS container
+docker exec -it lalasearch-seaweedfs sh
 
-# Delete all objects in bucket
-mc rm --recursive --force local/lalasearch-content/
+# Navigate to data directory and remove objects
+rm -rf /data/*
 
 # Exit container
 exit
@@ -168,7 +168,7 @@ docker compose logs -f
 docker compose logs -f lala-agent
 docker compose logs -f cassandra
 docker compose logs -f meilisearch
-docker compose logs -f minio
+docker compose logs -f seaweedfs
 ```
 
 ### Restart Services
@@ -215,20 +215,21 @@ curl 'http://localhost:7700/indexes/pages/search' \
   --data '{ "q": "test" }'
 ```
 
-### MinIO
+### SeaweedFS
 
-Access the web console at http://localhost:9001
-- Username: `minioadmin`
-- Password: `minioadmin`
+Access the master server at http://localhost:9333
+Access the volume server (filer) at http://localhost:8080
 
-Or use the CLI:
+SeaweedFS doesn't require authentication by default for local development.
+
+Check storage status:
 
 ```bash
-# List objects
-docker exec lalasearch-minio mc ls local/lalasearch-content/
+# Check cluster status
+curl http://localhost:9333/cluster/status
 
-# Get bucket stats
-docker exec lalasearch-minio mc du local/lalasearch-content/
+# Check volume status
+curl http://localhost:9333/dir/status
 ```
 
 ## Backup and Restore
@@ -253,12 +254,11 @@ curl -X POST http://localhost:7700/dumps
 docker cp lalasearch-meilisearch:/meili_data/dumps/ ./backup/meilisearch/
 ```
 
-### Backup MinIO
+### Backup SeaweedFS
 
 ```bash
-# Sync bucket to local directory
-docker exec lalasearch-minio mc mirror local/lalasearch-content/ /tmp/backup/
-docker cp lalasearch-minio:/tmp/backup/ ./backup/minio/
+# Copy data directory from container
+docker cp lalasearch-seaweedfs:/data/ ./backup/seaweedfs/
 ```
 
 ## Troubleshooting

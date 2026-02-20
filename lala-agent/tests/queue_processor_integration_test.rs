@@ -13,13 +13,13 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 
 // Integration tests for queue processor workflows.
-// These tests require running Cassandra and MinIO instances.
+// These tests require running Cassandra and SeaweedFS instances.
 // Run with: cargo test --test queue_processor_integration_test -- --ignored
 //
 // Required environment variables:
 // - CASSANDRA_HOSTS: Cassandra host(s), e.g., "127.0.0.1:9042"
 // - CASSANDRA_KEYSPACE: Cassandra keyspace, e.g., "lalasearch"
-// - S3_ENDPOINT: MinIO/S3 endpoint, e.g., "http://127.0.0.1:9000"
+// - S3_ENDPOINT: SeaweedFS/S3 endpoint, e.g., "http://127.0.0.1:8333"
 // - S3_BUCKET: S3 bucket name
 // - S3_ACCESS_KEY: S3 access key
 // - S3_SECRET_KEY: S3 secret key
@@ -42,7 +42,7 @@ async fn create_storage_client() -> StorageClient {
     );
     StorageClient::new(config)
         .await
-        .expect("Failed to connect to S3/MinIO")
+        .expect("Failed to connect to S3/SeaweedFS")
 }
 
 #[tokio::test]

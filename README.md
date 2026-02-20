@@ -218,7 +218,7 @@ LalaSearch can store raw HTML content in S3-compatible storage for archival and 
 
 ### Supported Providers
 
-- **MinIO** (included in Docker Compose for local development)
+- **SeaweedFS** (included in Docker Compose for local development)
 - AWS S3
 - DigitalOcean Spaces
 - Wasabi
@@ -230,11 +230,11 @@ Set the following environment variables in your `.env` file:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `S3_ENDPOINT` | S3 endpoint URL | `http://minio:9000` |
-| `S3_REGION` | AWS region (optional for MinIO) | `us-east-1` |
+| `S3_ENDPOINT` | S3 endpoint URL | `http://seaweedfs:8333` |
+| `S3_REGION` | AWS region (optional for SeaweedFS) | `us-east-1` |
 | `S3_BUCKET` | Bucket name | `lalasearch-content` |
-| `S3_ACCESS_KEY` | Access key ID | `minioadmin` |
-| `S3_SECRET_KEY` | Secret access key | `minioadmin` |
+| `S3_ACCESS_KEY` | Access key ID | `any` |
+| `S3_SECRET_KEY` | Secret access key | `any` |
 | `S3_COMPRESS_CONTENT` | Enable gzip compression | `true` |
 | `S3_COMPRESS_MIN_SIZE` | Min size for compression (bytes) | `1024` |
 

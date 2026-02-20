@@ -127,10 +127,10 @@ This document provides a comprehensive residuality risk assessment for LalaSearc
 
 ## 6. SECURITY RISKS
 
-### Risk 6.1: MinIO Default Credentials
-- **Description**: `.env.example` uses `minioadmin/minioadmin`
+### Risk 6.1: S3 Storage Security
+- **Description**: SeaweedFS doesn't require authentication by default in local development
 - **Impact**: Exposed S3 endpoints = full data breach of crawled content
-- **Residuality Factor**: Documentation doesn't warn about changing defaults
+- **Residuality Factor**: Production deployments should enable S3 authentication
 
 ### Risk 6.2: No Network Segmentation
 - **Description**: All services in same Docker network with no firewall rules

@@ -65,14 +65,14 @@ services:
       # Override specific values for Docker environment
       - CASSANDRA_HOSTS=cassandra:9042
       - MEILISEARCH_HOST=meilisearch:7700
-      - S3_ENDPOINT=http://minio:9000
+      - S3_ENDPOINT=http://seaweedfs:8333
     depends_on:
       cassandra-init:
         condition: service_completed_successfully
       meilisearch:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+      seaweedfs:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/version"]
       interval: 10s
@@ -135,21 +135,21 @@ services:
     networks:
       - lalasearch-network
 
-  # MinIO - S3-compatible object storage for crawled HTML content
-  minio:
-    image: minio/minio:latest
-    container_name: lalasearch-minio
+  # SeaweedFS - S3-compatible object storage for crawled HTML content
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    container_name: lalasearch-seaweedfs
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # Web Console
+      - "8333:8333"   # S3 API
+      - "9333:9333"   # Master server
+      - "8080:8080"   # Volume server (filer)
     volumes:
-      - minio-data:/data
+      - seaweedfs-data:/data
     environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
-    command: server /data --console-address ":9001"
+      - WEED_MASTER_VOLUME_SIZE_LIMIT_MB=1024
+    command: 'server -s3 -s3.port=8333 -s3.config=/data/s3.json -dir=/data -volume.max=0'
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9333/cluster/status"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -181,31 +181,13 @@ services:
     networks:
       - lalasearch-network
 
-  # MinIO initialization service (runs once to create bucket)
-  minio-init:
-    image: minio/mc:latest
-    container_name: lalasearch-minio-init
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        echo 'Configuring MinIO client...'
-        mc alias set minio http://minio:9000 minioadmin minioadmin
-        echo 'Creating bucket lalasearch-content...'
-        mc mb --ignore-existing minio/lalasearch-content
-        echo 'Bucket created successfully!'
-    networks:
-      - lalasearch-network
-    restart: "no"
 
 volumes:
   cassandra-data:
     driver: local
   meilisearch-data:
     driver: local
-  minio-data:
+  seaweedfs-data:
     driver: local
 
 networks:

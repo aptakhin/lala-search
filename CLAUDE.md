@@ -54,12 +54,13 @@ Ask clarifying questions when:
 - **Elasticsearch** - Open source search and analytics engine
 - **Apache Kafka** - Open source event streaming platform
 - **Meilisearch** - Open source search engine
-- **MinIO** - Open source object storage (S3-compatible)
+- **SeaweedFS** - Open source object storage (S3-compatible, Apache 2.0 license)
 - **Docker** - Open source containerization platform
 - **Prometheus** - Open source monitoring and metrics
 
 ### AVOID - Proprietary/Closed Source Solutions
 - **ScyllaDB** - Changed from AGPL to proprietary "source-available" license in Dec 2024 (use Apache Cassandra instead)
+- **MinIO** - Abandoned open source community in Feb 2026, pushing users to proprietary AIStor (use SeaweedFS instead)
 - **DataStax Astra** - Proprietary managed database service
 - **Splunk** - Proprietary log aggregation and analysis
 - **New Relic** - Proprietary application monitoring
@@ -986,6 +987,80 @@ let db_host = env::var("CASSANDRA_HOSTS")
 - macOS (Intel, Apple Silicon)
 - Windows (x86_64, ARM64)
 - Docker containers (Alpine, Debian base images)
+
+## Troubleshooting Build Issues
+
+### Windows PDB Linker Error (LNK1318)
+
+**CRITICAL**: Never use `git commit --no-verify` as a first resort. Always troubleshoot properly first.
+
+**Symptom**:
+```
+LINK : fatal error LNK1318: Unexpected PDB error; LIMIT (12)
+error: could not compile `lala-agent` (bin "lala-agent") due to 1 previous error
+```
+
+**Root Cause**: Windows linker cannot write PDB (Program Database) files. Common causes:
+- Antivirus locking files
+- Multiple build processes running
+- Corrupted build cache
+- Disk space or permissions issues
+
+**Resolution Steps** (try in order):
+
+1. **Clean build cache and retry**:
+   ```bash
+   cargo clean
+   cargo build
+   # Or for tests:
+   cargo clean
+   cargo test
+   ```
+
+2. **If step 1 fails, close all IDEs and processes**:
+   - Close VS Code, Visual Studio, or any IDE
+   - Kill any running `rust-analyzer` processes
+   - Retry: `cargo clean && cargo build`
+
+3. **If step 2 fails, check antivirus**:
+   - Temporarily disable antivirus
+   - Add `target/` directory to antivirus exclusions
+   - Retry: `cargo clean && cargo build`
+
+4. **If step 3 fails, verify disk space and permissions**:
+   - Ensure sufficient disk space (>5GB free)
+   - Run terminal as Administrator
+   - Retry: `cargo clean && cargo build`
+
+5. **Last resort - verify code only**:
+   ```bash
+   cargo check  # Verifies code without linking
+   ```
+
+**When to use `--no-verify`**:
+
+Only use `git commit --no-verify` if ALL of these are true:
+- ✅ `cargo fmt --check` passes
+- ✅ `cargo clippy -- -D warnings` passes
+- ✅ `cargo check` passes (code compiles)
+- ✅ You've tried ALL troubleshooting steps above
+- ✅ The error is confirmed to be a Windows environment issue, not a code issue
+
+**Document when skipping hooks**:
+```bash
+# Document WHY you're skipping in the commit message
+git commit --no-verify -m "feat: add feature
+
+Note: Used --no-verify due to Windows PDB linker error (LNK1318).
+Code passes fmt, clippy, and check. Tests will run in CI.
+"
+```
+
+**Never skip for**:
+- Code that doesn't compile (`cargo check` fails)
+- Code with clippy warnings
+- Code with formatting issues
+- Untested changes (unless it's a Windows-only environment issue)
 
 ## Commands Reference
 

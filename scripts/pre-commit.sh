@@ -47,9 +47,9 @@ echo "✓ Unit tests passed"
 
 # Start Docker services for storage-dependent tests
 echo "4/4 Running storage-dependent tests..."
-echo "    Starting Docker services (cassandra, minio, meilisearch)..."
+echo "    Starting Docker services (cassandra, seaweedfs, meilisearch)..."
 cd "$PROJECT_ROOT"
-docker compose up -d cassandra minio meilisearch cassandra-init minio-init
+docker compose up -d cassandra seaweedfs meilisearch cassandra-init
 
 # Wait for services to be healthy
 echo "    Waiting for services to be ready..."

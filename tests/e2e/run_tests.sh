@@ -79,8 +79,8 @@ echo "Step 2: Checking Docker services..."
 cd "$PROJECT_ROOT"
 
 if ! docker compose ps --status running | grep -q "lalasearch-cassandra"; then
-    echo -e "${YELLOW}Starting base services (Cassandra, Meilisearch, MinIO)...${NC}"
-    docker compose up -d cassandra meilisearch minio --build
+    echo -e "${YELLOW}Starting base services (Cassandra, Meilisearch, SeaweedFS)...${NC}"
+    docker compose up -d cassandra meilisearch seaweedfs --build
 
     # Wait for base services
     wait_for_service "Cassandra" "http://localhost:9042" 2>/dev/null || sleep 15  # Cassandra takes time
