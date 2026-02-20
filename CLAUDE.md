@@ -706,6 +706,66 @@ pub fn from_db_value(value: Option<i8>) -> Self {
 4. ✅ Handle `None` case with sensible default
 5. ✅ Add test for NULL/None handling
 
+### Applying Schema Changes
+
+**How to apply schema changes for both single-tenant and multi-tenant:**
+
+#### Method 1: Re-run cassandra-init (Recommended for Development)
+
+The cassandra-init service is idempotent and can be run multiple times safely:
+
+```bash
+docker compose up cassandra-init
+```
+
+This will:
+- Apply all schema changes from `schema_system.cql` (system keyspace)
+- Apply all schema changes from `schema.cql` (tenant keyspace)
+- Use `CREATE TABLE IF NOT EXISTS` to safely skip existing tables
+- Substitute environment variables for keyspace names
+
+#### Method 2: Manual Migration (For Production)
+
+For production systems with existing data:
+
+```bash
+# Apply to system keyspace
+docker exec lalasearch-cassandra cqlsh -e "
+USE lalasearch_system;
+ALTER TABLE existing_table ADD new_column text;
+"
+
+# Apply to tenant keyspace(s)
+docker exec lalasearch-cassandra cqlsh -e "
+USE lalasearch_default;
+ALTER TABLE existing_table ADD new_column text;
+"
+```
+
+#### Important Notes
+
+1. **Reserved Keywords**: Avoid CQL reserved keywords (`token`, `user`, `key`, etc.)
+   - Use descriptive names: `token_hash` instead of `token`
+   - If unavoidable, escape with double quotes: `"token"` (but this makes it case-sensitive)
+
+2. **Environment Variables**: Schema files use placeholders like `${SYSTEM_KEYSPACE_NAME}` and `${KEYSPACE_NAME}`
+   - cassandra-init substitutes these automatically via sed
+   - Manual execution requires replacing these first
+
+3. **Single vs Multi-Tenant**:
+   - **System keyspace** (`lalasearch_system`): Always one instance, shared across all tenants
+   - **Tenant keyspaces** (`lalasearch_*`): One per tenant in multi-tenant mode
+   - Both are created by cassandra-init based on env vars
+
+4. **Verification**:
+   ```bash
+   # Check system keyspace tables
+   docker exec lalasearch-cassandra cqlsh -e "DESCRIBE KEYSPACE lalasearch_system;"
+
+   # Check tenant keyspace tables
+   docker exec lalasearch-cassandra cqlsh -e "DESCRIBE KEYSPACE lalasearch_default;"
+   ```
+
 ## Cross-Platform Compatibility
 
 **CRITICAL**: Code must work across all major platforms and architectures.
