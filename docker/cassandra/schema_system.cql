@@ -56,7 +56,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id);
 
 -- Magic link tokens - short-lived for passwordless auth
 CREATE TABLE IF NOT EXISTS magic_link_tokens (
-    token text PRIMARY KEY,       -- SHA-256 hash of actual token
+    token_hash text PRIMARY KEY,  -- SHA-256 hash of actual token
     email text,
     tenant_id text,               -- null for new signups, set for org invitations
     redirect_url text,            -- Where to redirect after verification
@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS user_orgs (
 
 -- Organization invitations
 CREATE TABLE IF NOT EXISTS org_invitations (
-    token text PRIMARY KEY,       -- SHA-256 hash of actual token
+    token_hash text PRIMARY KEY,  -- SHA-256 hash of actual token
     tenant_id text,
     email text,
     role text,                    -- Role to assign when accepted

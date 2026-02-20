@@ -365,7 +365,7 @@ impl AuthDbClient {
 
         let query = format!(
             "INSERT INTO {}.magic_link_tokens
-             (token, email, tenant_id, redirect_url, created_at, expires_at, used)
+             (token_hash, email, tenant_id, redirect_url, created_at, expires_at, used)
              VALUES (?, ?, ?, ?, ?, ?, false)",
             self.keyspace
         );
@@ -393,8 +393,8 @@ impl AuthDbClient {
         token_hash: &str,
     ) -> Result<Option<MagicLinkToken>, QueryError> {
         let query = format!(
-            "SELECT token, email, tenant_id, redirect_url, created_at, expires_at, used
-             FROM {}.magic_link_tokens WHERE token = ?",
+            "SELECT token_hash, email, tenant_id, redirect_url, created_at, expires_at, used
+             FROM {}.magic_link_tokens WHERE token_hash = ?",
             self.keyspace
         );
 
@@ -447,7 +447,7 @@ impl AuthDbClient {
     /// Mark a magic link token as used.
     pub async fn mark_magic_link_used(&self, token_hash: &str) -> Result<(), QueryError> {
         let query = format!(
-            "UPDATE {}.magic_link_tokens SET used = true WHERE token = ?",
+            "UPDATE {}.magic_link_tokens SET used = true WHERE token_hash = ?",
             self.keyspace
         );
 
@@ -676,7 +676,7 @@ impl AuthDbClient {
 
         let query = format!(
             "INSERT INTO {}.org_invitations
-             (token, tenant_id, email, role, invited_by, created_at, expires_at, accepted)
+             (token_hash, tenant_id, email, role, invited_by, created_at, expires_at, accepted)
              VALUES (?, ?, ?, ?, ?, ?, ?, false)",
             self.keyspace
         );
@@ -705,8 +705,8 @@ impl AuthDbClient {
         token_hash: &str,
     ) -> Result<Option<OrgInvitation>, QueryError> {
         let query = format!(
-            "SELECT token, tenant_id, email, role, invited_by, created_at, expires_at, accepted
-             FROM {}.org_invitations WHERE token = ?",
+            "SELECT token_hash, tenant_id, email, role, invited_by, created_at, expires_at, accepted
+             FROM {}.org_invitations WHERE token_hash = ?",
             self.keyspace
         );
 
@@ -761,7 +761,7 @@ impl AuthDbClient {
     /// Mark an invitation as accepted.
     pub async fn mark_invitation_accepted(&self, token_hash: &str) -> Result<(), QueryError> {
         let query = format!(
-            "UPDATE {}.org_invitations SET accepted = true WHERE token = ?",
+            "UPDATE {}.org_invitations SET accepted = true WHERE token_hash = ?",
             self.keyspace
         );
 
@@ -1207,7 +1207,7 @@ mod tests {
 
         // Cleanup
         let query = format!(
-            "DELETE FROM {}.magic_link_tokens WHERE token = ?",
+            "DELETE FROM {}.magic_link_tokens WHERE token_hash = ?",
             client.keyspace
         );
         client
@@ -1253,7 +1253,7 @@ mod tests {
 
         // Cleanup
         let query = format!(
-            "DELETE FROM {}.magic_link_tokens WHERE token = ?",
+            "DELETE FROM {}.magic_link_tokens WHERE token_hash = ?",
             client.keyspace
         );
         client
@@ -1404,7 +1404,7 @@ mod tests {
 
         // Cleanup
         let query = format!(
-            "DELETE FROM {}.org_invitations WHERE token = ?",
+            "DELETE FROM {}.org_invitations WHERE token_hash = ?",
             client.keyspace
         );
         client
@@ -1451,7 +1451,7 @@ mod tests {
 
         // Cleanup
         let query = format!(
-            "DELETE FROM {}.org_invitations WHERE token = ?",
+            "DELETE FROM {}.org_invitations WHERE token_hash = ?",
             client.keyspace
         );
         client
