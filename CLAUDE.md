@@ -256,6 +256,111 @@ lalasearch/
 - Log errors to dedicated error tables for observability
 - Don't silently skip failures or treat them as "non-critical"
 
+## Logging Guidelines
+
+**CRITICAL**: Always log important actions with sufficient context for debugging and auditing.
+
+### What to Log
+
+1. **User actions with user_id**:
+   - User sign-ins (magic link verification, invitation acceptance)
+   - User creation (new account, invited user)
+   - User sign-outs
+   - Permission-sensitive operations (invitations, membership changes)
+
+2. **Email operations**:
+   - Email send attempts (both success and failure)
+   - Magic link generation
+   - Invitation generation
+
+3. **Critical operations**:
+   - Database failures
+   - Storage operations
+   - Search indexing
+   - Queue processing
+
+### How to Log
+
+**Current approach**: Use `println!` for info logs and `eprintln!` for errors/warnings.
+
+```rust
+// Success - use println!
+println!("[SERVICE] Action description: key=value, user_id={}", user_id);
+
+// Error - use eprintln!
+eprintln!("[SERVICE] Error description: key=value, error={}", error);
+```
+
+**Log format**:
+- Use prefixes: `[AUTH]`, `[EMAIL]`, `[DB]`, `[STORAGE]`, etc.
+- Include key-value pairs for structured data
+- Always include `user_id` when available
+- Include contextual information (tenant_id, ip_address, etc.)
+
+### Email Anonymization
+
+**CRITICAL**: Never log full email addresses. Always anonymize them for privacy.
+
+Use the `anonymize_email()` helper from `services::logging`:
+
+```rust
+use crate::services::logging::anonymize_email;
+
+// GOOD - Anonymized email
+println!("[AUTH] User signed in: user_id={}, email={}", user_id, anonymize_email(&email));
+// Output: [AUTH] User signed in: user_id=123..., email=a***@example.com
+
+// BAD - Full email exposed
+println!("[AUTH] User signed in: user_id={}, email={}", user_id, email);
+// Output: [AUTH] User signed in: user_id=123..., email=alice@example.com
+```
+
+### Examples
+
+**Good logging examples**:
+
+```rust
+// User creation
+println!(
+    "[AUTH] New user created: user_id={}, email={}, tenant={}, role=Owner",
+    user_id,
+    anonymize_email(email),
+    tenant_id
+);
+
+// Email sending
+println!(
+    "[EMAIL] Sending invitation to {} for org '{}' from {}",
+    anonymize_email(to_email),
+    org_name,
+    anonymize_email(inviter_email)
+);
+
+// Sign-in with context
+println!(
+    "[AUTH] User signed in via magic link: user_id={}, email={}, tenant={}{}",
+    user.user_id,
+    anonymize_email(&user.email),
+    tenant_id,
+    ip_address.map(|ip| format!(", ip={}", ip)).unwrap_or_default()
+);
+
+// Error with context
+eprintln!(
+    "[EMAIL] Failed to send magic link to {}: {}",
+    anonymize_email(to_email),
+    error
+);
+```
+
+### What NOT to Log
+
+- Full email addresses (always use `anonymize_email()`)
+- Raw tokens or passwords
+- Session tokens or hashes
+- Sensitive personal information
+- Credit card numbers or payment details
+
 ## Database Query Optimization: Avoid N+1 Queries
 
 **CRITICAL**: Always check if you're introducing N+1 query patterns. While they may work fine on tiny loads, they cause severe performance degradation at scale.

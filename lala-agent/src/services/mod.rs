@@ -7,6 +7,7 @@ pub mod auth_middleware;
 pub mod crawler;
 pub mod db;
 pub mod email;
+pub mod logging;
 pub mod queue_processor;
 pub mod search;
 pub mod storage;

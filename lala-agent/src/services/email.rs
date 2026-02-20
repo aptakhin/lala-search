@@ -8,6 +8,8 @@ use lettre::{
 };
 use std::env;
 
+use crate::services::logging::anonymize_email;
+
 /// Configuration for the email service.
 #[derive(Debug, Clone)]
 pub struct EmailConfig {
@@ -142,8 +144,31 @@ impl EmailService {
             ("expiry_minutes", &expiry_minutes),
         ]);
 
-        self.send_email(to_email, "Sign in to LalaSearch", &body)
+        println!(
+            "[EMAIL] Sending magic link to {}",
+            anonymize_email(to_email)
+        );
+
+        match self
+            .send_email(to_email, "Sign in to LalaSearch", &body)
             .await
+        {
+            Ok(()) => {
+                println!(
+                    "[EMAIL] Successfully sent magic link to {}",
+                    anonymize_email(to_email)
+                );
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!(
+                    "[EMAIL] Failed to send magic link to {}: {}",
+                    anonymize_email(to_email),
+                    e
+                );
+                Err(e)
+            }
+        }
     }
 
     /// Send an organization invitation email.
@@ -167,8 +192,35 @@ impl EmailService {
             ("expiry_days", &expiry_days),
         ]);
 
-        self.send_email(to_email, &format!("Join {} on LalaSearch", org_name), &body)
+        println!(
+            "[EMAIL] Sending invitation to {} for org '{}' from {}",
+            anonymize_email(to_email),
+            org_name,
+            anonymize_email(inviter_email)
+        );
+
+        match self
+            .send_email(to_email, &format!("Join {} on LalaSearch", org_name), &body)
             .await
+        {
+            Ok(()) => {
+                println!(
+                    "[EMAIL] Successfully sent invitation to {} for org '{}'",
+                    anonymize_email(to_email),
+                    org_name
+                );
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!(
+                    "[EMAIL] Failed to send invitation to {} for org '{}': {}",
+                    anonymize_email(to_email),
+                    org_name,
+                    e
+                );
+                Err(e)
+            }
+        }
     }
 
     /// Send an email.

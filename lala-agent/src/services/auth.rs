@@ -8,6 +8,7 @@ use crate::services::auth_db::{
     AuthDbClient, CreateInvitationParams, CreateMagicLinkParams, CreateSessionParams,
 };
 use crate::services::email::EmailService;
+use crate::services::logging::anonymize_email;
 use anyhow::{anyhow, Context, Result};
 use hex;
 use rand::RngCore;
@@ -135,6 +136,10 @@ impl AuthService {
             .ok_or_else(|| anyhow!("Invalid or expired token"))?;
 
         if !magic_token.is_valid() {
+            eprintln!(
+                "[AUTH] Magic link verification failed for {}: token expired or already used",
+                anonymize_email(&magic_token.email)
+            );
             return Err(anyhow!("Token is expired or already used"));
         }
 
@@ -159,6 +164,16 @@ impl AuthService {
         let session_token = self
             .create_user_session(user.user_id, tenant_id, user_agent, ip_address)
             .await?;
+
+        println!(
+            "[AUTH] User signed in via magic link: user_id={}, email={}, tenant={}{}",
+            user.user_id,
+            anonymize_email(&user.email),
+            tenant_id,
+            ip_address
+                .map(|ip| format!(", ip={}", ip))
+                .unwrap_or_default()
+        );
 
         Ok((session_token, user, tenant_id.to_string()))
     }
@@ -214,6 +229,13 @@ impl AuthService {
             .add_org_membership(default_tenant_id, user_id, UserRole::Owner, None)
             .await
             .context("Failed to add org membership")?;
+
+        println!(
+            "[AUTH] New user created: user_id={}, email={}, tenant={}, role=Owner",
+            user_id,
+            anonymize_email(email),
+            default_tenant_id
+        );
 
         self.db
             .get_user_by_id(user_id)
@@ -345,6 +367,15 @@ impl AuthService {
             .await
             .context("Failed to create invitation")?;
 
+        println!(
+            "[AUTH] User invitation created: inviter_user_id={}, inviter_email={}, invitee_email={}, tenant={}, role={:?}",
+            invite.inviter.user_id,
+            anonymize_email(&invite.inviter.email),
+            anonymize_email(invite.email),
+            invite.tenant_id,
+            invite.role
+        );
+
         self.email
             .send_invitation(
                 invite.email,
@@ -376,6 +407,10 @@ impl AuthService {
             .ok_or_else(|| anyhow!("Invalid or expired invitation"))?;
 
         if !invitation.is_valid() {
+            eprintln!(
+                "[AUTH] Invitation acceptance failed for {}: invitation expired or already used",
+                anonymize_email(&invitation.email)
+            );
             return Err(anyhow!("Invitation is expired or already accepted"));
         }
 
@@ -399,6 +434,18 @@ impl AuthService {
             .await
             .context("Failed to add org membership")?;
 
+        println!(
+            "[AUTH] User accepted invitation: user_id={}, email={}, tenant={}, role={:?}, invited_by={}{}",
+            user.user_id,
+            anonymize_email(&user.email),
+            invitation.tenant_id,
+            invitation.role,
+            invitation.invited_by,
+            ip_address
+                .map(|ip| format!(", ip={}", ip))
+                .unwrap_or_default()
+        );
+
         // Create session
         let session_token = self
             .create_user_session(user.user_id, &invitation.tenant_id, user_agent, ip_address)
@@ -415,7 +462,14 @@ impl AuthService {
             .await
             .context("Failed to get user")?
         {
-            Some(user) => Ok(user),
+            Some(user) => {
+                println!(
+                    "[AUTH] Existing user accepting invitation: user_id={}, email={}",
+                    user.user_id,
+                    anonymize_email(email)
+                );
+                Ok(user)
+            }
             None => {
                 let user_id = self
                     .db
@@ -427,6 +481,12 @@ impl AuthService {
                     .set_user_email_verified(user_id)
                     .await
                     .context("Failed to verify email")?;
+
+                println!(
+                    "[AUTH] New user created via invitation: user_id={}, email={}",
+                    user_id,
+                    anonymize_email(email)
+                );
 
                 self.db
                     .get_user_by_id(user_id)
