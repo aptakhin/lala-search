@@ -2,8 +2,8 @@
 # Copyright (c) 2026 Aleksandr Ptakhin
 
 # Single-stage Rust development image
-# Using Rust 1.85+ for edition2024 support required by some dependencies
-FROM rust:1.85-bookworm
+# Using latest Rust stable for full feature support
+FROM rust:bookworm
 
 # Create app directory
 WORKDIR /app
@@ -25,9 +25,10 @@ RUN mkdir -p src && \
     cargo build --release && \
     rm -rf src
 
-# Copy source code
+# Copy source code and templates
 COPY src ./src
 COPY tests ./tests
+COPY templates ./templates
 
 # Build the application
 RUN cargo build --release
