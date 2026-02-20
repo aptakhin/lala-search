@@ -256,6 +256,95 @@ lalasearch/
 - Log errors to dedicated error tables for observability
 - Don't silently skip failures or treat them as "non-critical"
 
+## Database Query Optimization: Avoid N+1 Queries
+
+**CRITICAL**: Always check if you're introducing N+1 query patterns. While they may work fine on tiny loads, they cause severe performance degradation at scale.
+
+### What is an N+1 Query?
+
+An N+1 query pattern occurs when you:
+1. Query for N items (e.g., list of members)
+2. Loop through results and make 1 additional query per item (e.g., fetch each user's email)
+3. Result: 1 + N total queries instead of 1-2 queries
+
+### BAD - N+1 Query Pattern
+
+```rust
+// Fetch members (1 query)
+let members = db.get_org_members(tenant_id).await?;
+
+// Loop and query for each member (N queries)
+for member in members {
+    let user = db.get_user_by_id(member.user_id).await?;  // ❌ N queries!
+    emails.push(user.email);
+}
+// Total: 1 + N queries
+```
+
+### GOOD - Batch Query Pattern
+
+```rust
+// Fetch members (1 query)
+let members = db.get_org_members(tenant_id).await?;
+
+// Collect all user IDs
+let user_ids: Vec<Uuid> = members.iter().map(|m| m.user_id).collect();
+
+// Batch fetch all users in ONE query using IN clause (1 query)
+let users = db.get_users_by_ids(user_ids).await?;  // ✅ Single batch query!
+
+// Create lookup map for O(1) access
+let email_map: HashMap<Uuid, String> = users
+    .into_iter()
+    .map(|u| (u.user_id, u.email))
+    .collect();
+
+// Total: 2 queries (constant, not N+2)
+```
+
+### When to Use Batch Queries
+
+- Fetching related data for multiple items (users, metadata, etc.)
+- Loading child objects for parent objects
+- Resolving foreign keys or references
+- Any loop that makes database queries
+
+### Cassandra-Specific Tips
+
+Cassandra doesn't support JOINs, so use these patterns:
+
+1. **IN clause for batch primary key lookups**:
+   ```cql
+   SELECT * FROM users WHERE user_id IN ?
+   ```
+
+2. **Denormalization** (when appropriate):
+   - Store frequently accessed data together to avoid lookups
+   - Example: Store email in `org_memberships` if always needed
+   - Trade-off: Data consistency vs query performance
+
+3. **Secondary indexes with filtering** (use sparingly):
+   ```cql
+   SELECT * FROM users WHERE tenant_id = ? ALLOW FILTERING
+   ```
+
+### When in Doubt, Ask!
+
+If avoiding N+1 queries seems very complicated:
+1. **Ask first**: "I'm implementing X and might need N queries. Is there a batch approach?"
+2. Explain the use case
+3. Discuss trade-offs (complexity vs performance)
+
+**Remember**: It's better to ask and find a simple solution than to implement a complex workaround or ship slow code.
+
+### Detection Checklist
+
+Before committing code, check:
+- [ ] Are there any loops that call async database functions?
+- [ ] Can multiple queries be combined into a single batch query?
+- [ ] Is there a more efficient query pattern (IN clause, batch fetch)?
+- [ ] Have I tested with realistic data volumes (100+ items)?
+
 ## Command Verification
 
 **Before suggesting commands to the user, always verify them yourself first!**
