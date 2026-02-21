@@ -12,13 +12,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 
-// Integration tests for queue processor workflows.
+// Integration tests for queue processor workflows (Tier 2).
 // These tests require running Cassandra and SeaweedFS instances.
-// Run with: cargo test --test queue_processor_integration_test -- --ignored
+// Run with: cargo test --test queue_processor_integration_test
 //
-// Required environment variables:
+// Required environment variables (loaded from .env):
 // - CASSANDRA_HOSTS: Cassandra host(s), e.g., "127.0.0.1:9042"
-// - CASSANDRA_KEYSPACE: Cassandra keyspace, e.g., "lalasearch"
+// - CASSANDRA_KEYSPACE: Cassandra keyspace, e.g., "lalasearch_default"
 // - S3_ENDPOINT: SeaweedFS/S3 endpoint, e.g., "http://127.0.0.1:8333"
 // - S3_BUCKET: S3 bucket name
 // - S3_ACCESS_KEY: S3 access key
@@ -46,7 +46,6 @@ async fn create_storage_client() -> StorageClient {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_queue_processor_workflow() {
     let db_client = create_db_client().await;
     println!("✓ Connected to Cassandra");
@@ -113,7 +112,6 @@ async fn test_queue_processor_workflow() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_upsert_crawled_page() {
     let db_client = create_db_client().await;
     println!("✓ Connected to Cassandra");
@@ -192,7 +190,6 @@ async fn test_upsert_crawled_page() {
 /// 5. Verify the content can be retrieved from S3 using storage_id
 /// 6. Clean up all test data
 #[tokio::test]
-#[ignore]
 async fn test_full_crawl_workflow_with_storage() {
     // Setup clients from environment variables
     let db_client = create_db_client().await;
@@ -329,7 +326,6 @@ async fn test_full_crawl_workflow_with_storage() {
 
 /// Test the queue entry insertion and retrieval workflow with proper isolation.
 #[tokio::test]
-#[ignore]
 async fn test_queue_entry_workflow() {
     let db_client = create_db_client().await;
     println!("✓ Connected to Cassandra");
@@ -404,7 +400,6 @@ async fn test_queue_entry_workflow() {
 /// 4. Verify: crawled page in Cassandra + content in S3
 /// 5. Cleanup
 #[tokio::test]
-#[ignore]
 async fn test_crawl_pipeline_end_to_end() {
     // Test content that will be served by our local HTTP server
     let test_html = r#"<!DOCTYPE html>

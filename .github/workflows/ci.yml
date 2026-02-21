@@ -54,6 +54,9 @@ jobs:
       - name: Run pre-commit checks (fmt, clippy, unit + storage tests)
         run: ./scripts/pre-commit.sh
 
+      - name: Load .env for integration tests
+        run: echo "$(grep -v '^#' .env | grep -v '^$')" >> "$GITHUB_ENV"
+
       - name: Run integration tests (Tier 2)
         working-directory: lala-agent
         run: cargo test --test '*'
