@@ -16,12 +16,13 @@ services:
       # Deployment mode: single_tenant by default; set DEPLOYMENT_MODE=multi_tenant
       # in the environment to run the multi-tenant test phase
       - DEPLOYMENT_MODE=${DEPLOYMENT_MODE:-single_tenant}
-      # SMTP pass-through: Phase 1 sets SMTP_HOST= in the shell to disable
-      # auth; Phase 2 sets SMTP_* to Mailtrap sandbox SMTP credentials.
-      - SMTP_HOST=${SMTP_HOST:-}
-      - SMTP_PORT=${SMTP_PORT:-587}
-      - SMTP_USERNAME=${SMTP_USERNAME:-}
-      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
-      - SMTP_TLS=${SMTP_TLS:-true}
+      # SMTP override: maps MAILTRAP_SMTP_* from .env to the container's SMTP_* vars.
+      # Phase 1 sets MAILTRAP_SMTP_HOST= in the shell to disable SMTP;
+      # Phase 2 uses the Mailtrap credentials from .env as-is.
+      - SMTP_HOST=${MAILTRAP_SMTP_HOST:-}
+      - SMTP_PORT=${MAILTRAP_SMTP_PORT:-2525}
+      - SMTP_USERNAME=${MAILTRAP_SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${MAILTRAP_SMTP_PASSWORD:-}
+      - SMTP_TLS=true
       - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-noreply@test.e2e}
       - APP_BASE_URL=${APP_BASE_URL:-http://localhost:3000}

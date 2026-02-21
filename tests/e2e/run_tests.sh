@@ -165,7 +165,7 @@ echo "Step 4: Starting agent (single-tenant mode)..."
 docker compose stop lala-agent 2>/dev/null || true
 docker compose rm -f lala-agent 2>/dev/null || true
 
-DEPLOYMENT_MODE=single_tenant SMTP_HOST= \
+DEPLOYMENT_MODE=single_tenant MAILTRAP_SMTP_HOST= \
     docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build lala-agent
 wait_for_service "LalaSearch Agent (single-tenant)" "$AGENT_URL/version" || exit 1
 echo ""

@@ -18,7 +18,7 @@
 #
 # Required environment secrets (Settings → Environments → test → Secrets):
 #
-#   SMTP_PASSWORD            - Mailtrap inbox SMTP password
+#   SMTP_PASSWORD           - Mailtrap inbox SMTP password
 #   MAILTRAP_API_TOKEN      - Mailtrap API token (for Playwright to read emails)
 #
 # ──────────────────────────────────────────────────────────────────────
@@ -56,19 +56,17 @@ jobs:
 
       - name: Generate .env for Docker Compose
         env:
+          MAILTRAP_SMTP_HOST: ${{ vars.SMTP_HOST }}
+          MAILTRAP_SMTP_USERNAME: ${{ vars.SMTP_USERNAME }}
+          MAILTRAP_SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           MAILTRAP_API_TOKEN: ${{ secrets.MAILTRAP_API_TOKEN }}
           MAILTRAP_ACCOUNT_ID: ${{ vars.MAILTRAP_ACCOUNT_ID }}
           MAILTRAP_INBOX_ID: ${{ vars.MAILTRAP_INBOX_ID }}
-          SMTP_HOST: ${{ vars.SMTP_HOST }}
-          SMTP_PORT: 2525
-          SMTP_USERNAME: ${{ vars.SMTP_USERNAME }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
         run: |
           cp .env.example .env
-          sed -i "s|^SMTP_HOST=.*|SMTP_HOST=${SMTP_HOST}|" .env
-          sed -i "s|^SMTP_PORT=.*|SMTP_PORT=${SMTP_PORT}|" .env
-          sed -i "s|^SMTP_USERNAME=.*|SMTP_USERNAME=${SMTP_USERNAME}|" .env
-          sed -i "s|^SMTP_PASSWORD=.*|SMTP_PASSWORD=${SMTP_PASSWORD}|" .env
+          sed -i "s|^MAILTRAP_SMTP_HOST=.*|MAILTRAP_SMTP_HOST=${MAILTRAP_SMTP_HOST}|" .env
+          sed -i "s|^MAILTRAP_SMTP_USERNAME=.*|MAILTRAP_SMTP_USERNAME=${MAILTRAP_SMTP_USERNAME}|" .env
+          sed -i "s|^MAILTRAP_SMTP_PASSWORD=.*|MAILTRAP_SMTP_PASSWORD=${MAILTRAP_SMTP_PASSWORD}|" .env
           sed -i "s|^MAILTRAP_API_TOKEN=.*|MAILTRAP_API_TOKEN=${MAILTRAP_API_TOKEN}|" .env
           sed -i "s|^MAILTRAP_ACCOUNT_ID=.*|MAILTRAP_ACCOUNT_ID=${MAILTRAP_ACCOUNT_ID}|" .env
           sed -i "s|^MAILTRAP_INBOX_ID=.*|MAILTRAP_INBOX_ID=${MAILTRAP_INBOX_ID}|" .env
