@@ -127,8 +127,17 @@ This project follows Test-Driven Development (TDD). See [CLAUDE.md](CLAUDE.md) f
 After cloning, install the git pre-commit hook to automatically run quality checks:
 
 ```bash
-cp scripts/pre-commit.sh .git/hooks/pre-commit
+# Create a hook that delegates to scripts/pre-commit.sh
+printf '#!/bin/sh\nexec "$(git rev-parse --show-toplevel)/scripts/pre-commit.sh"\n' > .git/hooks/pre-commit
 chmod +x .git/hooks/pre-commit
+```
+
+On Windows (Git Bash), the pre-commit script automatically runs all checks inside Docker via `docker compose run lala-agent` to avoid PDB linker errors and other Windows-specific build issues.
+
+You can also force a specific mode:
+```bash
+./scripts/pre-commit.sh --docker  # Force Docker mode (any OS)
+./scripts/pre-commit.sh --local   # Force local Rust toolchain
 ```
 
 ### Running Tests

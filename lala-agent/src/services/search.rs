@@ -186,14 +186,18 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires Meilisearch running
     async fn test_search_client_creation() {
-        let client = SearchClient::new("http://127.0.0.1:7700", "documents".to_string()).await;
+        let host = std::env::var("MEILISEARCH_HOST")
+            .expect("MEILISEARCH_HOST environment variable must be set");
+        let client = SearchClient::new(&host, "documents".to_string()).await;
         assert!(client.is_ok());
     }
 
     #[tokio::test]
     #[ignore] // Requires Meilisearch running
     async fn test_index_document() {
-        let client = SearchClient::new("http://127.0.0.1:7700", "documents".to_string())
+        let host = std::env::var("MEILISEARCH_HOST")
+            .expect("MEILISEARCH_HOST environment variable must be set");
+        let client = SearchClient::new(&host, "documents".to_string())
             .await
             .expect("Failed to create client");
 

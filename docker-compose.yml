@@ -160,6 +160,27 @@ services:
     networks:
       - lalasearch-network
 
+  # SeaweedFS S3 credential initialization (runs once after SeaweedFS starts)
+  # SeaweedFS doesn't reliably load credentials from the static -s3.config file
+  # into its filer-based IAM store, so we apply them via weed shell
+  seaweedfs-init:
+    image: chrislusf/seaweedfs:latest
+    container_name: lalasearch-seaweedfs-init
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    env_file:
+      - .env
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo 'Configuring SeaweedFS S3 credentials...'
+        echo "s3.configure -access_key=$$S3_ACCESS_KEY -secret_key=$$S3_SECRET_KEY -user=admin -actions=Admin,Read,Write,List,Tagging -apply" | weed shell -master=seaweedfs:9333
+        echo 'SeaweedFS S3 credentials configured successfully!'
+    networks:
+      - lalasearch-network
+    restart: "no"
+
   # Postfix - Local SMTP server for sending emails directly
   # WARNING: Emails will likely go to spam due to missing SPF/DKIM/DMARC
   postfix:

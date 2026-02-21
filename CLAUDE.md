@@ -198,7 +198,17 @@ This runs:
 3. `cargo test --lib` (unit tests)
 4. `docker compose up -d` + `cargo test --lib -- --ignored` (storage-dependent tests)
 
-The script automatically starts Docker services (Cassandra, MinIO, Meilisearch) for storage-dependent tests.
+The script automatically starts Docker services (Cassandra, SeaweedFS, Meilisearch) for storage-dependent tests.
+
+### Windows Support
+
+On Windows (Git Bash / MSYS2), the script automatically runs **all checks inside Docker** via `docker compose run lala-agent`. This avoids PDB linker errors and other Windows-specific build issues. Docker Compose handles networking, env vars, and dependency startup automatically.
+
+```bash
+./scripts/pre-commit.sh           # Auto-detect: Docker on Windows, local on Linux/macOS
+./scripts/pre-commit.sh --docker  # Force Docker mode (any OS)
+./scripts/pre-commit.sh --local   # Force local Rust toolchain
+```
 
 If any check fails, fix the issues before committing.
 
