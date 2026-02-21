@@ -54,33 +54,18 @@ docker compose up -d cassandra seaweedfs meilisearch cassandra-init
 # Wait for cassandra-init to finish creating keyspaces
 echo "    Waiting for services to be ready..."
 echo "    Waiting for cassandra-init to complete schema creation..."
-timeout=120
-elapsed=0
-while [ $elapsed -lt $timeout ]; do
-    status=$(docker compose ps cassandra-init --format '{{.State}}' 2>/dev/null || echo "unknown")
-    case "$status" in
-        *exited*|*dead*)
-            exit_code=$(docker compose ps cassandra-init --format '{{.ExitCode}}' 2>/dev/null || echo "1")
-            if [ "$exit_code" = "0" ]; then
-                echo "    cassandra-init completed successfully."
-                break
-            else
-                echo "    ❌ cassandra-init failed with exit code $exit_code"
-                docker compose logs cassandra-init
-                exit 1
-            fi
-            ;;
-        *)
-            sleep 2
-            elapsed=$((elapsed + 2))
-            ;;
-    esac
-done
-if [ $elapsed -ge $timeout ]; then
-    echo "    ❌ Timed out waiting for cassandra-init (${timeout}s)"
+exit_code=$(timeout 120 docker wait lalasearch-cassandra-init 2>/dev/null) || true
+if [ -z "$exit_code" ]; then
+    echo "    ❌ Timed out waiting for cassandra-init (120s)"
     docker compose logs cassandra-init
     exit 1
 fi
+if [ "$exit_code" != "0" ]; then
+    echo "    ❌ cassandra-init failed with exit code $exit_code"
+    docker compose logs cassandra-init
+    exit 1
+fi
+echo "    cassandra-init completed successfully."
 
 # Load environment variables from .env file for tests
 if [ -f "$PROJECT_ROOT/.env" ]; then
