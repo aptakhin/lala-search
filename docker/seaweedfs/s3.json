@@ -4,8 +4,8 @@
       "name": "admin",
       "credentials": [
         {
-          "accessKey": "minioadmin",
-          "secretKey": "minioadmin"
+          "accessKey": "lalasearch",
+          "secretKey": "lalasearch"
         }
       ],
       "actions": [
