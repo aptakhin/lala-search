@@ -54,16 +54,14 @@ async fn main() {
     let storage_client = init_storage_client().await;
 
     // Ensure the default tenant row exists in the system keyspace
-    if let Err(e) = system_db.ensure_default_tenant().await {
+    if let Err(e) = system_db.ensure_default_tenant(&cassandra_keyspace).await {
         eprintln!("Failed to ensure default tenant in system keyspace: {}", e);
     }
 
     println!("Deployment mode: {}", deployment_mode);
 
-    // Determine which tenant keyspaces the queue processor should handle.
-    // In multi-tenant mode, CASSANDRA_TENANT_KEYSPACES lists all keyspaces
-    // (comma-separated). Falls back to the single configured keyspace.
-    let tenant_keyspaces = resolve_tenant_keyspaces(&cassandra_keyspace, deployment_mode);
+    let tenant_keyspaces =
+        resolve_tenant_keyspaces(&system_db, &cassandra_keyspace, deployment_mode).await;
 
     // Start one queue processor per tenant keyspace (if agent mode requires it)
     if agent_mode.should_process_queue() {
@@ -107,24 +105,42 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-/// Resolve the list of Cassandra keyspaces the queue processor should watch.
+/// Resolve the list of Cassandra keyspaces the queue processor should handle.
 ///
-/// In multi-tenant mode reads `CASSANDRA_TENANT_KEYSPACES` (comma-separated).
-/// If that variable is absent or empty, falls back to `default_keyspace`.
-fn resolve_tenant_keyspaces(default_keyspace: &str, mode: DeploymentMode) -> Vec<String> {
-    if mode == DeploymentMode::MultiTenant {
-        if let Ok(val) = env::var("CASSANDRA_TENANT_KEYSPACES") {
-            let keyspaces: Vec<String> = val
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-            if !keyspaces.is_empty() {
-                return keyspaces;
-            }
+/// In multi-tenant mode, queries the tenants table in the system keyspace.
+/// Falls back to `default_keyspace` if the query fails or returns no rows.
+async fn resolve_tenant_keyspaces(
+    system_db: &Arc<CassandraClient>,
+    default_keyspace: &str,
+    mode: DeploymentMode,
+) -> Vec<String> {
+    if mode != DeploymentMode::MultiTenant {
+        return vec![default_keyspace.to_string()];
+    }
+    match system_db.list_tenant_keyspaces().await {
+        Ok(ks) if !ks.is_empty() => {
+            println!(
+                "Scheduler: found {} tenant keyspace(s): {}",
+                ks.len(),
+                ks.join(", ")
+            );
+            ks
+        }
+        Ok(_) => {
+            println!(
+                "Scheduler: no tenants found in system keyspace, using default: {}",
+                default_keyspace
+            );
+            vec![default_keyspace.to_string()]
+        }
+        Err(e) => {
+            eprintln!(
+                "Scheduler: failed to list tenants ({}), using default: {}",
+                e, default_keyspace
+            );
+            vec![default_keyspace.to_string()]
         }
     }
-    vec![default_keyspace.to_string()]
 }
 
 /// Spawn a background queue processor for one tenant's keyspace.

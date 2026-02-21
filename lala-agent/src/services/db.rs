@@ -83,18 +83,54 @@ impl CassandraClient {
         self.session.clone()
     }
 
-    /// Ensure the default tenant row exists in this client's keyspace.
+    /// Ensure the default tenant row exists in the system keyspace.
     ///
-    /// Called on startup against the system keyspace client to initialize the tenant registry.
+    /// `tenant_keyspace` is the Cassandra keyspace name used as the tenant_id
+    /// (e.g. `lalasearch_default` or `lalasearch_test`).
     /// Uses IF NOT EXISTS so it is safe to call repeatedly.
-    pub async fn ensure_default_tenant(&self) -> Result<(), QueryError> {
+    pub async fn ensure_default_tenant(&self, tenant_keyspace: &str) -> Result<(), QueryError> {
         let query = format!(
             "INSERT INTO {}.tenants (tenant_id, name, created_at) \
-             VALUES ('default', 'Default', toTimestamp(now())) IF NOT EXISTS",
+             VALUES (?, 'Default', toTimestamp(now())) IF NOT EXISTS",
             self.keyspace
         );
-        self.session.query_unpaged(query, &[]).await?;
+        self.session
+            .query_unpaged(query, (tenant_keyspace,))
+            .await?;
         Ok(())
+    }
+
+    /// List all tenant keyspace names registered in the system keyspace's tenants table.
+    ///
+    /// In multi-tenant mode the scheduler calls this on startup to discover which
+    /// Cassandra keyspaces need a queue processor.  Each `tenant_id` value in the
+    /// table **is** the Cassandra keyspace name (e.g. `lalasearch_acme`).
+    pub async fn list_tenant_keyspaces(&self) -> Result<Vec<String>, QueryError> {
+        let query = format!("SELECT tenant_id FROM {}.tenants", self.keyspace);
+        let result = self.session.query_unpaged(query, &[]).await?;
+        let rows_result = match result.into_rows_result() {
+            Ok(r) => r,
+            Err(_) => return Ok(Vec::new()),
+        };
+
+        let rows = rows_result.rows::<(String,)>().map_err(|e| {
+            QueryError::DbError(
+                scylla::transport::errors::DbError::Other(0),
+                format!("Failed to deserialize tenants rows: {}", e),
+            )
+        })?;
+
+        let mut keyspaces = Vec::new();
+        for row_result in rows {
+            let (tenant_id,) = row_result.map_err(|e| {
+                QueryError::DbError(
+                    scylla::transport::errors::DbError::Other(0),
+                    format!("Failed to parse tenant row: {}", e),
+                )
+            })?;
+            keyspaces.push(tenant_id);
+        }
+        Ok(keyspaces)
     }
 
     /// Insert an allowed domain
@@ -836,32 +872,34 @@ mod tests {
     #[ignore]
     async fn test_ensure_default_tenant_is_idempotent() {
         let system_client = create_system_test_client().await;
+        let tenant_ks = std::env::var("CASSANDRA_KEYSPACE")
+            .unwrap_or_else(|_| "lalasearch_default".to_string());
 
         // Should be idempotent - calling twice should not error
         system_client
-            .ensure_default_tenant()
+            .ensure_default_tenant(&tenant_ks)
             .await
             .expect("First call should succeed");
         system_client
-            .ensure_default_tenant()
+            .ensure_default_tenant(&tenant_ks)
             .await
             .expect("Second call should also succeed (IF NOT EXISTS)");
 
-        // Verify the default tenant row exists
+        // Verify the tenant row exists
         let query = format!(
-            "SELECT tenant_id FROM {}.tenants WHERE tenant_id = 'default'",
+            "SELECT tenant_id FROM {}.tenants WHERE tenant_id = ?",
             system_client.keyspace
         );
         let result = system_client
             .session
-            .query_unpaged(query, &[])
+            .query_unpaged(query, (&tenant_ks,))
             .await
             .unwrap();
         let rows_result = result.into_rows_result().unwrap();
         let mut rows = rows_result.rows::<(String,)>().unwrap();
         assert!(
             rows.next().is_some(),
-            "Default tenant row should exist after ensure_default_tenant"
+            "Tenant row should exist after ensure_default_tenant"
         );
     }
 }

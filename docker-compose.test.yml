@@ -8,8 +8,11 @@ services:
   # Override agent with test environment
   lala-agent:
     environment:
-      # Use test keyspace and index to avoid interfering with development
+      # Use test keyspace and index to avoid interfering with development data
       - CASSANDRA_KEYSPACE=lalasearch_test
       - MEILISEARCH_INDEX=documents_test
-      # Mark as test agent in user agent
+      # Mark as test agent in user agent string
       - USER_AGENT=LalaSearchBot/0.1 (E2E-Test)
+      # Deployment mode: single_tenant by default; set DEPLOYMENT_MODE=multi_tenant
+      # in the environment to run the multi-tenant test phase
+      - DEPLOYMENT_MODE=${DEPLOYMENT_MODE:-single_tenant}
