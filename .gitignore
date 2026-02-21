@@ -1,4 +1,8 @@
 lala-agent/target/
 
+# lala-web build artifacts
+lala-web/node_modules/
+lala-web/html/js/
+
 # Environment variables
 .env

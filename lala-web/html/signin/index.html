@@ -3,6 +3,7 @@
 <head>
     <!--#include virtual="/includes/head.html" -->
     <title>Sign In - LalaSearch</title>
+    <script defer src="/js/signin.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
 <body x-data="signInPage()" x-init="init()">
@@ -52,56 +53,5 @@
 
     <!--#include virtual="/includes/footer.html" -->
 
-    <script>
-        function signInPage() {
-            return {
-                email: '',
-                sending: false,
-                sent: false,
-                error: null,
-
-                async init() {
-                    // If already authenticated, redirect to dashboard
-                    try {
-                        const res = await fetch('/api/auth/me', { credentials: 'include' });
-                        if (res.ok) {
-                            window.location.href = '/dashboard';
-                        }
-                    } catch (_) {
-                        // Not authenticated, stay on sign-in page
-                    }
-                },
-
-                async requestLink() {
-                    if (!this.email.trim()) {
-                        this.error = 'Please enter your email address.';
-                        return;
-                    }
-
-                    this.sending = true;
-                    this.error = null;
-
-                    try {
-                        const response = await fetch('/api/auth/request-link', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ email: this.email }),
-                        });
-
-                        const data = await response.json();
-                        if (response.ok && data.success) {
-                            this.sent = true;
-                        } else {
-                            this.error = data.message || 'Failed to send sign-in email.';
-                        }
-                    } catch (_) {
-                        this.error = 'Network error. Is the server running?';
-                    } finally {
-                        this.sending = false;
-                    }
-                },
-            };
-        }
-    </script>
 </body>
 </html>

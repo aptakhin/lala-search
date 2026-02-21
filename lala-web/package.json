@@ -1,0 +1,15 @@
+{
+  "name": "lala-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LalaSearch web frontend",
+  "scripts": {
+    "build": "esbuild src/pages/*.ts --outdir=html/js --bundle --minify --target=es2020",
+    "watch": "esbuild src/pages/*.ts --outdir=html/js --bundle --sourcemap --target=es2020 --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  }
+}
