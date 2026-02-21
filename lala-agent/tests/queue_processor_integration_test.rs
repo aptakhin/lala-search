@@ -196,7 +196,7 @@ async fn test_full_crawl_workflow_with_storage() {
     println!("✓ Connected to Cassandra");
 
     let storage_client = create_storage_client().await;
-    println!("✓ Connected to S3/MinIO storage");
+    println!("✓ Connected to S3/SeaweedFS storage");
 
     // Step 1: Create unique test data and set up allowed domain
     let test_domain = format!(
@@ -455,7 +455,14 @@ async fn test_crawl_pipeline_end_to_end() {
     println!("✓ Connected to Cassandra");
 
     let storage_client = create_storage_client().await;
-    println!("✓ Connected to S3/MinIO storage");
+    println!("✓ Connected to S3/SeaweedFS storage");
+
+    // Enable crawling so process_next_entry() will process entries
+    db_client
+        .set_crawling_enabled(true)
+        .await
+        .expect("Failed to enable crawling");
+    println!("✓ Enabled crawling");
 
     // Step 1: Setup - add allowed domain
     db_client

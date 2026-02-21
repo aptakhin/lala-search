@@ -134,7 +134,7 @@ Run automatically by `./scripts/pre-commit.sh`. Must complete quickly.
 | Test Type | Location | Marker | Description |
 |-----------|----------|--------|-------------|
 | Unit tests | `src/**/*.rs` | None | Pure logic, no external dependencies |
-| Storage-dependent | `src/**/*.rs` | `#[ignore]` | Require Cassandra/MinIO/Meilisearch |
+| Storage-dependent | `src/**/*.rs` | `#[ignore]` | Require Cassandra/SeaweedFS/Meilisearch |
 
 **Rules for Tier 1 tests:**
 - Each test must complete in **under 500ms**

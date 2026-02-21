@@ -295,7 +295,7 @@ impl QueueProcessor {
     ) {
         let now = Utc::now();
         let domain = url::Url::parse(&entry.url)
-            .map(|u| u.host_str().unwrap_or(&entry.domain).to_string())
+            .map(|u| extract_domain(&u))
             .unwrap_or_else(|_| entry.domain.clone());
 
         // Log the error to crawl_errors table
@@ -413,7 +413,7 @@ impl QueueProcessor {
         };
 
         // Validate domain - early return if empty
-        let domain = parsed.host_str().unwrap_or("").to_string();
+        let domain = extract_domain(&parsed);
         if domain.is_empty() {
             return;
         }
@@ -498,7 +498,7 @@ impl QueueProcessor {
         storage_compression: crate::models::storage::CompressionType,
     ) -> Result<CrawledPage> {
         let parsed_url = url::Url::parse(&entry.url)?;
-        let domain = parsed_url.host_str().unwrap_or(&entry.domain).to_string();
+        let domain = extract_domain(&parsed_url);
         let url_path = parsed_url.path().to_string();
 
         let now = Utc::now();
@@ -559,6 +559,17 @@ impl QueueProcessor {
             created_at,
             updated_at: now_timestamp,
         })
+    }
+}
+
+/// Extract domain from a parsed URL, including non-standard ports.
+/// Standard ports (80 for http, 443 for https) are omitted by `url::Url::port()`,
+/// so only non-default ports are appended.
+fn extract_domain(url: &url::Url) -> String {
+    let host = url.host_str().unwrap_or("");
+    match url.port() {
+        Some(port) => format!("{}:{}", host, port),
+        None => host.to_string(),
     }
 }
 
@@ -752,6 +763,25 @@ fn extract_robots_meta_directives(html: &str) -> RobotsMetaDirectives {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_extract_domain_standard_port_omitted() {
+        let url = url::Url::parse("https://example.com/page").unwrap();
+        assert_eq!(extract_domain(&url), "example.com");
+    }
+
+    #[test]
+    fn test_extract_domain_non_standard_port_included() {
+        let url = url::Url::parse("http://127.0.0.1:8080/page").unwrap();
+        assert_eq!(extract_domain(&url), "127.0.0.1:8080");
+    }
+
+    #[test]
+    fn test_extract_domain_explicit_default_port_omitted() {
+        // url::Url normalizes default ports away
+        let url = url::Url::parse("http://example.com:80/page").unwrap();
+        assert_eq!(extract_domain(&url), "example.com");
+    }
 
     #[test]
     fn test_remove_html_tags() {
