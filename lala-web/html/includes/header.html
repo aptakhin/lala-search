@@ -1,0 +1,8 @@
+<header>
+    <h1><a href="/">LALASEARCH</a></h1>
+    <p class="tagline">The Open Source Search Engine - Retro Edition</p>
+    <div class="auth-header-btn" x-show="ready && deploymentMode === 'multi_tenant'" x-cloak>
+        <a x-show="!user" href="/signin" class="btn-signin" data-testid="signin-nav-button">Sign in for Own Search</a>
+        <a x-show="user" href="/dashboard" class="btn-dashboard" data-testid="dashboard-nav-button">Dashboard</a>
+    </div>
+</header>

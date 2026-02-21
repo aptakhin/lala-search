@@ -1,21 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!--#include virtual="/includes/head.html" -->
     <title>LalaSearch - The Open Search Engine</title>
-    <link rel="stylesheet" href="/styles.css">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
 <body x-data="pageApp()" x-init="init()">
-    <header>
-        <h1><a href="/">LALASEARCH</a></h1>
-        <p class="tagline">The Open Source Search Engine - Retro Edition</p>
-        <div class="auth-header-btn" x-show="ready && deploymentMode === 'multi_tenant'" x-cloak>
-            <a x-show="!user" href="/signin" class="btn-signin" data-testid="signin-nav-button">Sign in for Own Search</a>
-            <a x-show="user" href="/dashboard" class="btn-dashboard" data-testid="dashboard-nav-button">Dashboard</a>
-        </div>
-    </header>
+    <!--#include virtual="/includes/header.html" -->
 
     <div class="container" x-data="searchApp()" x-init="init()">
         <!-- Search Section -->
@@ -102,10 +93,7 @@
         </div>
     </div>
 
-    <footer>
-        <p>LalaSearch &copy; 2026 | Open Source Distributed Search Engine</p>
-        <p style="margin-top: 10px; font-size: 11px; color: #999999;">Designed in retro 1990s style</p>
-    </footer>
+    <!--#include virtual="/includes/footer.html" -->
 
     <script>
         function pageApp() {
