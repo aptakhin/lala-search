@@ -16,10 +16,9 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 AGENT_URL="http://localhost:3000"
 MAX_WAIT=60  # seconds to wait for services
 
-# Find Python interpreter (uv-managed, then system)
-PYTHON="$(uv python find 2>/dev/null || command -v "$PYTHON" 2>/dev/null || command -v python 2>/dev/null)"
-if [ -z "$PYTHON" ]; then
-    echo -e "${RED}Error: No Python interpreter found. Install Python or uv.${NC}"
+# Verify Node.js is available (required for Playwright tests)
+if ! command -v node &> /dev/null; then
+    echo -e "${RED}Error: Node.js not found. Install Node.js 18+ to run E2E tests.${NC}"
     exit 1
 fi
 
@@ -143,8 +142,8 @@ echo -e "${GREEN}✓ Test data cleaned${NC}"
 # -- 3d: Pre-seed invitation for user2 → lalasearch_test_tenant2 --
 # Token: "e2e-test-tenant2-invite-0001"  (raw, unhashed)
 echo "Seeding tenant2 invitation for user2@test.e2e..."
-INVITE_TOKEN_HASH=$("$PYTHON" -c "import hashlib; print(hashlib.sha256(b'e2e-test-tenant2-invite-0001').hexdigest())")
-FUTURE_EXPIRES_MS=$("$PYTHON" -c "import time; print(int((time.time() + 86400) * 1000))")
+INVITE_TOKEN_HASH=$(node -e "const crypto = require('crypto'); console.log(crypto.createHash('sha256').update('e2e-test-tenant2-invite-0001').digest('hex'))")
+FUTURE_EXPIRES_MS=$(node -e "console.log(Math.floor(Date.now() + 86400000))")
 DUMMY_UUID="00000000-0000-0000-0000-000000000001"
 docker exec lalasearch-cassandra cqlsh -e "USE lalasearch_system; DELETE FROM org_invitations WHERE token_hash = '$INVITE_TOKEN_HASH'; INSERT INTO org_invitations (token_hash, tenant_id, email, role, invited_by, created_at, expires_at, accepted) VALUES ('$INVITE_TOKEN_HASH', 'lalasearch_test_tenant2', 'user2@test.e2e', 'Owner', $DUMMY_UUID, toTimestamp(now()), $FUTURE_EXPIRES_MS, false);"
 echo -e "${GREEN}✓ Tenant2 invitation seeded${NC}"
@@ -163,23 +162,23 @@ wait_for_service "LalaSearch Agent (single-tenant)" "$AGENT_URL/version" || exit
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 5: Install Python dependencies
+# Step 5: Install Node.js dependencies
 # ---------------------------------------------------------------------------
-echo "Step 5: Installing Python dependencies..."
+echo "Step 5: Installing Node.js dependencies..."
 cd "$SCRIPT_DIR"
-uv sync
+npm ci
 echo -e "${GREEN}✓ Dependencies installed${NC}"
 echo ""
 
 # ---------------------------------------------------------------------------
 # Step 6: Phase 1 — Single-tenant tests
 # ---------------------------------------------------------------------------
-echo "Step 6: Running single-tenant E2E tests (test_system.py)..."
+echo "Step 6: Running single-tenant E2E tests (system.spec.ts)..."
 echo "======================================"
 echo ""
 
 cd "$SCRIPT_DIR"
-uv run pytest test_system.py -v --tb=short
+npx playwright test system.spec.ts
 SINGLE_TENANT_RESULT=$?
 
 echo ""
@@ -203,14 +202,14 @@ if [ -n "${MAILTRAP_API_TOKEN:-}" ] && [ -n "${MAILTRAP_ACCOUNT_ID:-}" ] && [ -n
     wait_for_service "LalaSearch Agent (multi-tenant)" "$AGENT_URL/version" || exit 1
     echo ""
 
-    echo "Step 8: Running multi-tenant E2E tests (test_multi_tenant.py)..."
+    echo "Step 8: Running multi-tenant E2E tests (multi-tenant.spec.ts)..."
     echo "======================================"
     echo ""
 
     MAILTRAP_API_TOKEN="$MAILTRAP_API_TOKEN" \
     MAILTRAP_ACCOUNT_ID="$MAILTRAP_ACCOUNT_ID" \
     MAILTRAP_INBOX_ID="$MAILTRAP_INBOX_ID" \
-        uv run pytest test_multi_tenant.py -v --tb=short
+        npx playwright test multi-tenant.spec.ts
     MULTI_TENANT_RESULT=$?
 
     echo ""

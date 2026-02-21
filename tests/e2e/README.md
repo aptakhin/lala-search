@@ -1,6 +1,6 @@
 # E2E System Tests
 
-End-to-end tests for the complete LalaSearch system.
+End-to-end tests for the complete LalaSearch system, using [Playwright](https://playwright.dev/) for API testing.
 
 ## Isolated Test Environment
 
@@ -14,16 +14,18 @@ This means you can run E2E tests while actively developing without data conflict
 
 ## What This Tests
 
-- ✅ Queue API accepts URLs
-- ✅ Crawler processes pages
-- ✅ Content gets indexed
-- ✅ Search returns results
+- Version endpoint and deployment mode validation
+- Admin domain management (CRUD)
+- Queue API accepts/rejects URLs
+- Crawling settings persistence
+- Search endpoint
+- Full pipeline: queue → crawl → index → search
+- Multi-tenant data isolation (when Mailtrap is configured)
 
 ## Requirements
 
 - Docker Compose stack running (`docker compose up`)
-- Python 3.8+
-- [uv](https://github.com/astral-sh/uv) - Fast Python package manager (required)
+- Node.js 18+
 
 ## Running the Tests
 
@@ -37,68 +39,35 @@ This means you can run E2E tests while actively developing without data conflict
 This script will:
 1. Check Docker Compose availability
 2. Start services with test configuration (isolated keyspace/index)
-3. Create test keyspace and clean test data
-4. Install dependencies with uv
-5. Run E2E tests with pytest
+3. Create test keyspaces and clean test data
+4. Install dependencies with npm
+5. Run single-tenant E2E tests with Playwright
+6. (Optional) Run multi-tenant E2E tests if Mailtrap is configured
 
-### Option 2: Manual with uv
+### Option 2: Manual
 
 ```bash
 cd tests/e2e
 
 # Install dependencies
-uv sync
+npm ci
 
-# Run the tests
-uv run pytest test_system.py -v
+# Run all tests
+npx playwright test
+
+# Run only single-tenant tests
+npx playwright test system.spec.ts
+
+# Run only multi-tenant tests (requires Mailtrap env vars)
+npx playwright test multi-tenant.spec.ts
 ```
-
-### Option 3: Direct execution (after uv sync)
-
-```bash
-cd tests/e2e
-uv sync
-uv run python test_system.py
-```
-
-## What Gets Tested
-
-1. **Version endpoint** - Smoke test to verify agent is running
-2. **Search API** - Verify search endpoint is accessible
-3. **Full pipeline** - Queue → Crawl → Index → Search
-   - Adds `en.wikipedia.org` to allowed domains
-   - Queues a stable Wikipedia page (Linux article)
-   - Polls search API until content appears
-   - Verifies the URL appears in search results
 
 ## Test Configuration
 
-- **Timeout**: 60 seconds for crawl + index
+- **Single-tenant timeout**: 60 seconds for crawl + index
+- **Multi-tenant timeout**: 90 seconds for crawl + index
 - **Test URL**: https://en.wikipedia.org/wiki/Linux (stable content)
 - **Search term**: "Linux"
-
-## Expected Output
-
-```
-============================================================
-LalaSearch E2E System Test
-============================================================
-
-Agent version: 0.1.0
-
-1. Testing with URL: https://en.wikipedia.org/wiki/Linux
-2. Adding domain 'en.wikipedia.org' to allowed list...
-   ✓ Domain added
-3. Adding URL to queue...
-   ✓ URL queued
-4. Waiting for crawl and indexing (max 60s)...
-   ... No results yet, waiting...
-   ✓ Page indexed and searchable (8.2s)
-5. Verifying search quality...
-   ✓ Found 1 results, our URL in top 3
-
-✅ E2E test passed!
-```
 
 ## Troubleshooting
 
