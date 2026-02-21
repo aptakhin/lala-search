@@ -6,15 +6,20 @@
 # Reuses tests/e2e/run_tests.sh for the core test flow.
 #
 # ──────────────────────────────────────────────────────────────────────
-# Required GitHub Secrets:
+# Uses GitHub environment "test" (a separate "prod" environment can
+# be added later with its own variables and secrets).
 #
-#   MAILTRAP_API_TOKEN      - Mailtrap API token (for Playwright to read emails)
+# Required environment variables (Settings → Environments → test → Variables):
+#
+#   SMTP_HOST               - Mailtrap sandbox SMTP host (sandbox.smtp.mailtrap.io)
+#   SMTP_USERNAME           - Mailtrap inbox SMTP username
 #   MAILTRAP_ACCOUNT_ID     - Mailtrap account ID
 #   MAILTRAP_INBOX_ID       - Mailtrap inbox ID
-#   SMTP_HOST               - Mailtrap sandbox SMTP host (sandbox.smtp.mailtrap.io)
-#   SMTP_PORT               - Mailtrap sandbox SMTP port (2525)
-#   SMTP_USERNAME            - Mailtrap inbox SMTP username
+#
+# Required environment secrets (Settings → Environments → test → Secrets):
+#
 #   SMTP_PASSWORD            - Mailtrap inbox SMTP password
+#   MAILTRAP_API_TOKEN      - Mailtrap API token (for Playwright to read emails)
 #
 # ──────────────────────────────────────────────────────────────────────
 
@@ -37,6 +42,7 @@ jobs:
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
+    environment: test
     timeout-minutes: 30
 
     steps:
@@ -51,11 +57,11 @@ jobs:
       - name: Generate .env for Docker Compose
         env:
           MAILTRAP_API_TOKEN: ${{ secrets.MAILTRAP_API_TOKEN }}
-          MAILTRAP_ACCOUNT_ID: ${{ secrets.MAILTRAP_ACCOUNT_ID }}
-          MAILTRAP_INBOX_ID: ${{ secrets.MAILTRAP_INBOX_ID }}
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          MAILTRAP_ACCOUNT_ID: ${{ vars.MAILTRAP_ACCOUNT_ID }}
+          MAILTRAP_INBOX_ID: ${{ vars.MAILTRAP_INBOX_ID }}
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: 2525
+          SMTP_USERNAME: ${{ vars.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
         run: |
           cp .env.example .env
