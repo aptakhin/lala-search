@@ -147,9 +147,10 @@ services:
       - "8080:8080"   # Volume server (filer)
     volumes:
       - seaweedfs-data:/data
+      - ./docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
     environment:
       - WEED_MASTER_VOLUME_SIZE_LIMIT_MB=1024
-    command: 'server -s3 -s3.port=8333 -dir=/data -volume.max=0'
+    command: 'server -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json -dir=/data -volume.max=0'
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:9333/cluster/status || exit 1"]
       interval: 10s
