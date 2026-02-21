@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # End-to-End Test Runner for LalaSearch
-# Runs single-tenant tests, then (if Mailtrap is configured) multi-tenant tests.
+# Runs single-tenant tests, then multi-tenant tests.
+# Requires MAILTRAP_API_TOKEN, MAILTRAP_ACCOUNT_ID, and MAILTRAP_INBOX_ID
+# (set via environment or .env file in project root).
 
 set -euo pipefail
 
@@ -15,6 +17,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 AGENT_URL="http://localhost:3000"
 MAX_WAIT=60  # seconds to wait for services
+
+# Load .env from project root (only sets vars that are not already exported)
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
+fi
 
 # Verify Node.js is available (required for Playwright tests)
 if ! command -v node &> /dev/null; then
@@ -190,38 +199,44 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 7 (optional): Phase 2 — Multi-tenant tests
+# Step 7: Phase 2 — Multi-tenant tests (required)
 # ---------------------------------------------------------------------------
-if [ -n "${MAILTRAP_API_TOKEN:-}" ] && [ -n "${MAILTRAP_ACCOUNT_ID:-}" ] && [ -n "${MAILTRAP_INBOX_ID:-}" ]; then
-    echo "Step 7: Restarting agent in multi-tenant mode..."
-    docker compose stop lala-agent 2>/dev/null || true
-    docker compose rm -f lala-agent 2>/dev/null || true
+MISSING_VARS=""
+[ -z "${MAILTRAP_API_TOKEN:-}" ] && MISSING_VARS="$MISSING_VARS MAILTRAP_API_TOKEN"
+[ -z "${MAILTRAP_ACCOUNT_ID:-}" ] && MISSING_VARS="$MISSING_VARS MAILTRAP_ACCOUNT_ID"
+[ -z "${MAILTRAP_INBOX_ID:-}" ] && MISSING_VARS="$MISSING_VARS MAILTRAP_INBOX_ID"
 
-    DEPLOYMENT_MODE=multi_tenant \
-        docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build lala-agent
-    wait_for_service "LalaSearch Agent (multi-tenant)" "$AGENT_URL/version" || exit 1
-    echo ""
+if [ -n "$MISSING_VARS" ]; then
+    echo -e "${RED}Error: Missing required environment variables:${MISSING_VARS}${NC}"
+    echo "  Multi-tenant tests require Mailtrap credentials."
+    echo "  Set these env vars and re-run this script."
+    exit 1
+fi
 
-    echo "Step 8: Running multi-tenant E2E tests (multi-tenant.spec.ts)..."
-    echo "======================================"
-    echo ""
+echo "Step 7: Restarting agent in multi-tenant mode..."
+docker compose stop lala-agent 2>/dev/null || true
+docker compose rm -f lala-agent 2>/dev/null || true
 
-    MAILTRAP_API_TOKEN="$MAILTRAP_API_TOKEN" \
-    MAILTRAP_ACCOUNT_ID="$MAILTRAP_ACCOUNT_ID" \
-    MAILTRAP_INBOX_ID="$MAILTRAP_INBOX_ID" \
-        npx playwright test multi-tenant.spec.ts
-    MULTI_TENANT_RESULT=$?
+DEPLOYMENT_MODE=multi_tenant \
+    docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build lala-agent
+wait_for_service "LalaSearch Agent (multi-tenant)" "$AGENT_URL/version" || exit 1
+echo ""
 
-    echo ""
-    if [ $MULTI_TENANT_RESULT -eq 0 ]; then
-        echo -e "${GREEN}✅ Multi-tenant tests passed${NC}"
-    else
-        echo -e "${RED}❌ Multi-tenant tests failed${NC}"
-    fi
+echo "Step 8: Running multi-tenant E2E tests (multi-tenant.spec.ts)..."
+echo "======================================"
+echo ""
+
+MAILTRAP_API_TOKEN="$MAILTRAP_API_TOKEN" \
+MAILTRAP_ACCOUNT_ID="$MAILTRAP_ACCOUNT_ID" \
+MAILTRAP_INBOX_ID="$MAILTRAP_INBOX_ID" \
+    npx playwright test multi-tenant.spec.ts
+MULTI_TENANT_RESULT=$?
+
+echo ""
+if [ $MULTI_TENANT_RESULT -eq 0 ]; then
+    echo -e "${GREEN}✅ Multi-tenant tests passed${NC}"
 else
-    echo -e "${YELLOW}Step 7: Skipping multi-tenant tests (MAILTRAP_API_TOKEN / MAILTRAP_ACCOUNT_ID / MAILTRAP_INBOX_ID not set)${NC}"
-    echo "  To run multi-tenant tests, set those env vars and re-run this script."
-    MULTI_TENANT_RESULT=0
+    echo -e "${RED}❌ Multi-tenant tests failed${NC}"
 fi
 
 # ---------------------------------------------------------------------------
