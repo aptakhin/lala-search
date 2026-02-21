@@ -117,30 +117,58 @@ async fn resolve_tenant_keyspaces(
     if mode != DeploymentMode::MultiTenant {
         return vec![default_keyspace.to_string()];
     }
-    match system_db.list_tenant_keyspaces().await {
-        Ok(ks) if !ks.is_empty() => {
-            println!(
-                "Scheduler: found {} tenant keyspace(s): {}",
-                ks.len(),
-                ks.join(", ")
-            );
-            ks
-        }
+    let all_keyspaces = match system_db.list_tenant_keyspaces().await {
+        Ok(ks) if !ks.is_empty() => ks,
         Ok(_) => {
             println!(
                 "Scheduler: no tenants found in system keyspace, using default: {}",
                 default_keyspace
             );
-            vec![default_keyspace.to_string()]
+            return vec![default_keyspace.to_string()];
         }
         Err(e) => {
             eprintln!(
                 "Scheduler: failed to list tenants ({}), using default: {}",
                 e, default_keyspace
             );
-            vec![default_keyspace.to_string()]
+            return vec![default_keyspace.to_string()];
+        }
+    };
+
+    // Validate that each keyspace actually exists in Cassandra
+    let mut valid = Vec::new();
+    for ks in &all_keyspaces {
+        match system_db.keyspace_exists(ks).await {
+            Ok(true) => valid.push(ks.clone()),
+            Ok(false) => {
+                eprintln!(
+                    "Scheduler: skipping tenant '{}' — keyspace does not exist in Cassandra",
+                    ks
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "Scheduler: skipping tenant '{}' — failed to verify keyspace: {}",
+                    ks, e
+                );
+            }
         }
     }
+
+    if valid.is_empty() {
+        println!(
+            "Scheduler: no valid tenant keyspaces found, using default: {}",
+            default_keyspace
+        );
+        return vec![default_keyspace.to_string()];
+    }
+
+    println!(
+        "Scheduler: found {} valid tenant keyspace(s): {}",
+        valid.len(),
+        valid.join(", ")
+    );
+    valid
 }
 
 /// Spawn a background queue processor for one tenant's keyspace.

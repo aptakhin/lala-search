@@ -100,6 +100,20 @@ impl CassandraClient {
         Ok(())
     }
 
+    /// Check whether a Cassandra keyspace exists by querying the system schema.
+    pub async fn keyspace_exists(&self, keyspace_name: &str) -> Result<bool, QueryError> {
+        let query =
+            "SELECT keyspace_name FROM system_schema.keyspaces WHERE keyspace_name = ?".to_string();
+        let result = self.session.query_unpaged(query, (keyspace_name,)).await?;
+        let rows_result = match result.into_rows_result() {
+            Ok(r) => r,
+            Err(_) => return Ok(false),
+        };
+        Ok(rows_result
+            .rows::<(String,)>()
+            .is_ok_and(|mut rows| rows.next().is_some()))
+    }
+
     /// List all tenant keyspace names registered in the system keyspace's tenants table.
     ///
     /// In multi-tenant mode the scheduler calls this on startup to discover which
