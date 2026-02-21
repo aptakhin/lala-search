@@ -16,3 +16,6 @@ services:
       # Deployment mode: single_tenant by default; set DEPLOYMENT_MODE=multi_tenant
       # in the environment to run the multi-tenant test phase
       - DEPLOYMENT_MODE=${DEPLOYMENT_MODE:-single_tenant}
+      # SMTP_HOST pass-through: Phase 1 sets SMTP_HOST= in the shell to disable
+      # auth; Phase 2 leaves it unset so Docker Compose reads from .env.
+      - SMTP_HOST=${SMTP_HOST:-}

@@ -59,10 +59,16 @@ pub struct AppState {
 
 /// Axum extractor that resolves the Cassandra client to use for the current request.
 ///
-/// * **Single-tenant mode**: returns `state.db_client` directly; no authentication needed.
-/// * **Multi-tenant mode**: reads the `lala_session` cookie, validates it, extracts
-///   `auth_user.tenant_id` (which is the Cassandra keyspace name), and returns
-///   `state.db_client.with_keyspace(tenant_id)`.
+/// When `auth_state` is configured, the session cookie is validated in **both**
+/// single-tenant and multi-tenant modes.  The only difference is how the DB
+/// client is selected after authentication succeeds:
+///
+/// * **Single-tenant**: returns `state.db_client` directly.
+/// * **Multi-tenant**: returns `state.db_client.with_keyspace(tenant_id)` where
+///   `tenant_id` comes from the authenticated session.
+///
+/// When `auth_state` is `None` (email not configured), routes are open and the
+/// default `db_client` is returned without authentication.
 pub struct TenantDb(pub Arc<CassandraClient>);
 
 impl FromRequestParts<AppState> for TenantDb {
@@ -72,22 +78,34 @@ impl FromRequestParts<AppState> for TenantDb {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        if state.deployment_mode == DeploymentMode::SingleTenant {
+        // No auth configured → open access with default db
+        if state.auth_state.is_none() {
             return Ok(TenantDb(state.db_client.clone()));
         }
+
+        if state.deployment_mode == DeploymentMode::SingleTenant {
+            // Validate session but return the default db_client
+            validate_session(parts, state).await?;
+            return Ok(TenantDb(state.db_client.clone()));
+        }
+
+        // Multi-tenant: validate session and resolve tenant keyspace
         resolve_multi_tenant_db(parts, state).await.map(TenantDb)
     }
 }
 
-/// Resolve the tenant-scoped DB client for a multi-tenant request.
-async fn resolve_multi_tenant_db(
+/// Validate the session cookie and return the authenticated user's tenant ID.
+///
+/// Requires `auth_state` to be configured; returns 401 if the session cookie
+/// is missing or invalid.
+async fn validate_session(
     parts: &mut Parts,
     state: &AppState,
-) -> Result<Arc<CassandraClient>, (StatusCode, String)> {
+) -> Result<String, (StatusCode, String)> {
     let auth_state = state.auth_state.as_ref().ok_or_else(|| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
-            "Auth service not configured for multi-tenant mode".to_string(),
+            "Auth service not configured".to_string(),
         )
     })?;
 
@@ -106,7 +124,7 @@ async fn resolve_multi_tenant_db(
         .ok_or_else(|| {
             (
                 StatusCode::UNAUTHORIZED,
-                "Authentication required for multi-tenant access".to_string(),
+                "Authentication required".to_string(),
             )
         })?;
 
@@ -127,9 +145,16 @@ async fn resolve_multi_tenant_db(
             )
         })?;
 
-    Ok(Arc::new(
-        state.db_client.with_keyspace(&auth_user.tenant_id),
-    ))
+    Ok(auth_user.tenant_id)
+}
+
+/// Resolve the tenant-scoped DB client for a multi-tenant request.
+async fn resolve_multi_tenant_db(
+    parts: &mut Parts,
+    state: &AppState,
+) -> Result<Arc<CassandraClient>, (StatusCode, String)> {
+    let tenant_id = validate_session(parts, state).await?;
+    Ok(Arc::new(state.db_client.with_keyspace(&tenant_id)))
 }
 
 // ---------------------------------------------------------------------------

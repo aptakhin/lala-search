@@ -16,6 +16,13 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 AGENT_URL="http://localhost:3000"
 MAX_WAIT=60  # seconds to wait for services
 
+# Find Python interpreter (uv-managed, then system)
+PYTHON="$(uv python find 2>/dev/null || command -v "$PYTHON" 2>/dev/null || command -v python 2>/dev/null)"
+if [ -z "$PYTHON" ]; then
+    echo -e "${RED}Error: No Python interpreter found. Install Python or uv.${NC}"
+    exit 1
+fi
+
 echo "======================================"
 echo "LalaSearch E2E Test Runner"
 echo "======================================"
@@ -106,7 +113,6 @@ echo -e "${GREEN}✓ System keyspace ready${NC}"
 
 # -- 3b: Tenant-1 test keyspace (lalasearch_test) --
 echo "Creating test keyspace (lalasearch_test)..."
-docker exec lalasearch-cassandra cqlsh -e "DROP KEYSPACE IF EXISTS lalasearch_test;" 2>/dev/null || true
 docker cp docker/cassandra/schema.cql lalasearch-cassandra:/tmp/schema.template
 docker exec lalasearch-cassandra bash -c "
     sed 's/\${KEYSPACE_NAME}/lalasearch_test/g' /tmp/schema.template > /tmp/schema_test.cql
@@ -115,16 +121,10 @@ docker exec lalasearch-cassandra bash -c "
 echo -e "${GREEN}✓ lalasearch_test keyspace ready${NC}"
 
 # Register tenant-1 in system keyspace so the multi-tenant scheduler picks it up
-docker exec lalasearch-cassandra cqlsh -e "
-    USE lalasearch_system;
-    INSERT INTO tenants (tenant_id, name, created_at)
-    VALUES ('lalasearch_test', 'Test Tenant', toTimestamp(now()))
-    IF NOT EXISTS;
-"
+docker exec lalasearch-cassandra cqlsh -e "USE lalasearch_system; INSERT INTO tenants (tenant_id, name, created_at) VALUES ('lalasearch_test', 'Test Tenant', toTimestamp(now())) IF NOT EXISTS;"
 
 # -- 3c: Tenant-2 test keyspace (lalasearch_test_tenant2) --
 echo "Creating tenant2 keyspace (lalasearch_test_tenant2)..."
-docker exec lalasearch-cassandra cqlsh -e "DROP KEYSPACE IF EXISTS lalasearch_test_tenant2;" 2>/dev/null || true
 docker exec lalasearch-cassandra bash -c "
     sed 's/\${KEYSPACE_NAME}/lalasearch_test_tenant2/g' /tmp/schema.template > /tmp/schema_tenant2.cql
     cqlsh -f /tmp/schema_tenant2.cql
@@ -132,59 +132,21 @@ docker exec lalasearch-cassandra bash -c "
 echo -e "${GREEN}✓ lalasearch_test_tenant2 keyspace ready${NC}"
 
 # Register tenant-2 in system keyspace
-docker exec lalasearch-cassandra cqlsh -e "
-    USE lalasearch_system;
-    INSERT INTO tenants (tenant_id, name, created_at)
-    VALUES ('lalasearch_test_tenant2', 'Test Tenant 2', toTimestamp(now()))
-    IF NOT EXISTS;
-"
+docker exec lalasearch-cassandra cqlsh -e "USE lalasearch_system; INSERT INTO tenants (tenant_id, name, created_at) VALUES ('lalasearch_test_tenant2', 'Test Tenant 2', toTimestamp(now())) IF NOT EXISTS;"
 
 # Truncate tenant tables for a clean test run
 echo "Cleaning test data..."
-docker exec lalasearch-cassandra cqlsh -e "
-    USE lalasearch_test;
-    TRUNCATE allowed_domains;
-    TRUNCATE crawl_queue;
-    TRUNCATE crawled_pages;
-    TRUNCATE crawl_errors;
-    TRUNCATE crawl_stats;
-    TRUNCATE robots_cache;
-    TRUNCATE settings;
-" >/dev/null 2>&1
-docker exec lalasearch-cassandra cqlsh -e "
-    USE lalasearch_test_tenant2;
-    TRUNCATE allowed_domains;
-    TRUNCATE crawl_queue;
-    TRUNCATE crawled_pages;
-    TRUNCATE crawl_errors;
-    TRUNCATE crawl_stats;
-    TRUNCATE robots_cache;
-    TRUNCATE settings;
-" >/dev/null 2>&1
+docker exec lalasearch-cassandra cqlsh -e "USE lalasearch_test; TRUNCATE allowed_domains; TRUNCATE crawl_queue; TRUNCATE crawled_pages; TRUNCATE crawl_errors; TRUNCATE crawl_stats; TRUNCATE robots_cache; TRUNCATE settings;" >/dev/null 2>&1 || true
+docker exec lalasearch-cassandra cqlsh -e "USE lalasearch_test_tenant2; TRUNCATE allowed_domains; TRUNCATE crawl_queue; TRUNCATE crawled_pages; TRUNCATE crawl_errors; TRUNCATE crawl_stats; TRUNCATE robots_cache; TRUNCATE settings;" >/dev/null 2>&1 || true
 echo -e "${GREEN}✓ Test data cleaned${NC}"
 
 # -- 3d: Pre-seed invitation for user2 → lalasearch_test_tenant2 --
 # Token: "e2e-test-tenant2-invite-0001"  (raw, unhashed)
 echo "Seeding tenant2 invitation for user2@test.e2e..."
-INVITE_TOKEN_HASH=$(python3 -c "import hashlib; print(hashlib.sha256(b'e2e-test-tenant2-invite-0001').hexdigest())")
-FUTURE_EXPIRES_MS=$(python3 -c "import time; print(int((time.time() + 86400) * 1000))")
+INVITE_TOKEN_HASH=$("$PYTHON" -c "import hashlib; print(hashlib.sha256(b'e2e-test-tenant2-invite-0001').hexdigest())")
+FUTURE_EXPIRES_MS=$("$PYTHON" -c "import time; print(int((time.time() + 86400) * 1000))")
 DUMMY_UUID="00000000-0000-0000-0000-000000000001"
-docker exec lalasearch-cassandra cqlsh -e "
-    USE lalasearch_system;
-    DELETE FROM org_invitations WHERE token_hash = '$INVITE_TOKEN_HASH';
-    INSERT INTO org_invitations
-        (token_hash, tenant_id, email, role, invited_by, created_at, expires_at, accepted)
-    VALUES (
-        '$INVITE_TOKEN_HASH',
-        'lalasearch_test_tenant2',
-        'user2@test.e2e',
-        'Owner',
-        $DUMMY_UUID,
-        toTimestamp(now()),
-        $FUTURE_EXPIRES_MS,
-        false
-    );
-"
+docker exec lalasearch-cassandra cqlsh -e "USE lalasearch_system; DELETE FROM org_invitations WHERE token_hash = '$INVITE_TOKEN_HASH'; INSERT INTO org_invitations (token_hash, tenant_id, email, role, invited_by, created_at, expires_at, accepted) VALUES ('$INVITE_TOKEN_HASH', 'lalasearch_test_tenant2', 'user2@test.e2e', 'Owner', $DUMMY_UUID, toTimestamp(now()), $FUTURE_EXPIRES_MS, false);"
 echo -e "${GREEN}✓ Tenant2 invitation seeded${NC}"
 echo ""
 
@@ -195,7 +157,8 @@ echo "Step 4: Starting agent (single-tenant mode)..."
 docker compose stop lala-agent 2>/dev/null || true
 docker compose rm -f lala-agent 2>/dev/null || true
 
-docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build lala-agent
+DEPLOYMENT_MODE=single_tenant SMTP_HOST= \
+    docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build lala-agent
 wait_for_service "LalaSearch Agent (single-tenant)" "$AGENT_URL/version" || exit 1
 echo ""
 

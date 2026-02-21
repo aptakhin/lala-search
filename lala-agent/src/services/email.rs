@@ -31,7 +31,10 @@ impl EmailConfig {
     /// Load email configuration from environment variables.
     pub fn from_env() -> Result<Self> {
         Ok(Self {
-            smtp_host: env::var("SMTP_HOST").context("SMTP_HOST must be set")?,
+            smtp_host: env::var("SMTP_HOST")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .context("SMTP_HOST must be set and non-empty")?,
             smtp_port: env::var("SMTP_PORT")
                 .unwrap_or_else(|_| "587".to_string())
                 .parse()
@@ -40,9 +43,15 @@ impl EmailConfig {
             smtp_username: env::var("SMTP_USERNAME").ok().filter(|s| !s.is_empty()),
             smtp_password: env::var("SMTP_PASSWORD").ok().filter(|s| !s.is_empty()),
             smtp_tls: env::var("SMTP_TLS").map(|v| v == "true").unwrap_or(true),
-            from_email: env::var("SMTP_FROM_EMAIL").context("SMTP_FROM_EMAIL must be set")?,
+            from_email: env::var("SMTP_FROM_EMAIL")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .context("SMTP_FROM_EMAIL must be set and non-empty")?,
             from_name: env::var("SMTP_FROM_NAME").unwrap_or_else(|_| "LalaSearch".to_string()),
-            app_base_url: env::var("APP_BASE_URL").context("APP_BASE_URL must be set")?,
+            app_base_url: env::var("APP_BASE_URL")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .context("APP_BASE_URL must be set and non-empty")?,
             magic_link_expiry_minutes: env::var("MAGIC_LINK_EXPIRY_MINUTES")
                 .unwrap_or_else(|_| "15".to_string())
                 .parse()
