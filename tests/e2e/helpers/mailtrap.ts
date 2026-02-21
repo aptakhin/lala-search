@@ -25,7 +25,7 @@ function requireMailtrap(): void {
 
 function messagesUrl(): string {
   return (
-    `https://sandbox.api.mailtrap.io/api/accounts/` +
+    `https://mailtrap.io/api/accounts/` +
     `${MAILTRAP_ACCOUNT_ID}/inboxes/${MAILTRAP_INBOX_ID}/messages`
   );
 }
@@ -40,7 +40,7 @@ function sleep(ms: number): Promise<void> {
 export async function clearMailtrapInbox(): Promise<void> {
   requireMailtrap();
   const cleanUrl =
-    `https://sandbox.api.mailtrap.io/api/accounts/` +
+    `https://mailtrap.io/api/accounts/` +
     `${MAILTRAP_ACCOUNT_ID}/inboxes/${MAILTRAP_INBOX_ID}/clean`;
 
   const ctx = await playwrightRequest.newContext({

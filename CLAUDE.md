@@ -257,6 +257,31 @@ lalasearch/
 - Log errors to dedicated error tables for observability
 - Don't silently skip failures or treat them as "non-critical"
 
+### Preserve Root Cause in Error Chains
+
+**CRITICAL**: Never wrap errors with generic context that hides the root cause. Use `{:#}` (anyhow full-chain display) in logs and error responses so the original error is always visible.
+
+**BAD** - Generic context hides the real error:
+```rust
+// Log shows: "Failed to send email" — useless for debugging
+self.transport.send(email).await.context("Failed to send email")?;
+eprintln!("[EMAIL] Failed: {}", e);  // Only shows outermost context
+```
+
+**GOOD** - Context includes diagnostic info, logs show full chain:
+```rust
+// Log shows: "SMTP send failed (host=smtp.example.com:587, tls=true): Connection refused"
+self.transport.send(email).await.with_context(|| {
+    format!("SMTP send failed (host={}:{}, tls={})", host, port, tls)
+})?;
+eprintln!("[EMAIL] Failed: {:#}", e);  // {:#} shows full error chain
+```
+
+**Rules**:
+1. Use `{:#}` for error logging so the full chain is visible (not just the outermost `.context()`)
+2. Add operational context (host, port, IDs) to `.with_context()` — not just "Failed to do X"
+3. Don't strip or obscure errors before they reach the logs — the root cause must be debuggable from log output alone
+
 ## Logging Guidelines
 
 **CRITICAL**: Always log important actions with sufficient context for debugging and auditing.

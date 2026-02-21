@@ -43,11 +43,11 @@ export async function authenticateViaMagicLink(
       timeout: REQUEST_TIMEOUT,
       maxRedirects: 0,
     });
-    if (verifyResp.status() !== 302) {
+    if (verifyResp.status() !== 302 && verifyResp.status() !== 303) {
       const body = await verifyResp.text();
       throw new Error(
         `GET /auth/verify/{token} failed for ${email}: ` +
-          `expected 302, got HTTP ${verifyResp.status()} — ${body}`,
+          `expected 302 or 303, got HTTP ${verifyResp.status()} — ${body}`,
       );
     }
 
@@ -80,11 +80,11 @@ export async function acceptInvitation(
       timeout: REQUEST_TIMEOUT,
       maxRedirects: 0,
     });
-    if (resp.status() !== 302) {
+    if (resp.status() !== 302 && resp.status() !== 303) {
       const body = await resp.text();
       throw new Error(
         `GET /auth/invitations/{token}/accept failed: ` +
-          `expected 302, got HTTP ${resp.status()} — ${body}`,
+          `expected 302 or 303, got HTTP ${resp.status()} — ${body}`,
       );
     }
 

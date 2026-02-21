@@ -105,8 +105,8 @@ impl EmailService {
             (Some(username), Some(password)) => {
                 let creds = Credentials::new(username.clone(), password.clone());
                 if config.smtp_tls {
-                    AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_host)
-                        .context("Failed to create SMTP relay")?
+                    AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.smtp_host)
+                        .context("Failed to create SMTP STARTTLS relay")?
                         .port(config.smtp_port)
                         .credentials(creds)
                         .build()
@@ -120,8 +120,8 @@ impl EmailService {
             // Without credentials (local Postfix)
             _ => {
                 if config.smtp_tls {
-                    AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_host)
-                        .context("Failed to create SMTP relay")?
+                    AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.smtp_host)
+                        .context("Failed to create SMTP STARTTLS relay")?
                         .port(config.smtp_port)
                         .build()
                 } else {
@@ -171,7 +171,7 @@ impl EmailService {
             }
             Err(e) => {
                 eprintln!(
-                    "[EMAIL] Failed to send magic link to {}: {}",
+                    "[EMAIL] Failed to send magic link to {}: {:#}",
                     anonymize_email(to_email),
                     e
                 );
@@ -222,7 +222,7 @@ impl EmailService {
             }
             Err(e) => {
                 eprintln!(
-                    "[EMAIL] Failed to send invitation to {} for org '{}': {}",
+                    "[EMAIL] Failed to send invitation to {} for org '{}': {:#}",
                     anonymize_email(to_email),
                     org_name,
                     e
@@ -243,10 +243,12 @@ impl EmailService {
             .body(body.to_string())
             .context("Failed to build email message")?;
 
-        self.transport
-            .send(email)
-            .await
-            .context("Failed to send email")?;
+        self.transport.send(email).await.with_context(|| {
+            format!(
+                "SMTP send failed (host={}:{}, tls={})",
+                self.config.smtp_host, self.config.smtp_port, self.config.smtp_tls
+            )
+        })?;
 
         Ok(())
     }

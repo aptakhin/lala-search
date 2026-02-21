@@ -187,7 +187,7 @@ async fn request_link_handler(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(RequestLinkResponse {
                     success: false,
-                    message: format!("Failed to send magic link: {}", e),
+                    message: format!("Failed to send magic link: {:#}", e),
                 }),
             )
         })?;
