@@ -27,6 +27,8 @@ pub struct QueueProcessor {
     storage_client: Option<Arc<StorageClient>>,
     user_agent: String,
     poll_interval: Duration,
+    /// Tenant ID for multi-tenant search isolation (None in single-tenant mode)
+    tenant_id: Option<String>,
 }
 
 impl QueueProcessor {
@@ -35,6 +37,7 @@ impl QueueProcessor {
         db_client: Arc<CassandraClient>,
         user_agent: String,
         poll_interval: Duration,
+        tenant_id: Option<String>,
     ) -> Self {
         Self {
             db_client,
@@ -42,6 +45,7 @@ impl QueueProcessor {
             storage_client: None,
             user_agent,
             poll_interval,
+            tenant_id,
         }
     }
 
@@ -51,6 +55,7 @@ impl QueueProcessor {
         search_client: Arc<SearchClient>,
         user_agent: String,
         poll_interval: Duration,
+        tenant_id: Option<String>,
     ) -> Self {
         Self {
             db_client,
@@ -58,6 +63,7 @@ impl QueueProcessor {
             storage_client: None,
             user_agent,
             poll_interval,
+            tenant_id,
         }
     }
 
@@ -67,6 +73,7 @@ impl QueueProcessor {
         storage_client: Arc<StorageClient>,
         user_agent: String,
         poll_interval: Duration,
+        tenant_id: Option<String>,
     ) -> Self {
         Self {
             db_client,
@@ -74,6 +81,7 @@ impl QueueProcessor {
             storage_client: Some(storage_client),
             user_agent,
             poll_interval,
+            tenant_id,
         }
     }
 
@@ -84,6 +92,7 @@ impl QueueProcessor {
         storage_client: Arc<StorageClient>,
         user_agent: String,
         poll_interval: Duration,
+        tenant_id: Option<String>,
     ) -> Self {
         Self {
             db_client,
@@ -91,6 +100,7 @@ impl QueueProcessor {
             storage_client: Some(storage_client),
             user_agent,
             poll_interval,
+            tenant_id,
         }
     }
 
@@ -350,11 +360,15 @@ impl QueueProcessor {
             clean_content.clone()
         };
 
-        // Create document ID from URL hash
-        let doc_id = format!("{:x}", md5::compute(entry.url.as_bytes()));
+        // Create document ID from URL hash (include tenant_id to prevent cross-tenant collisions)
+        let doc_id = match &self.tenant_id {
+            Some(tid) => format!("{:x}", md5::compute(format!("{}{}", tid, entry.url))),
+            None => format!("{:x}", md5::compute(entry.url.as_bytes())),
+        };
 
         let indexed_doc = IndexedDocument {
             id: doc_id,
+            tenant_id: self.tenant_id.clone(),
             url: entry.url.clone(),
             domain: entry.domain.clone(),
             title,

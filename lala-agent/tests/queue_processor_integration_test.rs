@@ -490,6 +490,7 @@ async fn test_crawl_pipeline_end_to_end() {
         Arc::new(storage_client),
         "LalaSearchBot/0.1 (Integration Test)".to_string(),
         Duration::from_secs(1),
+        None, // No tenant_id in integration tests (single-tenant mode)
     );
 
     let processed = processor

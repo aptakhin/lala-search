@@ -39,7 +39,7 @@ impl SearchClient {
         let _ = index.set_searchable_attributes(searchable_attrs).await;
 
         // Set filterable attributes for faceted search
-        let filterable_attrs = vec!["domain", "crawled_at"];
+        let filterable_attrs = vec!["domain", "crawled_at", "tenant_id"];
         let _ = index.set_filterable_attributes(filterable_attrs).await;
 
         // Set sortable attributes
@@ -93,16 +93,23 @@ impl SearchClient {
         Ok(())
     }
 
-    /// Search for documents
-    pub async fn search(&self, request: SearchRequest) -> Result<SearchResponse> {
+    /// Search for documents, optionally filtering by tenant_id (multi-tenant mode)
+    pub async fn search(
+        &self,
+        request: SearchRequest,
+        tenant_id: Option<&str>,
+    ) -> Result<SearchResponse> {
         let index = self.client.index(&self.index_name);
 
         let limit = request.limit.unwrap_or(20).min(1000) as usize;
         let offset = request.offset.unwrap_or(0) as usize;
 
+        // Build tenant filter for multi-tenant isolation
+        let tenant_filter = tenant_id.map(|tid| format!("tenant_id = '{}'", tid));
+
         // Perform the search with cropping and highlighting for snippets
-        let search_result = index
-            .search()
+        let mut query = index.search();
+        query
             .with_query(&request.query)
             .with_limit(limit)
             .with_offset(offset)
@@ -110,7 +117,13 @@ impl SearchClient {
             .with_crop_length(200)
             .with_attributes_to_highlight(Selectors::Some(&["content"]))
             .with_highlight_pre_tag("<mark>")
-            .with_highlight_post_tag("</mark>")
+            .with_highlight_post_tag("</mark>");
+
+        if let Some(ref filter) = tenant_filter {
+            query.with_filter(filter);
+        }
+
+        let search_result = query
             .execute::<IndexedDocument>()
             .await
             .map_err(|e| anyhow::anyhow!("Search failed: {}", e))?;
@@ -205,6 +218,7 @@ mod tests {
 
         let doc = IndexedDocument {
             id: "test-1".to_string(),
+            tenant_id: None,
             url: "https://example.com/page".to_string(),
             domain: "example.com".to_string(),
             title: Some("Example Page".to_string()),

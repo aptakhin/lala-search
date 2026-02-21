@@ -68,12 +68,19 @@ async fn main() {
         let poll_interval = Duration::from_secs(poll_interval_secs);
         for ks in &tenant_keyspaces {
             let tenant_db = Arc::new(base_db.with_keyspace(ks));
+            // In multi-tenant mode, pass tenant_id for Meilisearch isolation
+            let tenant_id = if deployment_mode == DeploymentMode::MultiTenant {
+                Some(ks.clone())
+            } else {
+                None
+            };
             spawn_queue_processor(
                 tenant_db,
                 search_client.clone(),
                 storage_client.clone(),
                 user_agent.clone(),
                 poll_interval,
+                tenant_id,
             );
         }
         println!(
@@ -178,6 +185,7 @@ fn spawn_queue_processor(
     storage_client: Option<Arc<StorageClient>>,
     user_agent: String,
     poll_interval: Duration,
+    tenant_id: Option<String>,
 ) {
     let processor = match (&search_client, &storage_client) {
         (Some(search), Some(storage)) => QueueProcessor::with_all(
@@ -186,14 +194,23 @@ fn spawn_queue_processor(
             storage.clone(),
             user_agent,
             poll_interval,
+            tenant_id,
         ),
-        (Some(search), None) => {
-            QueueProcessor::with_search(db_client, search.clone(), user_agent, poll_interval)
-        }
-        (None, Some(storage)) => {
-            QueueProcessor::with_storage(db_client, storage.clone(), user_agent, poll_interval)
-        }
-        (None, None) => QueueProcessor::new(db_client, user_agent, poll_interval),
+        (Some(search), None) => QueueProcessor::with_search(
+            db_client,
+            search.clone(),
+            user_agent,
+            poll_interval,
+            tenant_id,
+        ),
+        (None, Some(storage)) => QueueProcessor::with_storage(
+            db_client,
+            storage.clone(),
+            user_agent,
+            poll_interval,
+            tenant_id,
+        ),
+        (None, None) => QueueProcessor::new(db_client, user_agent, poll_interval, tenant_id),
     };
 
     tokio::spawn(async move {

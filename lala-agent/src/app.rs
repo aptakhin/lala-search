@@ -222,7 +222,28 @@ pub async fn add_to_queue_handler(
     }))
 }
 
+/// Extractor that resolves the tenant_id for search filtering.
+/// Returns `Some(tenant_id)` in multi-tenant mode with auth, `None` otherwise.
+pub struct SearchTenantId(pub Option<String>);
+
+impl FromRequestParts<AppState> for SearchTenantId {
+    type Rejection = (StatusCode, String);
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        if state.deployment_mode == DeploymentMode::MultiTenant && state.auth_state.is_some() {
+            let tenant_id = validate_session(parts, state).await?;
+            Ok(SearchTenantId(Some(tenant_id)))
+        } else {
+            Ok(SearchTenantId(None))
+        }
+    }
+}
+
 pub async fn search_handler(
+    SearchTenantId(tenant_id): SearchTenantId,
     State(state): State<AppState>,
     Json(payload): Json<SearchRequest>,
 ) -> Result<Json<SearchResponse>, (StatusCode, String)> {
@@ -233,12 +254,16 @@ pub async fn search_handler(
         )
     })?;
 
-    search_client.search(payload).await.map(Json).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Search error: {e}"),
-        )
-    })
+    search_client
+        .search(payload, tenant_id.as_deref())
+        .await
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Search error: {e}"),
+            )
+        })
 }
 
 pub async fn add_domain_handler(

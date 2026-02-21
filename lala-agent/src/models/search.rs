@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 pub struct IndexedDocument {
     /// Unique document ID (typically url_hash)
     pub id: String,
+    /// Tenant ID for multi-tenant search isolation (None in single-tenant mode)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
     /// The URL of the document
     pub url: String,
     /// The domain the document was crawled from
