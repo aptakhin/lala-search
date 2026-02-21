@@ -296,32 +296,38 @@ test.describe("TestFullPipeline", () => {
 
     while (Date.now() - startTime < TEST_TIMEOUT) {
       await sleep(2000);
+      let searchResp;
       try {
-        const searchResp = await search(request, searchTerm);
-        if (searchResp.status() === 200) {
-          const results = await searchResp.json();
-          if (results.results?.length) {
-            const urls = results.results.map(
-              (r: { document: { url?: string } }) => r.document?.url,
-            );
-            if (urls.includes(testUrl)) {
-              const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-              console.log(
-                `   Done: Page indexed and searchable (${elapsed}s)`,
-              );
-              found = true;
-              break;
-            }
-            console.log(
-              `   ... Found ${results.results.length} results, waiting for our URL...`,
-            );
-          } else {
-            console.log("   ... No results yet, waiting...");
-          }
-        }
+        searchResp = await search(request, searchTerm);
       } catch (e) {
         console.log(`   ... Search API error (retrying): ${e}`);
+        continue;
       }
+
+      if (searchResp.status() !== 200) {
+        continue;
+      }
+
+      const results = await searchResp.json();
+      if (!results.results?.length) {
+        console.log("   ... No results yet, waiting...");
+        continue;
+      }
+
+      const urls = results.results.map(
+        (r: { document: { url?: string } }) => r.document?.url,
+      );
+      if (!urls.includes(testUrl)) {
+        console.log(
+          `   ... Found ${results.results.length} results, waiting for our URL...`,
+        );
+        continue;
+      }
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log(`   Done: Page indexed and searchable (${elapsed}s)`);
+      found = true;
+      break;
     }
 
     expect(found).toBeTruthy();
