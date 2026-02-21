@@ -3,8 +3,8 @@
 
 FROM nginx:alpine
 
-# Copy the static HTML file
-COPY index.html /usr/share/nginx/html/index.html
+# Copy static frontend files
+COPY html/ /usr/share/nginx/html/
 
 # Copy the Nginx configuration
 COPY nginx.conf /etc/nginx/conf.d/default.conf

@@ -4,265 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LalaSearch - The Open Search Engine</title>
+    <link rel="stylesheet" href="/styles.css">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            background-color: #ffffff;
-            color: #000000;
-            font-family: Arial, Helvetica, sans-serif;
-            font-size: 14px;
-            line-height: 1.6;
-        }
-
-        /* Header */
-        header {
-            background-color: #cccccc;
-            border-bottom: 3px solid #999999;
-            padding: 20px;
-            text-align: center;
-        }
-
-        h1 {
-            font-size: 32px;
-            font-weight: bold;
-            color: #000066;
-            text-shadow: 2px 2px 0px #ffff00;
-            margin-bottom: 10px;
-        }
-
-        .tagline {
-            font-size: 12px;
-            color: #666666;
-            font-style: italic;
-        }
-
-        /* Main container */
-        .container {
-            max-width: 800px;
-            margin: 20px auto;
-            padding: 0 20px;
-        }
-
-        /* Search section */
-        .search-section {
-            background-color: #ffffcc;
-            border: 2px solid #999999;
-            padding: 20px;
-            margin-bottom: 30px;
-            box-shadow: 3px 3px 0px #cccccc;
-        }
-
-        .search-label {
-            display: block;
-            margin-bottom: 10px;
-            font-weight: bold;
-            color: #000066;
-        }
-
-        .search-input-group {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 15px;
-        }
-
-        textarea {
-            flex: 1;
-            padding: 8px;
-            border: 2px solid #999999;
-            font-family: "Courier New", monospace;
-            font-size: 12px;
-            background-color: #ffffff;
-            color: #000000;
-            resize: vertical;
-            min-height: 40px;
-        }
-
-        button {
-            padding: 10px 20px;
-            background-color: #cccccc;
-            border: 3px outset #ffffff;
-            border-left-color: #ffffff;
-            border-top-color: #ffffff;
-            border-right-color: #999999;
-            border-bottom-color: #999999;
-            color: #000000;
-            font-weight: bold;
-            font-size: 14px;
-            cursor: pointer;
-            font-family: Arial, sans-serif;
-        }
-
-        button:active {
-            border-style: inset;
-            border-left-color: #999999;
-            border-top-color: #999999;
-            border-right-color: #ffffff;
-            border-bottom-color: #ffffff;
-        }
-
-        button:hover {
-            background-color: #dddddd;
-        }
-
-        /* Results section */
-        .results-section {
-            margin-top: 20px;
-        }
-
-        .results-header {
-            background-color: #cccccc;
-            border-bottom: 2px solid #999999;
-            padding: 10px;
-            font-weight: bold;
-            color: #000066;
-            margin-bottom: 15px;
-        }
-
-        .results-info {
-            background-color: #ffffcc;
-            border: 1px solid #999999;
-            padding: 10px;
-            margin-bottom: 15px;
-            font-size: 12px;
-        }
-
-        .search-result {
-            background-color: #ffffff;
-            border: 1px solid #999999;
-            padding: 15px;
-            margin-bottom: 15px;
-            box-shadow: 2px 2px 0px #e6e6e6;
-        }
-
-        .result-title {
-            font-size: 16px;
-            font-weight: bold;
-            color: #0066cc;
-            text-decoration: underline;
-            margin-bottom: 5px;
-            word-break: break-word;
-        }
-
-        .result-title:hover {
-            color: #ff0000;
-            cursor: pointer;
-        }
-
-        .result-url {
-            font-size: 12px;
-            color: #008000;
-            font-family: "Courier New", monospace;
-            margin-bottom: 8px;
-            word-break: break-all;
-        }
-
-        .result-excerpt {
-            font-size: 12px;
-            color: #333333;
-            margin-bottom: 8px;
-            line-height: 1.5;
-        }
-
-        .result-excerpt mark {
-            background-color: #ffff00;
-            color: #000000;
-            font-weight: bold;
-            padding: 0 2px;
-        }
-
-        /* Loading indicator */
-        .loading {
-            background-color: #ffffcc;
-            border: 1px solid #999999;
-            padding: 15px;
-            text-align: center;
-            font-weight: bold;
-            color: #000066;
-        }
-
-        .spinner {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 3px solid #cccccc;
-            border-top: 3px solid #000066;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-right: 10px;
-            vertical-align: middle;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        /* Error message */
-        .error {
-            background-color: #ffcccc;
-            border: 2px solid #ff0000;
-            padding: 15px;
-            margin-bottom: 15px;
-            color: #cc0000;
-            font-weight: bold;
-        }
-
-        /* No results */
-        .no-results {
-            background-color: #ffffcc;
-            border: 1px solid #999999;
-            padding: 20px;
-            text-align: center;
-            color: #666666;
-        }
-
-        /* Footer */
-        footer {
-            background-color: #cccccc;
-            border-top: 3px solid #999999;
-            padding: 15px;
-            text-align: center;
-            margin-top: 40px;
-            font-size: 12px;
-            color: #666666;
-        }
-
-        .footer-link {
-            color: #0066cc;
-            text-decoration: underline;
-        }
-
-        /* Pagination */
-        .pagination {
-            text-align: center;
-            margin-top: 20px;
-            padding: 15px;
-            background-color: #ffffcc;
-            border: 1px solid #999999;
-        }
-
-        .pagination button {
-            margin: 0 5px;
-        }
-
-        .pagination button:disabled {
-            background-color: #e6e6e6;
-            color: #999999;
-            cursor: not-allowed;
-            border-style: outset;
-        }
-    </style>
 </head>
-<body>
+<body x-data="pageApp()" x-init="init()">
     <header>
-        <h1>🔍 LALASEARCH</h1>
+        <h1><a href="/">LALASEARCH</a></h1>
         <p class="tagline">The Open Source Search Engine - Retro Edition</p>
+        <div class="auth-header-btn" x-show="ready && deploymentMode === 'multi_tenant'" x-cloak>
+            <a x-show="!user" href="/signin" class="btn-signin" data-testid="signin-nav-button">Sign in for Own Search</a>
+            <a x-show="user" href="/dashboard" class="btn-dashboard" data-testid="dashboard-nav-button">Dashboard</a>
+        </div>
     </header>
 
     <div class="container" x-data="searchApp()" x-init="init()">
@@ -270,12 +22,13 @@
         <div class="search-section">
             <label class="search-label">Enter your search query:</label>
             <div class="search-input-group">
-                <textarea 
-                    x-model="query" 
+                <textarea
+                    x-model="query"
                     @keydown.enter="search()"
                     placeholder="Type something to search..."
+                    data-testid="search-input"
                 ></textarea>
-                <button @click="search()" :disabled="isLoading">
+                <button @click="search()" :disabled="isLoading" data-testid="search-button">
                     <span x-show="!isLoading">SEARCH</span>
                     <span x-show="isLoading">
                         <span class="spinner"></span>
@@ -283,21 +36,21 @@
                     </span>
                 </button>
             </div>
-            <button @click="clearSearch()" style="width: 100%; margin-bottom: 10px;">CLEAR</button>
+            <button @click="clearSearch()" style="width: 100%; margin-bottom: 10px;" data-testid="search-clear-button">CLEAR</button>
         </div>
 
         <!-- Error Message -->
-        <div x-show="error" class="error" @click="error = null" style="cursor: pointer;">
+        <div x-show="error" class="error" @click="error = null" style="cursor: pointer;" data-testid="search-error-message">
             <strong>ERROR:</strong> <span x-text="error"></span>
             <br><small>(Click to dismiss)</small>
         </div>
 
         <!-- Results Section -->
-        <div class="results-section" x-show="hasSearched">
+        <div class="results-section" x-show="hasSearched" data-testid="search-results">
             <div class="results-header">
                 SEARCH RESULTS
                 <span x-show="totalResults > 0">
-                    — Found <span x-text="totalResults"></span> 
+                    — Found <span x-text="totalResults"></span>
                     <span x-show="totalResults === 1">result</span>
                     <span x-show="totalResults !== 1">results</span>
                 </span>
@@ -350,11 +103,46 @@
     </div>
 
     <footer>
-        <p>LalaSearch © 2026 | Open Source Distributed Search Engine</p>
-        <p style="margin-top: 10px; font-size: 11px; color: #999999;">Designed in retro 1990s style with ❤️</p>
+        <p>LalaSearch &copy; 2026 | Open Source Distributed Search Engine</p>
+        <p style="margin-top: 10px; font-size: 11px; color: #999999;">Designed in retro 1990s style</p>
     </footer>
 
     <script>
+        function pageApp() {
+            return {
+                user: null,
+                deploymentMode: null,
+                ready: false,
+
+                async init() {
+                    const [versionRes, meRes] = await Promise.allSettled([
+                        fetch('/api/version'),
+                        fetch('/api/auth/me', { credentials: 'include' }),
+                    ]);
+
+                    if (versionRes.status === 'fulfilled' && versionRes.value.ok) {
+                        const data = await versionRes.value.json();
+                        this.deploymentMode = data.deployment_mode;
+                    }
+
+                    if (meRes.status === 'fulfilled' && meRes.value.ok) {
+                        this.user = await meRes.value.json();
+                    }
+
+                    this.ready = true;
+
+                    // Single-tenant: redirect away from search page
+                    if (this.deploymentMode === 'single_tenant') {
+                        if (this.user) {
+                            window.location.href = '/dashboard';
+                        } else {
+                            window.location.href = '/signin';
+                        }
+                    }
+                },
+            };
+        }
+
         function searchApp() {
             return {
                 query: '',
@@ -367,7 +155,6 @@
                 limit: 10,
 
                 init() {
-                    // Check for query in URL params
                     const params = new URLSearchParams(window.location.search);
                     const q = params.get('q');
                     if (q) {
@@ -390,9 +177,8 @@
                     try {
                         const response = await fetch('/api/search', {
                             method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'include',
                             body: JSON.stringify({
                                 query: this.query,
                                 limit: this.limit,
@@ -401,7 +187,7 @@
                         });
 
                         if (!response.ok) {
-                            throw new Error(`Server error: ${response.status}`);
+                            throw new Error('Server error: ' + response.status);
                         }
 
                         const data = await response.json();
@@ -443,9 +229,8 @@
                     try {
                         const response = await fetch('/api/search', {
                             method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'include',
                             body: JSON.stringify({
                                 query: this.query,
                                 limit: this.limit,
@@ -454,7 +239,7 @@
                         });
 
                         if (!response.ok) {
-                            throw new Error(`Server error: ${response.status}`);
+                            throw new Error('Server error: ' + response.status);
                         }
 
                         const data = await response.json();
@@ -473,11 +258,7 @@
                 },
 
                 copyToClipboard(text) {
-                    navigator.clipboard.writeText(text).then(() => {
-                        // Show brief feedback
-                        const originalText = text;
-                        // Simple alert would work but let's keep it silent for UX
-                    });
+                    navigator.clipboard.writeText(text);
                 },
             };
         }

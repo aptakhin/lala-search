@@ -4,39 +4,64 @@ A retro 1990s-style web interface for LalaSearch built with plain HTML, CSS, and
 
 ## Features
 
-- 🎨 **Retro Design**: Authentic 1990s aesthetic with beveled buttons and classic colors
-- ⚡ **Alpine.js**: Lightweight interactivity without heavy build tools or npm dependencies
-- 🔍 **Search Interface**: Clean search box with real-time result display
-- 📄 **Pagination**: Navigate through search results with previous/next buttons
-- 🔗 **URL Integration**: Click to open results, copy URLs to clipboard
-- 📱 **Responsive**: Works on desktop and mobile browsers
-- 🚀 **Nginx Served**: Fast static file serving with API proxy
+- **Retro Design**: Authentic 1990s aesthetic with beveled buttons and classic colors
+- **Alpine.js**: Lightweight interactivity without heavy build tools or npm dependencies
+- **Search Interface**: Clean search box with real-time result display
+- **Magic Link Auth**: Passwordless sign-in via email
+- **Dashboard**: Invite users and manage allowed domains
+- **Pagination**: Navigate through search results with previous/next buttons
+- **Responsive**: Works on desktop and mobile browsers
+- **Nginx Served**: Fast static file serving with API proxy
 
 ## Architecture
 
 ```
 lala-web/
-├── index.html          # Single HTML file with all styles and Alpine.js logic
-├── nginx.conf          # Nginx configuration for routing
-└── Dockerfile          # Container image for the web service
+├── html/                       # Served by Nginx
+│   ├── index.html              # Search page (/)
+│   ├── styles.css              # Shared CSS for all pages
+│   ├── signin/
+│   │   └── index.html          # Sign-in page (/signin)
+│   └── dashboard/
+│       └── index.html          # Dashboard page (/dashboard)
+├── nginx.conf                  # Nginx configuration for routing and API proxy
+├── Dockerfile                  # Container image for the web service
+└── README.md                   # This file
 ```
 
-## How It Works
+## Pages
 
-1. **Frontend** (Nginx on port 8080):
-   - Serves the static `index.html` file
-   - Handles all client-side state with Alpine.js
-   - No build process, no npm, no frameworks
+### Search (`/`)
 
-2. **API Proxy**:
-   - Routes `/api/search` requests to `lala-agent:3000/search`
-   - Handles CORS and necessary headers
-   - Transparent to the frontend
+Public search interface. In **multi-tenant** mode, shows a "Sign in for Own Search" button in the top-right corner. In **single-tenant** mode, automatically redirects to sign-in.
 
-3. **Backend Integration**:
-   - Sends search queries to `POST /search` endpoint
-   - Expects response: `{ results: [...], total: number }`
-   - Displays results in paginated format
+### Sign In (`/signin`)
+
+Email input with "Send Sign-In Email" button. On submit, the backend sends a magic link email. Clicking the magic link verifies the user and redirects to the dashboard.
+
+If already authenticated, redirects to `/dashboard`.
+
+### Dashboard (`/dashboard`)
+
+Private page requiring authentication. Shows:
+
+- **User info bar**: Email, role, sign out button
+- **Invite Users** (owners/admins): Email input, role selector, current members table
+- **Allowed Domains** (owners/admins): Domain input, current domains table
+
+Unauthenticated users are redirected to `/signin`.
+
+## Nginx Routing
+
+| Path | Target | Purpose |
+|------|--------|---------|
+| `/` | `html/index.html` | Search page |
+| `/signin` | `html/signin/index.html` | Sign-in page |
+| `/dashboard` | `html/dashboard/index.html` | Dashboard page |
+| `/api/*` | `lala-agent:3000/*` | Backend API proxy |
+| `/auth/verify/*` | `lala-agent:3000/auth/verify/*` | Magic link verification |
+| `/auth/invitations/*` | `lala-agent:3000/auth/invitations/*` | Invitation acceptance |
+| `/health` | `200 OK` | Health check |
 
 ## Running
 
@@ -46,7 +71,7 @@ Start all services including the web frontend:
 docker compose up -d --build
 ```
 
-Access the web UI at: **http://localhost:8080**
+Access the web UI at: **http://localhost:8081**
 
 ## Technologies
 
@@ -59,74 +84,28 @@ Access the web UI at: **http://localhost:8080**
 ## No External Dependencies
 
 This frontend has **zero npm dependencies**:
-- ✅ No webpack, parcel, vite builds
-- ✅ No node_modules
-- ✅ No transpilation needed
-- ✅ Alpine.js loaded directly from CDN
+- No webpack, parcel, vite builds
+- No node_modules
+- No transpilation needed
+- Alpine.js loaded directly from CDN
 
-## Customization
+## Playwright Test IDs
 
-### Change Port
-Edit `docker compose.yml`:
-```yaml
-ports:
-  - "8000:80"  # Change 8000 to your desired port
-```
+All interactive elements have `data-testid` attributes for E2E testing:
 
-### Modify Styling
-Edit the `<style>` section in `index.html`:
-- Background colors
-- Button styles
-- Font choices
-- Layout spacing
+**Search page**: `search-input`, `search-button`, `search-clear-button`, `search-results`, `search-error-message`, `signin-nav-button`, `dashboard-nav-button`
 
-### Adjust Search Features
-Edit the `searchApp()` Alpine component:
-- Pagination limit
-- API endpoint
-- Result formatting
-- Error handling
+**Sign-in page**: `signin-email-input`, `signin-submit-button`, `signin-success-message`, `signin-error-message`
 
-## Features Detail
-
-### Search
-1. Type or paste a query
-2. Press Enter or click SEARCH button
-3. Results load with pagination
-
-### Result Display
-- **Title**: Click to open in new tab
-- **URL**: Click to copy to clipboard
-- **Domain**: Source website
-- **Score**: Relevance percentage
-- **Excerpt**: First 500 characters of content
-
-### Pagination
-- 10 results per page (configurable)
-- Previous/Next buttons
-- Current page indicator
-- Smooth scroll to top on page change
-
-## Performance
-
-- **Page Load**: < 100ms (static HTML only)
-- **Search**: Depends on backend (typically < 200ms)
-- **Size**: ~40KB HTML file, Alpine.js ~15KB from CDN
-- **No Build Time**: Change HTML, refresh browser, see changes immediately
+**Dashboard**: `dashboard-user-email`, `dashboard-user-role`, `signout-button`, `invite-email-input`, `invite-role-select`, `invite-submit-button`, `invite-success-message`, `invite-error-message`, `members-table`, `remove-member-button`, `domain-input`, `domain-notes-input`, `add-domain-button`, `domain-success-message`, `domain-error-message`, `domains-table`, `delete-domain-button`
 
 ## Development
 
 To modify the interface:
 
-1. Edit `lala-web/index.html`
-2. Rebuild container: `docker compose build lala-web`
-3. Restart service: `docker compose up -d lala-web`
-4. Or mount as volume for live editing:
-
-```yaml
-volumes:
-  - ./lala-web/index.html:/usr/share/nginx/html/index.html
-```
+1. Edit files in `lala-web/html/`
+2. Docker volume mount provides live updates (no rebuild needed)
+3. Or rebuild container: `docker compose up -d --build lala-web`
 
 ## Browser Support
 

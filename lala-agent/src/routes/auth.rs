@@ -227,8 +227,8 @@ async fn verify_link_handler(
                 create_session_cookie(&session_token, state.auth_config.session_max_age_days);
             cookies.add(cookie);
 
-            // Redirect to app
-            Redirect::to("/").into_response()
+            // Redirect to dashboard
+            Redirect::to("/dashboard").into_response()
         }
         Err(e) => {
             let response = VerifyLinkResponse {
@@ -270,8 +270,8 @@ async fn accept_invitation_handler(
                 create_session_cookie(&session_token, state.auth_config.session_max_age_days);
             cookies.add(cookie);
 
-            // Redirect to app
-            Redirect::to("/").into_response()
+            // Redirect to dashboard
+            Redirect::to("/dashboard").into_response()
         }
         Err(e) => {
             let response = MessageResponse {

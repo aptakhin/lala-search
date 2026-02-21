@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - LalaSearch</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="dashboardPage()" x-init="init()">
+    <header>
+        <h1><a href="/">LALASEARCH</a></h1>
+        <p class="tagline">The Open Source Search Engine - Retro Edition</p>
+    </header>
+
+    <!-- Loading state -->
+    <div class="container" x-show="!ready">
+        <div class="loading" style="margin-top: 40px;">
+            <span class="spinner"></span> Loading dashboard...
+        </div>
+    </div>
+
+    <!-- Dashboard content (only when authenticated) -->
+    <div class="container" x-show="ready && user" x-cloak>
+
+        <!-- User Info Bar -->
+        <div class="dashboard-header">
+            <div class="user-info">
+                <span>Signed in as: <strong data-testid="dashboard-user-email" x-text="user?.email"></strong></span>
+                <span x-show="currentOrg">
+                    | Role: <strong data-testid="dashboard-user-role" x-text="currentOrg?.role"></strong>
+                </span>
+            </div>
+            <button @click="signOut()" data-testid="signout-button">SIGN OUT</button>
+        </div>
+
+        <!-- Invite Users Section (owners/admins only) -->
+        <div x-show="canManage" x-data="inviteSection()" x-init="loadMembers()" class="dashboard-section">
+            <h3>Invite Users</h3>
+
+            <div class="inline-form">
+                <input
+                    type="email"
+                    x-model="inviteEmail"
+                    @keydown.enter="invite()"
+                    placeholder="user@example.com"
+                    data-testid="invite-email-input"
+                >
+                <select x-model="inviteRole" data-testid="invite-role-select">
+                    <option value="member">Member</option>
+                    <option value="admin">Admin</option>
+                </select>
+                <button @click="invite()" :disabled="inviting" data-testid="invite-submit-button">
+                    <span x-show="!inviting">INVITE</span>
+                    <span x-show="inviting"><span class="spinner"></span></span>
+                </button>
+            </div>
+
+            <div x-show="inviteMessage" class="msg-success" data-testid="invite-success-message" x-text="inviteMessage"></div>
+            <div x-show="inviteError" class="msg-error" @click="inviteError = null" style="cursor: pointer;" data-testid="invite-error-message" x-text="inviteError"></div>
+
+            <!-- Members Table -->
+            <div x-show="members.length > 0" style="margin-top: 15px;">
+                <strong style="color: #000066;">Current Members</strong>
+                <table class="data-table" data-testid="members-table">
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>Role</th>
+                            <th>Joined</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="member in members" :key="member.user_id">
+                            <tr>
+                                <td x-text="member.email"></td>
+                                <td x-text="member.role"></td>
+                                <td x-text="formatDate(member.joined_at)"></td>
+                                <td>
+                                    <button
+                                        x-show="member.user_id !== $data.user?.user_id"
+                                        @click="removeMember(member.user_id)"
+                                        class="btn-delete"
+                                        data-testid="remove-member-button"
+                                    >Remove</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+            <div x-show="membersLoading" class="loading" style="margin-top: 10px;">
+                <span class="spinner"></span> Loading members...
+            </div>
+        </div>
+
+        <!-- Allowed Domains Section (owners/admins only) -->
+        <div x-show="canManage" x-data="domainsSection()" x-init="loadDomains()" class="dashboard-section">
+            <h3>Allowed Domains</h3>
+
+            <div class="inline-form">
+                <input
+                    type="text"
+                    x-model="newDomain"
+                    @keydown.enter="addDomain()"
+                    placeholder="example.com"
+                    data-testid="domain-input"
+                >
+                <input
+                    type="text"
+                    x-model="domainNotes"
+                    placeholder="Notes (optional)"
+                    style="min-width: 120px;"
+                    data-testid="domain-notes-input"
+                >
+                <button @click="addDomain()" :disabled="adding" data-testid="add-domain-button">
+                    <span x-show="!adding">ADD DOMAIN</span>
+                    <span x-show="adding"><span class="spinner"></span></span>
+                </button>
+            </div>
+
+            <div x-show="domainMessage" class="msg-success" data-testid="domain-success-message" x-text="domainMessage"></div>
+            <div x-show="domainError" class="msg-error" @click="domainError = null" style="cursor: pointer;" data-testid="domain-error-message" x-text="domainError"></div>
+
+            <!-- Domains Table -->
+            <div x-show="domains.length > 0" style="margin-top: 15px;">
+                <strong style="color: #000066;">Allowed Domains List</strong>
+                <table class="data-table" data-testid="domains-table">
+                    <thead>
+                        <tr>
+                            <th>Domain</th>
+                            <th>Added By</th>
+                            <th>Notes</th>
+                            <th>Added</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="domain in domains" :key="domain.domain">
+                            <tr>
+                                <td x-text="domain.domain"></td>
+                                <td x-text="domain.added_by"></td>
+                                <td x-text="domain.notes || '—'"></td>
+                                <td x-text="formatDate(domain.added_at)"></td>
+                                <td>
+                                    <button
+                                        @click="deleteDomain(domain.domain)"
+                                        class="btn-delete"
+                                        data-testid="delete-domain-button"
+                                    >Delete</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+            <div x-show="domainsLoading" class="loading" style="margin-top: 10px;">
+                <span class="spinner"></span> Loading domains...
+            </div>
+        </div>
+
+    </div>
+
+    <footer>
+        <p>LalaSearch &copy; 2026 | Open Source Distributed Search Engine</p>
+        <p style="margin-top: 10px; font-size: 11px; color: #999999;">Designed in retro 1990s style</p>
+    </footer>
+
+    <script>
+        function dashboardPage() {
+            return {
+                user: null,
+                ready: false,
+
+                get currentOrg() {
+                    return this.user?.organizations?.[0] || null;
+                },
+
+                get tenantId() {
+                    return this.currentOrg?.tenant_id || '';
+                },
+
+                get canManage() {
+                    const role = this.currentOrg?.role;
+                    return role === 'owner' || role === 'admin';
+                },
+
+                async init() {
+                    try {
+                        const res = await fetch('/api/auth/me', { credentials: 'include' });
+                        if (res.ok) {
+                            this.user = await res.json();
+                        } else {
+                            window.location.href = '/signin';
+                            return;
+                        }
+                    } catch (_) {
+                        window.location.href = '/signin';
+                        return;
+                    }
+                    this.ready = true;
+                },
+
+                async signOut() {
+                    try {
+                        await fetch('/api/auth/signout', {
+                            method: 'POST',
+                            credentials: 'include',
+                        });
+                    } catch (_) {
+                        // Sign out locally regardless
+                    }
+                    this.user = null;
+                    window.location.href = '/signin';
+                },
+
+                formatDate(dateStr) {
+                    if (!dateStr) return '—';
+                    try {
+                        return new Date(dateStr).toLocaleDateString();
+                    } catch (_) {
+                        return dateStr;
+                    }
+                },
+            };
+        }
+
+        function inviteSection() {
+            return {
+                inviteEmail: '',
+                inviteRole: 'member',
+                inviting: false,
+                inviteMessage: null,
+                inviteError: null,
+                members: [],
+                membersLoading: false,
+
+                async loadMembers() {
+                    const tid = this.$data.tenantId;
+                    if (!tid) return;
+                    this.membersLoading = true;
+                    try {
+                        const res = await fetch(
+                            '/api/auth/organizations/' + encodeURIComponent(tid) + '/members',
+                            { credentials: 'include' }
+                        );
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.members = data.members || [];
+                        }
+                    } catch (_) {
+                        // silently fail
+                    } finally {
+                        this.membersLoading = false;
+                    }
+                },
+
+                async invite() {
+                    if (!this.inviteEmail.trim()) {
+                        this.inviteError = 'Please enter an email address.';
+                        return;
+                    }
+
+                    this.inviting = true;
+                    this.inviteError = null;
+                    this.inviteMessage = null;
+                    const tid = this.$data.tenantId;
+
+                    try {
+                        const res = await fetch(
+                            '/api/auth/organizations/' + encodeURIComponent(tid) + '/invite',
+                            {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                credentials: 'include',
+                                body: JSON.stringify({
+                                    email: this.inviteEmail,
+                                    role: this.inviteRole,
+                                }),
+                            }
+                        );
+                        const data = await res.json();
+                        if (res.ok && data.success) {
+                            this.inviteMessage = data.message;
+                            this.inviteEmail = '';
+                            this.inviteRole = 'member';
+                        } else {
+                            this.inviteError = data.message || 'Failed to send invitation.';
+                        }
+                    } catch (_) {
+                        this.inviteError = 'Network error.';
+                    } finally {
+                        this.inviting = false;
+                    }
+                },
+
+                async removeMember(userId) {
+                    if (!confirm('Remove this member?')) return;
+                    const tid = this.$data.tenantId;
+                    try {
+                        const res = await fetch(
+                            '/api/auth/organizations/' + encodeURIComponent(tid) + '/members/' + encodeURIComponent(userId),
+                            { method: 'DELETE', credentials: 'include' }
+                        );
+                        if (res.ok) {
+                            await this.loadMembers();
+                        }
+                    } catch (_) {
+                        // silently fail
+                    }
+                },
+            };
+        }
+
+        function domainsSection() {
+            return {
+                newDomain: '',
+                domainNotes: '',
+                adding: false,
+                domainMessage: null,
+                domainError: null,
+                domains: [],
+                domainsLoading: false,
+
+                async loadDomains() {
+                    this.domainsLoading = true;
+                    try {
+                        const res = await fetch('/api/admin/allowed-domains', {
+                            credentials: 'include',
+                        });
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.domains = data.domains || [];
+                        }
+                    } catch (_) {
+                        // silently fail
+                    } finally {
+                        this.domainsLoading = false;
+                    }
+                },
+
+                async addDomain() {
+                    if (!this.newDomain.trim()) {
+                        this.domainError = 'Please enter a domain.';
+                        return;
+                    }
+
+                    this.adding = true;
+                    this.domainError = null;
+                    this.domainMessage = null;
+
+                    try {
+                        const body = { domain: this.newDomain };
+                        if (this.domainNotes.trim()) {
+                            body.notes = this.domainNotes;
+                        }
+
+                        const res = await fetch('/api/admin/allowed-domains', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'include',
+                            body: JSON.stringify(body),
+                        });
+                        const data = await res.json();
+                        if (res.ok && data.success) {
+                            this.domainMessage = data.message;
+                            this.newDomain = '';
+                            this.domainNotes = '';
+                            await this.loadDomains();
+                        } else {
+                            this.domainError = data.message || 'Failed to add domain.';
+                        }
+                    } catch (_) {
+                        this.domainError = 'Network error.';
+                    } finally {
+                        this.adding = false;
+                    }
+                },
+
+                async deleteDomain(domain) {
+                    if (!confirm('Remove domain "' + domain + '"?')) return;
+                    try {
+                        const res = await fetch(
+                            '/api/admin/allowed-domains/' + encodeURIComponent(domain),
+                            { method: 'DELETE', credentials: 'include' }
+                        );
+                        if (res.ok) {
+                            await this.loadDomains();
+                        }
+                    } catch (_) {
+                        // silently fail
+                    }
+                },
+            };
+        }
+    </script>
+</body>
+</html>

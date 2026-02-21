@@ -56,9 +56,17 @@ The crawl pipeline itself is source-agnostic: once a URL is in the queue with th
 
 ### Authentication
 
-LalaSearch uses passwordless magic-link authentication for its own admin interface. Users receive a time-limited email link; clicking it creates an authenticated session cookie.
+LalaSearch uses passwordless magic-link authentication. Users receive a time-limited email link; clicking it creates an authenticated session cookie.
 
 Organization-based access control (owner / admin / member roles) gates admin operations.
+
+### Web Interface
+
+The `lala-web` service provides a retro 1990s-style frontend served by Nginx:
+
+- **Search** (`/`): Public search interface (multi-tenant) or auto-redirect to sign-in (single-tenant)
+- **Sign In** (`/signin`): Magic link email request
+- **Dashboard** (`/dashboard`): Invite users, manage allowed domains (authenticated)
 
 ## Technology Stack
 

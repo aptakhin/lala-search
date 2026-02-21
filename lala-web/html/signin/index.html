@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign In - LalaSearch</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="signInPage()" x-init="init()">
+    <header>
+        <h1><a href="/">LALASEARCH</a></h1>
+        <p class="tagline">The Open Source Search Engine - Retro Edition</p>
+    </header>
+
+    <div class="container">
+        <div class="signin-box">
+            <h2>Sign In to LalaSearch</h2>
+
+            <!-- Before sending -->
+            <div x-show="!sent">
+                <label class="search-label">Your email address:</label>
+                <div class="signin-input-group">
+                    <input
+                        type="email"
+                        x-model="email"
+                        @keydown.enter="requestLink()"
+                        placeholder="you@example.com"
+                        data-testid="signin-email-input"
+                    >
+                    <button @click="requestLink()" :disabled="sending" data-testid="signin-submit-button">
+                        <span x-show="!sending">Send Sign-In Email</span>
+                        <span x-show="sending">
+                            <span class="spinner"></span> SENDING...
+                        </span>
+                    </button>
+                </div>
+                <div x-show="error" class="error" @click="error = null" style="cursor: pointer; margin-top: 10px;" data-testid="signin-error-message">
+                    <strong>ERROR:</strong> <span x-text="error"></span>
+                    <br><small>(Click to dismiss)</small>
+                </div>
+            </div>
+
+            <!-- After sending -->
+            <div x-show="sent" class="success-box" data-testid="signin-success-message">
+                <p><strong>Check your email!</strong></p>
+                <p style="margin-top: 10px;">We sent a sign-in link to <strong x-text="email"></strong>.</p>
+                <p style="margin-top: 10px; font-size: 12px;">
+                    The link expires in a few minutes. Check your spam folder if you don't see it.
+                </p>
+                <button @click="sent = false; email = ''" style="margin-top: 15px;">
+                    Send Another Link
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>LalaSearch &copy; 2026 | Open Source Distributed Search Engine</p>
+        <p style="margin-top: 10px; font-size: 11px; color: #999999;">Designed in retro 1990s style</p>
+    </footer>
+
+    <script>
+        function signInPage() {
+            return {
+                email: '',
+                sending: false,
+                sent: false,
+                error: null,
+
+                async init() {
+                    // If already authenticated, redirect to dashboard
+                    try {
+                        const res = await fetch('/api/auth/me', { credentials: 'include' });
+                        if (res.ok) {
+                            window.location.href = '/dashboard';
+                        }
+                    } catch (_) {
+                        // Not authenticated, stay on sign-in page
+                    }
+                },
+
+                async requestLink() {
+                    if (!this.email.trim()) {
+                        this.error = 'Please enter your email address.';
+                        return;
+                    }
+
+                    this.sending = true;
+                    this.error = null;
+
+                    try {
+                        const response = await fetch('/api/auth/request-link', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ email: this.email }),
+                        });
+
+                        const data = await response.json();
+                        if (response.ok && data.success) {
+                            this.sent = true;
+                        } else {
+                            this.error = data.message || 'Failed to send sign-in email.';
+                        }
+                    } catch (_) {
+                        this.error = 'Network error. Is the server running?';
+                    } finally {
+                        this.sending = false;
+                    }
+                },
+            };
+        }
+    </script>
+</body>
+</html>
