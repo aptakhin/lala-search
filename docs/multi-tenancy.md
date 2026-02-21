@@ -6,13 +6,13 @@ LalaSearch supports two deployment modes, controlled by the `DEPLOYMENT_MODE` en
 
 | Mode | Value | Use Case |
 |------|-------|----------|
-| Single-tenant | `single_tenant` | Self-hosted open source installation |
-| Multi-tenant | `multi_tenant` | SaaS / hosted version |
+| Single-tenant | `single_tenant` | Community edition — self-hosted, fully open source |
+| Multi-tenant | `multi_tenant` | SaaS hosted version — one keyspace per customer |
 
-The codebase is shared between both modes. All multi-tenancy infrastructure is currently
-**open source** in this repository, including any future payment/billing integration. This may
-change as the SaaS version matures — billing and tenant management code may be extracted to a
-private repository later.
+The codebase is shared between both modes. Multi-tenancy infrastructure is currently
+**open source** in this repository. This may change as the SaaS offering matures — billing,
+tenant provisioning, and payment processing code may be extracted to a private repository.
+The Community (single-tenant) edition will always remain fully open source.
 
 ## Keyspace Layout
 
@@ -98,9 +98,9 @@ The open source codebase is designed so adding SaaS functionality requires minim
 3. **Tenant provisioning**: API endpoint to create a keyspace and apply `schema.cql`
 4. **Billing** (future, currently open source): Payment processing and usage metering
 
-Note: Multi-tenancy infrastructure and future billing code are currently open source in this
-repository. This may change — SaaS-specific code (particularly payment processing) may move to
-a private repository as the hosted offering matures.
+Note: SaaS-specific code (particularly billing and tenant provisioning) is currently open
+source in this repository but may move to a private repository as the hosted offering matures.
+The Community (single-tenant) edition will always remain fully open source.
 
 ## Environment Variables
 

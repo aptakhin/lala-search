@@ -1,3 +1,5 @@
+<!-- ARCHIVED: Early brainstorming notes. Project has since pivoted to self-hosted private search with integration connectors. See docs/overview.md for current architecture. -->
+
 The overall project idea is that it's social open search. We keep small management core on our side, but resources on which we allocate crawling, indexing and storing/querying process are unstable and not in our infrastructure.
 
 We authentificate these nodes and give them tasks from agents started as management ones. So we need to understand which architecture should better here. For draft I thought keeping management tasks in the queue (need to choose one better suiting this) and search queries do through http.
