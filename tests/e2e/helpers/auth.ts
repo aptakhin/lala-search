@@ -5,7 +5,7 @@
  * acceptance flows, returning the lala_session cookie value.
  */
 
-import { request as playwrightRequest, expect } from "@playwright/test";
+import { request as playwrightRequest } from "@playwright/test";
 import { AGENT_URL, REQUEST_TIMEOUT } from "./config";
 import { getMagicLinkToken } from "./mailtrap";
 
@@ -27,7 +27,13 @@ export async function authenticateViaMagicLink(
       data: { email },
       timeout: REQUEST_TIMEOUT,
     });
-    expect(requestResp.ok()).toBeTruthy();
+    if (!requestResp.ok()) {
+      const body = await requestResp.text();
+      throw new Error(
+        `POST /auth/request-link failed for ${email}: ` +
+          `HTTP ${requestResp.status()} — ${body}`,
+      );
+    }
 
     // Step 2: Retrieve token from Mailtrap
     const token = await getMagicLinkToken(email);
@@ -37,13 +43,24 @@ export async function authenticateViaMagicLink(
       timeout: REQUEST_TIMEOUT,
       maxRedirects: 0,
     });
-    expect(verifyResp.status()).toBe(302);
+    if (verifyResp.status() !== 302) {
+      const body = await verifyResp.text();
+      throw new Error(
+        `GET /auth/verify/{token} failed for ${email}: ` +
+          `expected 302, got HTTP ${verifyResp.status()} — ${body}`,
+      );
+    }
 
     // Step 4: Extract session cookie from Set-Cookie header
     const setCookie = verifyResp.headers()["set-cookie"] || "";
     const sessionMatch = setCookie.match(/lala_session=([^;]+)/);
-    expect(sessionMatch).toBeTruthy();
-    return sessionMatch![1];
+    if (!sessionMatch) {
+      throw new Error(
+        `No lala_session cookie in verify response for ${email}. ` +
+          `Set-Cookie: ${setCookie}`,
+      );
+    }
+    return sessionMatch[1];
   } finally {
     await ctx.dispose();
   }
@@ -63,12 +80,23 @@ export async function acceptInvitation(
       timeout: REQUEST_TIMEOUT,
       maxRedirects: 0,
     });
-    expect(resp.status()).toBe(302);
+    if (resp.status() !== 302) {
+      const body = await resp.text();
+      throw new Error(
+        `GET /auth/invitations/{token}/accept failed: ` +
+          `expected 302, got HTTP ${resp.status()} — ${body}`,
+      );
+    }
 
     const setCookie = resp.headers()["set-cookie"] || "";
     const sessionMatch = setCookie.match(/lala_session=([^;]+)/);
-    expect(sessionMatch).toBeTruthy();
-    return sessionMatch![1];
+    if (!sessionMatch) {
+      throw new Error(
+        `No lala_session cookie in invitation accept response. ` +
+          `Set-Cookie: ${setCookie}`,
+      );
+    }
+    return sessionMatch[1];
   } finally {
     await ctx.dispose();
   }
