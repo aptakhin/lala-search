@@ -1,11 +1,13 @@
 # LalaSearch Web Frontend
 
-A retro 1990s-style web interface for LalaSearch built with plain HTML, CSS, and Alpine.js.
+A retro 1990s-style web interface for LalaSearch built with HTML, CSS, Alpine.js, and TypeScript.
 
 ## Features
 
 - **Retro Design**: Authentic 1990s aesthetic with beveled buttons and classic colors
-- **Alpine.js**: Lightweight interactivity without heavy build tools or npm dependencies
+- **Alpine.js**: Lightweight interactivity without heavy frameworks
+- **TypeScript**: Type-safe JavaScript with esbuild bundling
+- **Nginx SSI**: Server Side Includes for shared HTML partials (header, footer)
 - **Search Interface**: Clean search box with real-time result display
 - **Magic Link Auth**: Passwordless sign-in via email
 - **Dashboard**: Invite users and manage allowed domains
@@ -20,12 +22,26 @@ lala-web/
 ├── html/                       # Served by Nginx
 │   ├── index.html              # Search page (/)
 │   ├── styles.css              # Shared CSS for all pages
+│   ├── includes/               # SSI partials (not directly accessible)
+│   │   ├── head.html           # Shared meta tags + CSS link
+│   │   ├── header.html         # Logo, tagline, auth button
+│   │   └── footer.html         # Copyright footer
+│   ├── js/                     # Built by esbuild (gitignored)
 │   ├── signin/
 │   │   └── index.html          # Sign-in page (/signin)
 │   └── dashboard/
 │       └── index.html          # Dashboard page (/dashboard)
-├── nginx.conf                  # Nginx configuration for routing and API proxy
-├── Dockerfile                  # Container image for the web service
+├── src/                        # TypeScript source
+│   ├── types/alpine.d.ts       # Minimal Alpine.js type declarations
+│   ├── lib/api.ts              # Shared API fetch helpers
+│   └── pages/
+│       ├── search.ts           # Search page Alpine components
+│       ├── signin.ts           # Sign-in page Alpine component
+│       └── dashboard.ts        # Dashboard page Alpine components
+├── package.json                # esbuild + typescript dev dependencies
+├── tsconfig.json               # TypeScript config (type checking only)
+├── nginx.conf                  # Nginx config with SSI enabled
+├── Dockerfile                  # Multi-stage: node build + nginx serve
 └── README.md                   # This file
 ```
 
@@ -73,21 +89,62 @@ docker compose up -d --build
 
 Access the web UI at: **http://localhost:8081**
 
+## Development
+
+### Prerequisites
+
+- Node.js 22+ (for TypeScript compilation)
+- Docker (for running the full stack)
+
+### Setup
+
+```bash
+cd lala-web
+npm install
+```
+
+### Development workflow
+
+1. Start the stack:
+   ```bash
+   docker compose up -d --build lala-web
+   ```
+
+2. Start the TypeScript watcher (in a separate terminal):
+   ```bash
+   cd lala-web
+   npm run watch
+   ```
+
+3. Edit files and refresh your browser:
+   - **TypeScript** (`src/**/*.ts`): esbuild rebuilds to `html/js/` in ~6ms
+   - **HTML/CSS** (`html/**`): changes are instant (volume-mounted)
+   - **SSI partials** (`html/includes/*`): changes are instant (nginx processes per-request)
+
+### Available scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run build` | Production build (minified, no sourcemaps) |
+| `npm run watch` | Development build with file watching and sourcemaps |
+| `npm run typecheck` | Run TypeScript type checking (no output) |
+
+### How it works
+
+- **esbuild** compiles TypeScript and bundles per-page JS files (`search.js`, `signin.js`, `dashboard.js`)
+- **Nginx SSI** processes `<!--#include -->` directives at request time, assembling shared HTML partials
+- Alpine.js is loaded from CDN. Page bundles use `defer` and appear before Alpine in document order, ensuring component functions are defined before Alpine initializes
+- The `html/js/` directory is gitignored (build artifact) and volume-mounted into Docker for live updates
+
 ## Technologies
 
 - **HTML5**: Semantic markup
 - **CSS3**: Retro styling with flexbox
+- **TypeScript**: Type-safe JavaScript (compiled by esbuild)
 - **Alpine.js 3.x**: Lightweight interactivity (loaded from CDN)
-- **Nginx**: Reverse proxy and static serving
-- **Docker**: Container deployment
-
-## No External Dependencies
-
-This frontend has **zero npm dependencies**:
-- No webpack, parcel, vite builds
-- No node_modules
-- No transpilation needed
-- Alpine.js loaded directly from CDN
+- **esbuild**: Fast TypeScript bundler (~6ms rebuilds)
+- **Nginx**: Reverse proxy, static serving, SSI
+- **Docker**: Multi-stage container deployment
 
 ## Playwright Test IDs
 
@@ -98,14 +155,6 @@ All interactive elements have `data-testid` attributes for E2E testing:
 **Sign-in page**: `signin-email-input`, `signin-submit-button`, `signin-success-message`, `signin-error-message`
 
 **Dashboard**: `dashboard-user-email`, `dashboard-user-role`, `signout-button`, `invite-email-input`, `invite-role-select`, `invite-submit-button`, `invite-success-message`, `invite-error-message`, `members-table`, `remove-member-button`, `domain-input`, `domain-notes-input`, `add-domain-button`, `domain-success-message`, `domain-error-message`, `domains-table`, `delete-domain-button`
-
-## Development
-
-To modify the interface:
-
-1. Edit files in `lala-web/html/`
-2. Docker volume mount provides live updates (no rebuild needed)
-3. Or rebuild container: `docker compose up -d --build lala-web`
 
 ## Browser Support
 
