@@ -214,6 +214,7 @@ if [ -n "$MISSING_VARS" ]; then
 fi
 
 echo "Step 7: Restarting agent in multi-tenant mode..."
+cd "$PROJECT_ROOT"
 docker compose stop lala-agent 2>/dev/null || true
 docker compose rm -f lala-agent 2>/dev/null || true
 
@@ -226,6 +227,7 @@ echo "Step 8: Running multi-tenant E2E tests (multi-tenant.spec.ts)..."
 echo "======================================"
 echo ""
 
+cd "$SCRIPT_DIR"
 MAILTRAP_API_TOKEN="$MAILTRAP_API_TOKEN" \
 MAILTRAP_ACCOUNT_ID="$MAILTRAP_ACCOUNT_ID" \
 MAILTRAP_INBOX_ID="$MAILTRAP_INBOX_ID" \
