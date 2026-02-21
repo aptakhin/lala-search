@@ -50,6 +50,8 @@ services:
     build:
       context: ./lala-agent
       dockerfile: Dockerfile
+      args:
+        LALA_PATCH_VERSION: ${LALA_PATCH_VERSION:-}
     container_name: lalasearch-agent
     ports:
       - "3000:3000"  # HTTP API

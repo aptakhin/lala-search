@@ -1,5 +1,8 @@
 # LalaSearch
 
+[![Build & Test](https://github.com/aptakhin/lala-search/actions/workflows/ci.yml/badge.svg)](https://github.com/aptakhin/lala-search/actions/workflows/ci.yml)
+[![E2E Tests](https://github.com/aptakhin/lala-search/actions/workflows/e2e.yml/badge.svg)](https://github.com/aptakhin/lala-search/actions/workflows/e2e.yml)
+
 Open source self-hosted search for your private web. Index and search internal tools, knowledge bases, and communication systems — all running on your own infrastructure.
 
 ## Overview
@@ -62,6 +65,9 @@ lalasearch/
 │   └── cassandra/
 │       ├── schema.cql             # Tenant keyspace schema (lalasearch_default)
 │       └── schema_system.cql      # System keyspace schema (lalasearch_system)
+├── .github/workflows/
+│   ├── ci.yml                    # Build & Test pipeline (fmt, clippy, unit, storage, integration)
+│   └── e2e.yml                   # E2E Test pipeline (Docker Compose + Playwright)
 ├── docker-compose.yml             # Multi-container setup
 ├── .env.example                   # Environment variables template
 └── scripts/
@@ -202,6 +208,7 @@ The core crawling, storage, search, and queue logic is identical between both mo
 - System keyspace (`lalasearch_system`) with global tenant registry
 - Docker and Docker Compose setup with proper startup ordering
 - Test-driven development workflow and pre-commit hooks
+- GitHub Actions CI/CD (Build & Test + E2E pipelines)
 
 **Planned:**
 - Integration connectors for communication and knowledge base systems
@@ -213,7 +220,7 @@ The core crawling, storage, search, and queue logic is identical between both mo
 
 LalaSearch uses semantic versioning:
 - **MAJOR.MINOR**: Manually set in `lala-agent/Cargo.toml`
-- **PATCH**: Auto-generated from CI/CD pipeline run number (future)
+- **PATCH**: Auto-generated from CI/CD pipeline run number
 
 See [docs/versioning.md](docs/versioning.md) for details.
 

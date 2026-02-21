@@ -28,14 +28,16 @@ version = "0.1.0"
 
 The agent will report version `0.1.0`.
 
-### CI/CD Pipeline (Future)
+### CI/CD Pipeline
 
-When GitHub Actions is configured, the pipeline will:
+GitHub Actions sets `LALA_PATCH_VERSION` to the pipeline run number:
 
-1. Read MAJOR.MINOR from `Cargo.toml`
-2. Set `LALA_PATCH_VERSION` environment variable to the pipeline run number
-3. Build with: `LALA_PATCH_VERSION=${{ github.run_number }} cargo build --release`
-4. Final version: `0.1.1234` (where 1234 is the pipeline run number)
+1. **Direct cargo builds** (ci.yml): `LALA_PATCH_VERSION` env var is set globally, picked up by `build.rs`
+2. **Docker builds** (e2e.yml): Passed as a build arg through `docker-compose.yml` → `Dockerfile` ARG → ENV
+
+Final version example: `0.1.1234` (where 1234 is the pipeline run number)
+
+See [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) and [`.github/workflows/e2e.yml`](../.github/workflows/e2e.yml).
 
 ## Updating Versions
 
@@ -117,19 +119,22 @@ Commit 12: Bump to 1.0.0 (breaking changes)
   → CI/CD build #112: 1.0.112
 ```
 
-## Future: GitHub Actions Configuration
+## GitHub Actions Pipelines
 
-```yaml
-# .github/workflows/build.yml
-env:
-  LALA_PATCH_VERSION: ${{ github.run_number }}
+Two pipelines handle CI/CD:
 
-steps:
-  - name: Build lala-agent
-    run: |
-      cd lala-agent
-      cargo build --release
+| Pipeline | File | Purpose |
+|----------|------|---------|
+| Build & Test | `.github/workflows/ci.yml` | fmt, clippy, unit tests, storage-dependent tests, integration tests |
+| E2E Tests | `.github/workflows/e2e.yml` | Full end-to-end tests via Docker Compose |
 
-  - name: Display version
-    run: ./lala-agent/target/release/lala-agent --version
+Both set `LALA_PATCH_VERSION: ${{ github.run_number }}` to embed the CI build number into the version.
+
+### Docker Build Version Flow
+
+```
+docker-compose.yml (args: LALA_PATCH_VERSION)
+  → Dockerfile (ARG LALA_PATCH_VERSION → ENV)
+    → build.rs (reads LALA_PATCH_VERSION env var)
+      → Embeds as LALA_VERSION compile-time constant
 ```

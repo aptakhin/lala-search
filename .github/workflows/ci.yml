@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Aleksandr Ptakhin
+#
+# Build & Test Pipeline
+# Runs formatting, linting, unit tests, storage-dependent tests, and integration tests.
+# Reuses scripts/pre-commit.sh for the core test flow.
+
+name: Build & Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  LALA_PATCH_VERSION: ${{ github.run_number }}
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            lala-agent/target/
+          key: cargo-${{ runner.os }}-${{ hashFiles('lala-agent/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Generate .env for Docker Compose
+        run: cp .env.example .env
+
+      - name: Run pre-commit checks (fmt, clippy, unit + storage tests)
+        run: ./scripts/pre-commit.sh
+
+      - name: Run integration tests (Tier 2)
+        working-directory: lala-agent
+        run: cargo test --test '*'

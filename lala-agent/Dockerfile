@@ -25,6 +25,10 @@ RUN mkdir -p src && \
     cargo build --release && \
     rm -rf src
 
+# CI/CD version override (set via docker compose build args)
+ARG LALA_PATCH_VERSION
+ENV LALA_PATCH_VERSION=${LALA_PATCH_VERSION}
+
 # Copy source code and templates
 COPY src ./src
 COPY tests ./tests

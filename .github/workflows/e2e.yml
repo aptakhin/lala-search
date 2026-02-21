@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Aleksandr Ptakhin
+#
+# E2E Test Pipeline
+# Runs the full end-to-end test suite using Docker Compose.
+# Reuses tests/e2e/run_tests.sh for the core test flow.
+#
+# ──────────────────────────────────────────────────────────────────────
+# Required GitHub Secrets (for multi-tenant tests):
+#
+#   MAILTRAP_API_TOKEN      - Mailtrap API token (for Playwright to read emails)
+#   MAILTRAP_ACCOUNT_ID     - Mailtrap account ID
+#   MAILTRAP_INBOX_ID       - Mailtrap inbox ID
+#
+# Single-tenant tests always run. Multi-tenant tests are skipped
+# when Mailtrap secrets are not configured.
+# ──────────────────────────────────────────────────────────────────────
+
+name: E2E Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LALA_PATCH_VERSION: ${{ github.run_number }}
+
+jobs:
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Generate .env for Docker Compose
+        run: cp .env.example .env
+
+      - name: Run E2E tests
+        env:
+          MAILTRAP_API_TOKEN: ${{ secrets.MAILTRAP_API_TOKEN }}
+          MAILTRAP_ACCOUNT_ID: ${{ secrets.MAILTRAP_ACCOUNT_ID }}
+          MAILTRAP_INBOX_ID: ${{ secrets.MAILTRAP_INBOX_ID }}
+        run: tests/e2e/run_tests.sh
+
+      - name: Upload Playwright test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: |
+            tests/e2e/test-results/
+            tests/e2e/playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Dump Docker logs on failure
+        if: failure()
+        run: |
+          echo "=== Agent Logs ==="
+          docker logs lalasearch-agent 2>&1 || true
+          echo ""
+          echo "=== Docker Compose Status ==="
+          docker compose ps || true
+          echo ""
+          echo "=== Cassandra Logs (last 50 lines) ==="
+          docker logs lalasearch-cassandra --tail 50 2>&1 || true
