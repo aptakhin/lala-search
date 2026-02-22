@@ -5,13 +5,12 @@ use crate::models::crawler::{CrawlRequest, CrawlResult};
 use crate::models::db::{CrawlError, CrawlErrorType, CrawlQueueEntry, CrawledPage};
 use crate::models::search::IndexedDocument;
 use crate::services::crawler::crawl_url;
-use crate::services::db::CassandraClient;
+use crate::services::db::DbClient;
 use crate::services::search::SearchClient;
 use crate::services::storage::StorageClient;
 use anyhow::Result;
 use chrono::Utc;
 use scraper::Html;
-use scylla::frame::value::CqlTimestamp;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -22,7 +21,7 @@ const MAX_RETRY_ATTEMPTS: i32 = 5;
 
 /// Queue processor that continuously processes crawl queue entries
 pub struct QueueProcessor {
-    db_client: Arc<CassandraClient>,
+    db_client: Arc<DbClient>,
     search_client: Option<Arc<SearchClient>>,
     storage_client: Option<Arc<StorageClient>>,
     user_agent: String,
@@ -34,7 +33,7 @@ pub struct QueueProcessor {
 impl QueueProcessor {
     /// Create a new queue processor
     pub fn new(
-        db_client: Arc<CassandraClient>,
+        db_client: Arc<DbClient>,
         user_agent: String,
         poll_interval: Duration,
         tenant_id: Option<String>,
@@ -51,7 +50,7 @@ impl QueueProcessor {
 
     /// Create a new queue processor with Meilisearch support
     pub fn with_search(
-        db_client: Arc<CassandraClient>,
+        db_client: Arc<DbClient>,
         search_client: Arc<SearchClient>,
         user_agent: String,
         poll_interval: Duration,
@@ -69,7 +68,7 @@ impl QueueProcessor {
 
     /// Create a new queue processor with S3 storage support
     pub fn with_storage(
-        db_client: Arc<CassandraClient>,
+        db_client: Arc<DbClient>,
         storage_client: Arc<StorageClient>,
         user_agent: String,
         poll_interval: Duration,
@@ -87,7 +86,7 @@ impl QueueProcessor {
 
     /// Create a new queue processor with both Meilisearch and S3 storage support
     pub fn with_all(
-        db_client: Arc<CassandraClient>,
+        db_client: Arc<DbClient>,
         search_client: Arc<SearchClient>,
         storage_client: Arc<StorageClient>,
         user_agent: String,
@@ -128,35 +127,20 @@ impl QueueProcessor {
     /// Returns true if an entry was processed, false if queue was empty or crawling is disabled
     pub async fn process_next_entry(&self) -> Result<bool> {
         // Check if crawling is enabled before processing
-        let crawling_enabled = self
-            .db_client
-            .is_crawling_enabled()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to check crawling enabled: {}", e))?;
-
-        if !crawling_enabled {
+        if !self.db_client.is_crawling_enabled().await? {
             return Ok(false);
         }
 
-        // Get the next entry from the queue
-        let entry = match self
-            .db_client
-            .get_next_queue_entry()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to get queue entry: {}", e))?
-        {
+        // Get the next entry from the queue (uses FOR UPDATE SKIP LOCKED)
+        let entry = match self.db_client.get_next_queue_entry().await? {
             Some(entry) => entry,
             None => return Ok(false),
         };
 
         println!("Processing URL: {}", entry.url);
 
-        // Delete the entry from the queue immediately to prevent other workers from picking it up
-        // This is the "locking" mechanism - whoever deletes it first gets to process it
-        self.db_client
-            .delete_queue_entry(&entry)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to delete queue entry: {}", e))?;
+        // Delete the entry from the queue after locking it
+        self.db_client.delete_queue_entry(&entry).await?;
 
         // Process the entry and handle any failures with retry logic
         match self.process_crawl_entry(&entry).await {
@@ -220,7 +204,7 @@ impl QueueProcessor {
             .await
             .map_err(|e| (CrawlErrorType::StorageError, e))?;
 
-        // Stage 3: Create and store crawled page in Cassandra
+        // Stage 3: Create and store crawled page in database
         let crawled_page = self
             .create_crawled_page(entry, &result, Some(storage_id), compression_type)
             .await
@@ -300,8 +284,11 @@ impl QueueProcessor {
 
         // Log the error to crawl_errors table
         let crawl_error = CrawlError {
+            error_id: Uuid::now_v7(),
+            tenant_id: self.db_client.tenant_id,
+            page_id: None,
             domain: domain.clone(),
-            occurred_at: CqlTimestamp(now.timestamp_millis()),
+            occurred_at: now,
             url: entry.url.clone(),
             error_type: error_type.clone(),
             error_message: error_message.to_string(),
@@ -374,7 +361,7 @@ impl QueueProcessor {
             title,
             content: clean_content,
             excerpt,
-            crawled_at: crawled_page.last_crawled_at.0 / 1000, // Convert milliseconds to seconds
+            crawled_at: crawled_page.last_crawled_at.timestamp(),
             http_status: crawled_page.http_status,
         };
 
@@ -385,14 +372,8 @@ impl QueueProcessor {
         Ok(())
     }
 
-    /// Extract meet links from crawled content and enqueue them if count allows
+    /// Extract meet links from crawled content and enqueue them
     async fn enqueue_meet_links(&self, content: &str, entry: &CrawlQueueEntry) -> Result<()> {
-        let _ = self
-            .db_client
-            .count_crawled_pages()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to count crawled pages: {}", e))?;
-
         let links = extract_links(content, &entry.url);
         for link in links {
             self.enqueue_link(&link, entry).await;
@@ -446,15 +427,16 @@ impl QueueProcessor {
 
         // Success path - create and insert queue entry
         let now = Utc::now();
-        let ts = CqlTimestamp(now.timestamp_millis());
         let new_entry = CrawlQueueEntry {
+            queue_id: Uuid::now_v7(),
+            tenant_id: self.db_client.tenant_id,
             priority: parent_entry.priority,
-            scheduled_at: ts,
+            scheduled_at: now,
             url: link.to_string(),
             domain,
             last_attempt_at: None,
             attempt_count: 0,
-            created_at: ts,
+            created_at: now,
         };
 
         if let Err(e) = self.db_client.insert_queue_entry(&new_entry).await {
@@ -502,16 +484,14 @@ impl QueueProcessor {
         let url_path = parsed_url.path().to_string();
 
         let now = Utc::now();
-        let now_timestamp = CqlTimestamp(now.timestamp_millis());
 
         let crawl_frequency_hours = 24; // Default: recrawl once per day
-        let next_crawl = now + chrono::Duration::hours(crawl_frequency_hours as i64);
-        let next_crawl_at = CqlTimestamp(next_crawl.timestamp_millis());
+        let next_crawl_at = now + chrono::Duration::hours(crawl_frequency_hours as i64);
 
         // Calculate content hash if content exists
         let (content_hash, content_length) = if let Some(ref content) = result.content {
             let hash = format!("{:x}", md5::compute(content));
-            (hash, content.len() as i64)
+            (hash, content.len() as i32)
         } else {
             ("".to_string(), 0)
         };
@@ -535,19 +515,25 @@ impl QueueProcessor {
             .ok()
             .flatten();
 
-        let (crawl_count, created_at) = if let Some(ref existing) = existing_page {
-            (existing.crawl_count + 1, existing.created_at)
+        let (crawl_count, created_at, page_id) = if let Some(ref existing) = existing_page {
+            (
+                existing.crawl_count + 1,
+                existing.created_at,
+                existing.page_id,
+            )
         } else {
-            (1, now_timestamp)
+            (1, now, Uuid::now_v7())
         };
 
         Ok(CrawledPage {
+            page_id,
+            tenant_id: self.db_client.tenant_id,
             domain,
             url_path,
             url: entry.url.clone(),
             storage_id,
             storage_compression,
-            last_crawled_at: now_timestamp,
+            last_crawled_at: now,
             next_crawl_at,
             crawl_frequency_hours,
             http_status,
@@ -557,7 +543,7 @@ impl QueueProcessor {
             error_message: result.error.clone(),
             crawl_count,
             created_at,
-            updated_at: now_timestamp,
+            updated_at: now,
         })
     }
 }

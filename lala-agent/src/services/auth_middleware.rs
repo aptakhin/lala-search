@@ -57,7 +57,7 @@ pub fn get_tenant_from_header(headers: &HeaderMap, auth_user: &AuthUser) -> Stri
         .get("X-Tenant-Id")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string())
-        .unwrap_or_else(|| auth_user.tenant_id.clone())
+        .unwrap_or_else(|| auth_user.tenant_id.to_string())
 }
 
 /// Create a session cookie with the given token.

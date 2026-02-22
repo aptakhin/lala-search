@@ -3,148 +3,62 @@
 
 use crate::models::db::{CrawlError, CrawlQueueEntry, CrawledPage};
 use crate::models::storage::CompressionType;
-use anyhow::{anyhow, Result};
-use chrono::Timelike;
-use scylla::frame::value::{Counter, CqlTimestamp};
-use scylla::transport::errors::{NewSessionError, QueryError};
-use scylla::{Session, SessionBuilder};
-use std::sync::Arc;
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
+use sqlx::postgres::PgPool;
+use sqlx::Row;
 use uuid::Uuid;
 
-/// Configuration for Cassandra database connection
-#[derive(Debug, Clone)]
-pub struct CassandraConfig {
-    pub hosts: Vec<String>,
-    pub keyspace: String,
-}
-
-impl CassandraConfig {
-    /// Load configuration from environment variables
-    pub fn from_env() -> Result<Self> {
-        let hosts_str = std::env::var("CASSANDRA_HOSTS")
-            .map_err(|_| anyhow!("CASSANDRA_HOSTS environment variable not set"))?;
-        let hosts: Vec<String> = hosts_str.split(',').map(|s| s.trim().to_string()).collect();
-
-        let keyspace = std::env::var("CASSANDRA_KEYSPACE")
-            .map_err(|_| anyhow!("CASSANDRA_KEYSPACE environment variable not set"))?;
-
-        Ok(Self { hosts, keyspace })
-    }
-}
-
-/// Apache Cassandra client for managing crawl queue and crawled pages.
+/// PostgreSQL database client for managing crawl queue and crawled pages.
 ///
-/// All queries use fully qualified table names (`keyspace.table`) so that multiple
-/// instances can share the same connection pool while targeting different keyspaces.
-/// This is the foundation for multi-tenant operation: call `with_keyspace()` to create
-/// a tenant-scoped client that reuses the same underlying connections.
+/// Each client is scoped to a `tenant_id`. All tenant-specific queries filter by this ID.
+/// Call `with_tenant()` to create a client scoped to a different tenant.
 #[derive(Clone)]
-pub struct CassandraClient {
-    session: Arc<Session>,
-    pub keyspace: String,
+pub struct DbClient {
+    pool: PgPool,
+    pub tenant_id: Uuid,
 }
 
-impl CassandraClient {
-    /// Create a new Apache Cassandra client.
-    ///
-    /// Does not issue a USE statement. All queries use fully qualified table names
-    /// so the same connection pool can serve multiple keyspaces concurrently.
-    pub async fn new(hosts: Vec<String>, keyspace: String) -> Result<Self, NewSessionError> {
-        let session = SessionBuilder::new().known_nodes(&hosts).build().await?;
-
-        Ok(Self {
-            session: Arc::new(session),
-            keyspace,
-        })
+impl DbClient {
+    /// Create a new database client scoped to a tenant.
+    pub fn new(pool: PgPool, tenant_id: Uuid) -> Self {
+        Self { pool, tenant_id }
     }
 
-    /// Create a new Apache Cassandra client from configuration
-    pub async fn from_config(config: CassandraConfig) -> Result<Self, NewSessionError> {
-        Self::new(config.hosts, config.keyspace).await
+    /// Get a reference to the underlying connection pool.
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
     }
 
-    /// Create a new client targeting a different keyspace, sharing the same connection pool.
-    ///
-    /// Used in multi-tenant mode to scope a request to a specific tenant's keyspace:
-    /// ```rust,ignore
-    /// let tenant_db = state.db_client.with_keyspace("lalasearch_acme");
-    /// tenant_db.is_domain_allowed(&domain).await?;
-    /// ```
-    pub fn with_keyspace(&self, keyspace: impl Into<String>) -> Self {
+    /// Create a new client targeting a different tenant, sharing the same connection pool.
+    pub fn with_tenant(&self, tenant_id: Uuid) -> Self {
         Self {
-            session: self.session.clone(),
-            keyspace: keyspace.into(),
+            pool: self.pool.clone(),
+            tenant_id,
         }
     }
 
-    /// Get a reference to the underlying Scylla session.
-    /// Used for creating specialized clients like AuthDbClient.
-    pub fn session(&self) -> Arc<Session> {
-        self.session.clone()
-    }
-
-    /// Ensure the default tenant row exists in the system keyspace.
-    ///
-    /// `tenant_keyspace` is the Cassandra keyspace name used as the tenant_id
-    /// (e.g. `lalasearch_default` or `lalasearch_test`).
-    /// Uses IF NOT EXISTS so it is safe to call repeatedly.
-    pub async fn ensure_default_tenant(&self, tenant_keyspace: &str) -> Result<(), QueryError> {
-        let query = format!(
-            "INSERT INTO {}.tenants (tenant_id, name, created_at) \
-             VALUES (?, 'Default', toTimestamp(now())) IF NOT EXISTS",
-            self.keyspace
-        );
-        self.session
-            .query_unpaged(query, (tenant_keyspace,))
-            .await?;
+    /// Ensure the default tenant row exists. Uses ON CONFLICT DO NOTHING for idempotency.
+    pub async fn ensure_default_tenant(&self, tenant_id: Uuid, name: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO tenants (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id) DO NOTHING",
+        )
+        .bind(tenant_id)
+        .bind(name)
+        .execute(&self.pool)
+        .await
+        .context("Failed to ensure default tenant")?;
         Ok(())
     }
 
-    /// Check whether a Cassandra keyspace exists by querying the system schema.
-    pub async fn keyspace_exists(&self, keyspace_name: &str) -> Result<bool, QueryError> {
-        let query =
-            "SELECT keyspace_name FROM system_schema.keyspaces WHERE keyspace_name = ?".to_string();
-        let result = self.session.query_unpaged(query, (keyspace_name,)).await?;
-        let rows_result = match result.into_rows_result() {
-            Ok(r) => r,
-            Err(_) => return Ok(false),
-        };
-        Ok(rows_result
-            .rows::<(String,)>()
-            .is_ok_and(|mut rows| rows.next().is_some()))
-    }
+    /// List all active tenant IDs from the tenants table.
+    pub async fn list_tenant_ids(&self) -> Result<Vec<Uuid>> {
+        let rows = sqlx::query("SELECT tenant_id FROM tenants WHERE deleted_at IS NULL")
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to list tenant IDs")?;
 
-    /// List all tenant keyspace names registered in the system keyspace's tenants table.
-    ///
-    /// In multi-tenant mode the scheduler calls this on startup to discover which
-    /// Cassandra keyspaces need a queue processor.  Each `tenant_id` value in the
-    /// table **is** the Cassandra keyspace name (e.g. `lalasearch_acme`).
-    pub async fn list_tenant_keyspaces(&self) -> Result<Vec<String>, QueryError> {
-        let query = format!("SELECT tenant_id FROM {}.tenants", self.keyspace);
-        let result = self.session.query_unpaged(query, &[]).await?;
-        let rows_result = match result.into_rows_result() {
-            Ok(r) => r,
-            Err(_) => return Ok(Vec::new()),
-        };
-
-        let rows = rows_result.rows::<(String,)>().map_err(|e| {
-            QueryError::DbError(
-                scylla::transport::errors::DbError::Other(0),
-                format!("Failed to deserialize tenants rows: {}", e),
-            )
-        })?;
-
-        let mut keyspaces = Vec::new();
-        for row_result in rows {
-            let (tenant_id,) = row_result.map_err(|e| {
-                QueryError::DbError(
-                    scylla::transport::errors::DbError::Other(0),
-                    format!("Failed to parse tenant row: {}", e),
-                )
-            })?;
-            keyspaces.push(tenant_id);
-        }
-        Ok(keyspaces)
+        Ok(rows.iter().map(|r| r.get("tenant_id")).collect())
     }
 
     /// Insert an allowed domain
@@ -153,332 +67,224 @@ impl CassandraClient {
         domain: &str,
         added_by: &str,
         notes: Option<&str>,
-    ) -> Result<(), QueryError> {
-        let query = format!(
-            "INSERT INTO {}.allowed_domains (domain, added_at, added_by, notes) VALUES (?, toTimestamp(now()), ?, ?)",
-            self.keyspace
-        );
-        self.session
-            .query_unpaged(query, (domain, added_by, notes))
-            .await?;
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO allowed_domains (tenant_id, domain, added_by, notes)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (tenant_id, domain) DO UPDATE SET deleted_at = NULL, added_by = $3, notes = $4, added_at = now()",
+        )
+        .bind(self.tenant_id)
+        .bind(domain)
+        .bind(added_by)
+        .bind(notes)
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("Failed to insert allowed domain: {domain}"))?;
         Ok(())
     }
 
-    /// Delete an allowed domain (used for test cleanup)
-    pub async fn delete_allowed_domain(&self, domain: &str) -> Result<(), QueryError> {
-        let query = format!(
-            "DELETE FROM {}.allowed_domains WHERE domain = ?",
-            self.keyspace
-        );
-        self.session.query_unpaged(query, (domain,)).await?;
+    /// Soft-delete an allowed domain
+    pub async fn delete_allowed_domain(&self, domain: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE allowed_domains SET deleted_at = now() WHERE tenant_id = $1 AND domain = $2",
+        )
+        .bind(self.tenant_id)
+        .bind(domain)
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("Failed to soft-delete allowed domain: {domain}"))?;
         Ok(())
     }
 
-    /// List all allowed domains
+    /// Hard-delete an allowed domain (for test cleanup only)
+    pub async fn hard_delete_allowed_domain(&self, domain: &str) -> Result<()> {
+        sqlx::query("DELETE FROM allowed_domains WHERE tenant_id = $1 AND domain = $2")
+            .bind(self.tenant_id)
+            .bind(domain)
+            .execute(&self.pool)
+            .await
+            .with_context(|| format!("Failed to hard-delete allowed domain: {domain}"))?;
+        Ok(())
+    }
+
+    /// List all active allowed domains
     pub async fn list_allowed_domains(
         &self,
-    ) -> Result<Vec<(String, Option<String>, Option<String>, Option<String>)>, QueryError> {
-        let query = format!(
-            "SELECT domain, added_by, notes, added_at FROM {}.allowed_domains",
-            self.keyspace
-        );
-        let result = self.session.query_unpaged(query, &[]).await?;
-        let rows_result = match result.into_rows_result() {
-            Ok(rows_result) => rows_result,
-            Err(_) => return Ok(Vec::new()),
-        };
+    ) -> Result<Vec<(String, Option<String>, Option<String>, Option<String>)>> {
+        let rows = sqlx::query(
+            "SELECT domain, added_by, notes, added_at
+             FROM allowed_domains
+             WHERE tenant_id = $1 AND deleted_at IS NULL",
+        )
+        .bind(self.tenant_id)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to list allowed domains")?;
 
-        let rows_vec = rows_result
-            .rows::<(String, Option<String>, Option<String>, Option<CqlTimestamp>)>()
-            .map_err(|e| {
-                QueryError::DbError(
-                    scylla::transport::errors::DbError::Other(0),
-                    format!("Failed to deserialize allowed domains: {}", e),
-                )
-            })?;
-
-        let mut domains = Vec::new();
-        for row in rows_vec {
-            let (domain, added_by, notes, added_at) = row.map_err(|e| {
-                QueryError::DbError(
-                    scylla::transport::errors::DbError::Other(0),
-                    format!("Failed to parse allowed domain row: {}", e),
-                )
-            })?;
-
-            // Convert CqlTimestamp to String if present
-            let added_at_str = added_at.map(|ts| {
-                let millis = ts.0;
-                let datetime = chrono::DateTime::from_timestamp_millis(millis)
-                    .unwrap_or_else(chrono::Utc::now);
-                datetime.to_rfc3339()
-            });
-
-            domains.push((domain, added_by, notes, added_at_str));
-        }
-
-        Ok(domains)
+        Ok(rows
+            .iter()
+            .map(|r| {
+                let domain: String = r.get("domain");
+                let added_by: Option<String> = r.get("added_by");
+                let notes: Option<String> = r.get("notes");
+                let added_at: Option<DateTime<Utc>> = r.get("added_at");
+                let added_at_str = added_at.map(|dt| dt.to_rfc3339());
+                (domain, added_by, notes, added_at_str)
+            })
+            .collect())
     }
 
-    /// Delete a crawled page by domain and url_path (used for test cleanup)
-    pub async fn delete_crawled_page(
-        &self,
-        domain: &str,
-        url_path: &str,
-    ) -> Result<(), QueryError> {
-        let query = format!(
-            "DELETE FROM {}.crawled_pages WHERE domain = ? AND url_path = ?",
-            self.keyspace
-        );
-        self.session
-            .query_unpaged(query, (domain, url_path))
-            .await?;
+    /// Delete a crawled page by domain and url_path (hard delete)
+    pub async fn delete_crawled_page(&self, domain: &str, url_path: &str) -> Result<()> {
+        sqlx::query(
+            "DELETE FROM crawled_pages WHERE tenant_id = $1 AND domain = $2 AND url_path = $3",
+        )
+        .bind(self.tenant_id)
+        .bind(domain)
+        .bind(url_path)
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("Failed to delete crawled page: {domain}{url_path}"))?;
         Ok(())
     }
 
-    /// Get the next entry from the crawl queue (with lowest priority and earliest scheduled_at)
-    /// This performs a SELECT to find entries to process
-    pub async fn get_next_queue_entry(&self) -> Result<Option<CrawlQueueEntry>, QueryError> {
-        let query = format!(
-            "SELECT priority, scheduled_at, url, domain, last_attempt_at, attempt_count, created_at
-             FROM {}.crawl_queue
-             LIMIT 1",
-            self.keyspace
-        );
+    /// Get the next entry from the crawl queue using FOR UPDATE SKIP LOCKED.
+    /// Returns None if the queue is empty.
+    pub async fn get_next_queue_entry(&self) -> Result<Option<CrawlQueueEntry>> {
+        let row = sqlx::query(
+            "SELECT queue_id, tenant_id, priority, scheduled_at, url, domain,
+                    last_attempt_at, attempt_count, created_at
+             FROM crawl_queue
+             WHERE tenant_id = $1 AND scheduled_at <= now()
+             ORDER BY priority, scheduled_at
+             LIMIT 1
+             FOR UPDATE SKIP LOCKED",
+        )
+        .bind(self.tenant_id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to get next queue entry")?;
 
-        let result = self.session.query_unpaged(query, &[]).await?;
-        let rows_result = match result.into_rows_result() {
-            Ok(rows_result) => rows_result,
-            Err(_) => return Ok(None),
-        };
-
-        let rows_vec = rows_result
-            .rows::<(
-                i32,
-                CqlTimestamp,
-                String,
-                String,
-                Option<CqlTimestamp>,
-                i32,
-                CqlTimestamp,
-            )>()
-            .map_err(|e| {
-                QueryError::DbError(
-                    scylla::transport::errors::DbError::Other(0),
-                    format!("Failed to deserialize rows: {}", e),
-                )
-            })?;
-
-        if let Some(row_result) = rows_vec.into_iter().next() {
-            let (priority, scheduled_at, url, domain, last_attempt_at, attempt_count, created_at) =
-                row_result.map_err(|e| {
-                    QueryError::DbError(
-                        scylla::transport::errors::DbError::Other(0),
-                        format!("Failed to parse queue entry: {}", e),
-                    )
-                })?;
-
-            return Ok(Some(CrawlQueueEntry {
-                priority,
-                scheduled_at,
-                url,
-                domain,
-                last_attempt_at,
-                attempt_count,
-                created_at,
-            }));
-        }
-
-        Ok(None)
+        Ok(row.map(|r| CrawlQueueEntry {
+            queue_id: r.get("queue_id"),
+            tenant_id: r.get("tenant_id"),
+            priority: r.get("priority"),
+            scheduled_at: r.get("scheduled_at"),
+            url: r.get("url"),
+            domain: r.get("domain"),
+            last_attempt_at: r.get("last_attempt_at"),
+            attempt_count: r.get("attempt_count"),
+            created_at: r.get("created_at"),
+        }))
     }
 
-    /// Return total number of crawled pages from crawl_stats.
-    /// This queries the counter table instead of doing a full table scan.
-    /// Returns the sum of pages_crawled across all domains for today.
-    pub async fn count_crawled_pages(&self) -> Result<i64, QueryError> {
-        // Get current date and hour for the partition key
-        let now = chrono::Utc::now();
-        let date = now.date_naive();
-        let hour = now.hour() as i32;
+    /// Check if a crawled page exists by domain + url_path
+    pub async fn crawled_page_exists(&self, domain: &str, url_path: &str) -> Result<bool> {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM crawled_pages WHERE tenant_id = $1 AND domain = $2 AND url_path = $3)",
+        )
+        .bind(self.tenant_id)
+        .bind(domain)
+        .bind(url_path)
+        .fetch_one(&self.pool)
+        .await
+        .with_context(|| format!("Failed to check crawled page exists: {domain}{url_path}"))?;
 
-        let query = format!(
-            "SELECT pages_crawled FROM {}.crawl_stats WHERE date = ? AND hour = ?",
-            self.keyspace
-        );
-        let result = self.session.query_unpaged(query, (date, hour)).await?;
-        let rows_result = match result.into_rows_result() {
-            Ok(r) => r,
-            Err(_) => return Ok(0),
-        };
-
-        // Sum up all the counter values across domains
-        // Note: Counter columns can be NULL until first incremented, so we use Option<Counter>
-        let rows = rows_result.rows::<(Option<Counter>,)>().map_err(|e| {
-            QueryError::DbError(
-                scylla::transport::errors::DbError::Other(0),
-                format!("Failed to deserialize count rows: {}", e),
-            )
-        })?;
-
-        let mut total_count = 0i64;
-        for row_res in rows {
-            let (count,) = row_res.map_err(|e| {
-                QueryError::DbError(
-                    scylla::transport::errors::DbError::Other(0),
-                    format!("Failed to parse count row: {}", e),
-                )
-            })?;
-            // Treat NULL counters as 0
-            total_count += count.map(|c| c.0).unwrap_or(0);
-        }
-
-        Ok(total_count)
+        Ok(exists)
     }
 
-    /// Convenience method to check if a crawled page exists by domain + url_path
-    pub async fn crawled_page_exists(
-        &self,
-        domain: &str,
-        url_path: &str,
-    ) -> Result<bool, QueryError> {
-        // Reuse get_crawled_page implementation
-        match self.get_crawled_page(domain, url_path).await {
-            Ok(Some(_)) => Ok(true),
-            Ok(None) => Ok(false),
-            Err(e) => Err(e),
-        }
-    }
-
-    /// Insert an entry into the crawl queue
-    pub async fn insert_queue_entry(&self, entry: &CrawlQueueEntry) -> Result<(), QueryError> {
-        let query = format!(
-            "INSERT INTO {}.crawl_queue
-             (priority, scheduled_at, url, domain, last_attempt_at, attempt_count, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-            self.keyspace
-        );
-
-        self.session
-            .query_unpaged(
-                query,
-                (
-                    entry.priority,
-                    entry.scheduled_at,
-                    entry.url.as_str(),
-                    entry.domain.as_str(),
-                    entry.last_attempt_at,
-                    entry.attempt_count,
-                    entry.created_at,
-                ),
-            )
-            .await?;
-
+    /// Insert an entry into the crawl queue. Ignores duplicates (same tenant + url).
+    pub async fn insert_queue_entry(&self, entry: &CrawlQueueEntry) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO crawl_queue (queue_id, tenant_id, priority, scheduled_at, url, domain,
+                                      last_attempt_at, attempt_count, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT (tenant_id, url) DO NOTHING",
+        )
+        .bind(entry.queue_id)
+        .bind(entry.tenant_id)
+        .bind(entry.priority)
+        .bind(entry.scheduled_at)
+        .bind(&entry.url)
+        .bind(&entry.domain)
+        .bind(entry.last_attempt_at)
+        .bind(entry.attempt_count)
+        .bind(entry.created_at)
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("Failed to insert queue entry: {}", entry.url))?;
         Ok(())
     }
 
-    /// Delete an entry from the crawl queue
-    /// In Cassandra, we use DELETE rather than optimistic locking since the queue is designed
-    /// for multiple workers. If the entry was already processed by another worker, the DELETE
-    /// will simply affect 0 rows.
-    pub async fn delete_queue_entry(&self, entry: &CrawlQueueEntry) -> Result<(), QueryError> {
-        let query = format!(
-            "DELETE FROM {}.crawl_queue WHERE priority = ? AND scheduled_at = ? AND url = ?",
-            self.keyspace
-        );
-
-        self.session
-            .query_unpaged(
-                query,
-                (entry.priority, entry.scheduled_at, entry.url.as_str()),
-            )
-            .await?;
-
+    /// Delete an entry from the crawl queue by queue_id
+    pub async fn delete_queue_entry(&self, entry: &CrawlQueueEntry) -> Result<()> {
+        sqlx::query("DELETE FROM crawl_queue WHERE queue_id = $1")
+            .bind(entry.queue_id)
+            .execute(&self.pool)
+            .await
+            .with_context(|| format!("Failed to delete queue entry: {}", entry.url))?;
         Ok(())
     }
 
     /// Insert or update a crawled page
-    pub async fn upsert_crawled_page(&self, page: &CrawledPage) -> Result<(), QueryError> {
-        let query = format!(
-            "INSERT INTO {}.crawled_pages
-             (domain, url_path, url, storage_id, storage_compression, last_crawled_at, next_crawl_at,
-              crawl_frequency_hours, http_status, content_hash, content_length,
-              robots_allowed, error_message, crawl_count, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            self.keyspace
-        );
-
-        self.session
-            .query_unpaged(
-                query,
-                (
-                    page.domain.as_str(),
-                    page.url_path.as_str(),
-                    page.url.as_str(),
-                    page.storage_id,
-                    page.storage_compression.to_db_value(),
-                    page.last_crawled_at,
-                    page.next_crawl_at,
-                    page.crawl_frequency_hours,
-                    page.http_status,
-                    page.content_hash.as_str(),
-                    page.content_length,
-                    page.robots_allowed,
-                    page.error_message.as_deref(),
-                    page.crawl_count,
-                    page.created_at,
-                    page.updated_at,
-                ),
-            )
-            .await?;
-
-        // Increment crawl_stats counter
-        self.increment_crawl_stats(&page.domain).await?;
-
+    pub async fn upsert_crawled_page(&self, page: &CrawledPage) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO crawled_pages
+             (page_id, tenant_id, domain, url_path, url, storage_id, storage_compression,
+              last_crawled_at, next_crawl_at, crawl_frequency_hours, http_status,
+              content_hash, content_length, robots_allowed, error_message, crawl_count,
+              created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+             ON CONFLICT (tenant_id, domain, url_path) DO UPDATE SET
+                storage_id = EXCLUDED.storage_id,
+                storage_compression = EXCLUDED.storage_compression,
+                last_crawled_at = EXCLUDED.last_crawled_at,
+                next_crawl_at = EXCLUDED.next_crawl_at,
+                crawl_frequency_hours = EXCLUDED.crawl_frequency_hours,
+                http_status = EXCLUDED.http_status,
+                content_hash = EXCLUDED.content_hash,
+                content_length = EXCLUDED.content_length,
+                robots_allowed = EXCLUDED.robots_allowed,
+                error_message = EXCLUDED.error_message,
+                crawl_count = EXCLUDED.crawl_count,
+                updated_at = EXCLUDED.updated_at",
+        )
+        .bind(page.page_id)
+        .bind(page.tenant_id)
+        .bind(&page.domain)
+        .bind(&page.url_path)
+        .bind(&page.url)
+        .bind(page.storage_id)
+        .bind(page.storage_compression.to_db_value())
+        .bind(page.last_crawled_at)
+        .bind(page.next_crawl_at)
+        .bind(page.crawl_frequency_hours)
+        .bind(page.http_status)
+        .bind(&page.content_hash)
+        .bind(page.content_length)
+        .bind(page.robots_allowed)
+        .bind(page.error_message.as_deref())
+        .bind(page.crawl_count)
+        .bind(page.created_at)
+        .bind(page.updated_at)
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("Failed to upsert crawled page: {}{}", page.domain, page.url_path))?;
         Ok(())
     }
 
-    /// Increment the crawl_stats counter for pages_crawled
-    async fn increment_crawl_stats(&self, domain: &str) -> Result<(), QueryError> {
-        // Get current date and hour for partitioning
-        let now = chrono::Utc::now();
-        let date = now.date_naive();
-        let hour = now.hour() as i32;
+    /// Check if a domain is in the active allowed domains list
+    pub async fn is_domain_allowed(&self, domain: &str) -> Result<bool> {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM allowed_domains WHERE tenant_id = $1 AND domain = $2 AND deleted_at IS NULL)",
+        )
+        .bind(self.tenant_id)
+        .bind(domain)
+        .fetch_one(&self.pool)
+        .await
+        .with_context(|| format!("Failed to check if domain is allowed: {domain}"))?;
 
-        let query = format!(
-            "UPDATE {}.crawl_stats SET pages_crawled = pages_crawled + 1 WHERE date = ? AND hour = ? AND domain = ?",
-            self.keyspace
-        );
-
-        self.session
-            .query_unpaged(query, (date, hour, domain))
-            .await?;
-
-        Ok(())
-    }
-
-    /// Check if a domain is in the allowed domains list
-    /// Returns true if the domain is allowed, false otherwise
-    pub async fn is_domain_allowed(&self, domain: &str) -> Result<bool, QueryError> {
-        let query = format!(
-            "SELECT domain FROM {}.allowed_domains WHERE domain = ?",
-            self.keyspace
-        );
-
-        let result = self.session.query_unpaged(query, (domain,)).await?;
-        let rows_result = match result.into_rows_result() {
-            Ok(rows_result) => rows_result,
-            Err(_) => return Ok(false),
-        };
-
-        let mut rows_iter = rows_result.rows::<(String,)>().map_err(|e| {
-            QueryError::DbError(
-                scylla::transport::errors::DbError::Other(0),
-                format!("Failed to parse allowed domain row: {}", e),
-            )
-        })?;
-
-        // If there's at least one row, the domain is allowed
-        Ok(rows_iter.next().is_some())
+        Ok(exists)
     }
 
     /// Get a crawled page by domain and url_path
@@ -486,207 +292,111 @@ impl CassandraClient {
         &self,
         domain: &str,
         url_path: &str,
-    ) -> Result<Option<CrawledPage>, QueryError> {
-        let query = format!(
-            "SELECT domain, url_path, url, storage_id, storage_compression, last_crawled_at, next_crawl_at,
-                    crawl_frequency_hours, http_status, content_hash, content_length,
-                    robots_allowed, error_message, crawl_count, created_at, updated_at
-             FROM {}.crawled_pages
-             WHERE domain = ? AND url_path = ?",
-            self.keyspace
-        );
+    ) -> Result<Option<CrawledPage>> {
+        let row = sqlx::query(
+            "SELECT page_id, tenant_id, domain, url_path, url, storage_id, storage_compression,
+                    last_crawled_at, next_crawl_at, crawl_frequency_hours, http_status,
+                    content_hash, content_length, robots_allowed, error_message, crawl_count,
+                    created_at, updated_at
+             FROM crawled_pages
+             WHERE tenant_id = $1 AND domain = $2 AND url_path = $3",
+        )
+        .bind(self.tenant_id)
+        .bind(domain)
+        .bind(url_path)
+        .fetch_optional(&self.pool)
+        .await
+        .with_context(|| format!("Failed to get crawled page: {domain}{url_path}"))?;
 
-        let result = self
-            .session
-            .query_unpaged(query, (domain, url_path))
-            .await?;
-        let rows_result = match result.into_rows_result() {
-            Ok(rows_result) => rows_result,
-            Err(_) => return Ok(None),
-        };
-
-        Self::parse_crawled_page_row(rows_result)
-    }
-
-    /// Parse a single crawled page from query result rows
-    fn parse_crawled_page_row(
-        rows_result: scylla::QueryRowsResult,
-    ) -> Result<Option<CrawledPage>, QueryError> {
-        let rows_vec = rows_result
-            .rows::<(
-                String,
-                String,
-                String,
-                Option<Uuid>,
-                Option<i8>, // storage_compression can be NULL for old rows
-                CqlTimestamp,
-                CqlTimestamp,
-                i32,
-                i32,
-                String,
-                i64,
-                bool,
-                Option<String>,
-                i32,
-                CqlTimestamp,
-                CqlTimestamp,
-            )>()
-            .map_err(|e| {
-                QueryError::DbError(
-                    scylla::transport::errors::DbError::Other(0),
-                    format!("Failed to deserialize rows: {}", e),
-                )
-            })?;
-
-        let Some(row_result) = rows_vec.into_iter().next() else {
-            return Ok(None);
-        };
-
-        let (
-            domain,
-            url_path,
-            url,
-            storage_id,
-            storage_compression_value,
-            last_crawled_at,
-            next_crawl_at,
-            crawl_frequency_hours,
-            http_status,
-            content_hash,
-            content_length,
-            robots_allowed,
-            error_message,
-            crawl_count,
-            created_at,
-            updated_at,
-        ) = row_result.map_err(|e| {
-            QueryError::DbError(
-                scylla::transport::errors::DbError::Other(0),
-                format!("Failed to parse crawled page: {}", e),
-            )
-        })?;
-
-        Ok(Some(CrawledPage {
-            domain,
-            url_path,
-            url,
-            storage_id,
-            storage_compression: CompressionType::from_db_value(storage_compression_value),
-            last_crawled_at,
-            next_crawl_at,
-            crawl_frequency_hours,
-            http_status,
-            content_hash,
-            content_length,
-            robots_allowed,
-            error_message,
-            crawl_count,
-            created_at,
-            updated_at,
+        Ok(row.map(|r| {
+            let compression_value: Option<i16> = r.get("storage_compression");
+            CrawledPage {
+                page_id: r.get("page_id"),
+                tenant_id: r.get("tenant_id"),
+                domain: r.get("domain"),
+                url_path: r.get("url_path"),
+                url: r.get("url"),
+                storage_id: r.get("storage_id"),
+                storage_compression: CompressionType::from_db_value(compression_value),
+                last_crawled_at: r.get("last_crawled_at"),
+                next_crawl_at: r.get("next_crawl_at"),
+                crawl_frequency_hours: r.get("crawl_frequency_hours"),
+                http_status: r.get("http_status"),
+                content_hash: r.get("content_hash"),
+                content_length: r.get("content_length"),
+                robots_allowed: r.get("robots_allowed"),
+                error_message: r.get("error_message"),
+                crawl_count: r.get("crawl_count"),
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+            }
         }))
     }
 
     /// Log a crawl error to the crawl_errors table
-    pub async fn log_crawl_error(&self, error: &CrawlError) -> Result<(), QueryError> {
-        let query = format!(
-            "INSERT INTO {}.crawl_errors
-             (domain, occurred_at, url, error_type, error_message, attempt_count, stack_trace)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-            self.keyspace
-        );
-
-        self.session
-            .query_unpaged(
-                query,
-                (
-                    error.domain.as_str(),
-                    error.occurred_at,
-                    error.url.as_str(),
-                    error.error_type.to_string(),
-                    error.error_message.as_str(),
-                    error.attempt_count,
-                    error.stack_trace.as_deref(),
-                ),
-            )
-            .await?;
-
-        // Also increment the failed counter in crawl_stats
-        self.increment_crawl_failed_stats(&error.domain).await?;
-
-        Ok(())
-    }
-
-    /// Increment the crawl_stats counter for pages_failed
-    async fn increment_crawl_failed_stats(&self, domain: &str) -> Result<(), QueryError> {
-        let now = chrono::Utc::now();
-        let date = now.date_naive();
-        let hour = now.hour() as i32;
-
-        let query = format!(
-            "UPDATE {}.crawl_stats SET pages_failed = pages_failed + 1 WHERE date = ? AND hour = ? AND domain = ?",
-            self.keyspace
-        );
-
-        self.session
-            .query_unpaged(query, (date, hour, domain))
-            .await?;
-
+    pub async fn log_crawl_error(&self, error: &CrawlError) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO crawl_errors
+             (error_id, tenant_id, page_id, domain, url, error_type, error_message,
+              attempt_count, stack_trace, occurred_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+        )
+        .bind(error.error_id)
+        .bind(error.tenant_id)
+        .bind(error.page_id)
+        .bind(&error.domain)
+        .bind(&error.url)
+        .bind(error.error_type.to_string())
+        .bind(&error.error_message)
+        .bind(error.attempt_count)
+        .bind(error.stack_trace.as_deref())
+        .bind(error.occurred_at)
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("Failed to log crawl error for: {}", error.url))?;
         Ok(())
     }
 
     // ========== Settings Methods ==========
 
     /// Get a setting value by key
-    pub async fn get_setting(&self, key: &str) -> Result<Option<String>, QueryError> {
-        let query = format!(
-            "SELECT setting_value FROM {}.settings WHERE setting_key = ?",
-            self.keyspace
-        );
-        let result = self.session.query_unpaged(query, (key,)).await?;
-        let rows_result = match result.into_rows_result() {
-            Ok(rows_result) => rows_result,
-            Err(_) => return Ok(None),
-        };
+    pub async fn get_setting(&self, key: &str) -> Result<Option<String>> {
+        let row = sqlx::query(
+            "SELECT setting_value FROM settings WHERE tenant_id = $1 AND setting_key = $2",
+        )
+        .bind(self.tenant_id)
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await
+        .with_context(|| format!("Failed to get setting: {key}"))?;
 
-        let mut rows_iter = rows_result.rows::<(Option<String>,)>().map_err(|e| {
-            QueryError::DbError(
-                scylla::transport::errors::DbError::Other(0),
-                format!("Failed to parse setting row: {}", e),
-            )
-        })?;
-
-        if let Some(row_result) = rows_iter.next() {
-            let (value,) = row_result.map_err(|e| {
-                QueryError::DbError(
-                    scylla::transport::errors::DbError::Other(0),
-                    format!("Failed to parse setting value: {}", e),
-                )
-            })?;
-            return Ok(value);
-        }
-
-        Ok(None)
+        Ok(row.and_then(|r| r.get("setting_value")))
     }
 
-    /// Set a setting value by key
-    pub async fn set_setting(&self, key: &str, value: &str) -> Result<(), QueryError> {
-        let query = format!(
-            "INSERT INTO {}.settings (setting_key, setting_value, updated_at) VALUES (?, ?, toTimestamp(now()))",
-            self.keyspace
-        );
-        self.session.query_unpaged(query, (key, value)).await?;
+    /// Set a setting value by key (upsert)
+    pub async fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO settings (tenant_id, setting_key, setting_value, updated_at)
+             VALUES ($1, $2, $3, now())
+             ON CONFLICT (tenant_id, setting_key) DO UPDATE SET setting_value = $3, updated_at = now()",
+        )
+        .bind(self.tenant_id)
+        .bind(key)
+        .bind(value)
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("Failed to set setting: {key}"))?;
         Ok(())
     }
 
-    /// Check if crawling is enabled
+    /// Check if crawling is enabled.
     /// Returns the value from settings table, or defaults based on ENVIRONMENT:
     /// - dev: defaults to true (enabled)
     /// - prod: defaults to false (disabled for safety)
-    pub async fn is_crawling_enabled(&self) -> Result<bool, QueryError> {
+    pub async fn is_crawling_enabled(&self) -> Result<bool> {
         match self.get_setting("crawling_enabled").await? {
             Some(value) => Ok(value == "true"),
             None => {
-                // No setting in DB - use environment-based default
                 let is_dev = std::env::var("ENVIRONMENT")
                     .map(|v| v == "dev")
                     .unwrap_or(false);
@@ -696,26 +406,28 @@ impl CassandraClient {
     }
 
     /// Set crawling enabled/disabled
-    pub async fn set_crawling_enabled(&self, enabled: bool) -> Result<(), QueryError> {
+    pub async fn set_crawling_enabled(&self, enabled: bool) -> Result<()> {
         let value = if enabled { "true" } else { "false" };
         self.set_setting("crawling_enabled", value).await
     }
 
-    /// Re-queue an entry with incremented attempt count for retry
-    /// Schedules the retry with exponential backoff based on attempt count
-    pub async fn requeue_with_retry(&self, entry: &CrawlQueueEntry) -> Result<(), QueryError> {
-        let now = chrono::Utc::now();
+    /// Re-queue an entry with incremented attempt count for retry.
+    /// Schedules the retry with exponential backoff based on attempt count.
+    pub async fn requeue_with_retry(&self, entry: &CrawlQueueEntry) -> Result<()> {
+        let now = Utc::now();
 
         // Exponential backoff: 1min, 2min, 4min, 8min, etc.
         let backoff_minutes = 2i64.pow(entry.attempt_count as u32);
         let scheduled_at = now + chrono::Duration::minutes(backoff_minutes);
 
         let new_entry = CrawlQueueEntry {
+            queue_id: Uuid::now_v7(),
+            tenant_id: entry.tenant_id,
             priority: entry.priority + 1, // Lower priority for retries
-            scheduled_at: CqlTimestamp(scheduled_at.timestamp_millis()),
+            scheduled_at,
             url: entry.url.clone(),
             domain: entry.domain.clone(),
-            last_attempt_at: Some(CqlTimestamp(now.timestamp_millis())),
+            last_attempt_at: Some(now),
             attempt_count: entry.attempt_count + 1,
             created_at: entry.created_at,
         };
@@ -728,33 +440,34 @@ impl CassandraClient {
 mod tests {
     use super::*;
 
-    // Integration tests requiring Cassandra.
+    // Integration tests requiring PostgreSQL.
     // Run with: cargo test -- --ignored
-    // Requires CASSANDRA_HOSTS, CASSANDRA_KEYSPACE, and CASSANDRA_SYSTEM_KEYSPACE env variables.
+    // Requires DATABASE_URL env variable.
 
-    /// Helper to create a CassandraClient for the tenant keyspace from environment variables.
-    async fn create_test_client() -> CassandraClient {
-        let config = CassandraConfig::from_env()
-            .expect("CASSANDRA_HOSTS and CASSANDRA_KEYSPACE must be set");
-        CassandraClient::from_config(config)
+    /// Helper to create a DbClient from environment variables.
+    async fn create_test_client() -> DbClient {
+        let database_url =
+            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for tests");
+        let pool = PgPool::connect(&database_url)
             .await
-            .expect("Failed to connect to Cassandra")
-    }
+            .expect("Failed to connect to PostgreSQL");
 
-    /// Helper to create a CassandraClient for the system keyspace from environment variables.
-    async fn create_system_test_client() -> CassandraClient {
-        let hosts_str = std::env::var("CASSANDRA_HOSTS").expect("CASSANDRA_HOSTS must be set");
-        let hosts: Vec<String> = hosts_str.split(',').map(|s| s.trim().to_string()).collect();
-        let system_keyspace = std::env::var("CASSANDRA_SYSTEM_KEYSPACE")
-            .expect("CASSANDRA_SYSTEM_KEYSPACE must be set");
-        CassandraClient::new(hosts, system_keyspace)
+        // Use a test tenant
+        let tenant_id = Uuid::now_v7();
+        let client = DbClient::new(pool, tenant_id);
+
+        // Ensure the test tenant exists
+        client
+            .ensure_default_tenant(tenant_id, "Test Tenant")
             .await
-            .expect("Failed to connect to Cassandra")
+            .expect("Failed to create test tenant");
+
+        client
     }
 
     #[tokio::test]
     #[ignore]
-    async fn test_cassandra_connection() {
+    async fn test_postgres_connection() {
         let _client = create_test_client().await;
         // If we got here, connection succeeded
     }
@@ -772,17 +485,12 @@ mod tests {
     async fn test_is_domain_allowed_returns_false_for_unlisted_domain() {
         let client = create_test_client().await;
 
-        // Use a unique domain name to avoid collision with any real data
         let test_domain = format!(
             "test-unlisted-{}.example.invalid",
             chrono::Utc::now().timestamp_millis()
         );
 
-        // Ensure domain is NOT in allowed list (clean state)
-        client.delete_allowed_domain(&test_domain).await.ok();
-
         let result = client.is_domain_allowed(&test_domain).await;
-
         assert!(result.is_ok());
         assert!(!result.unwrap(), "Domain should not be allowed");
     }
@@ -792,7 +500,6 @@ mod tests {
     async fn test_is_domain_allowed_returns_true_for_listed_domain() {
         let client = create_test_client().await;
 
-        // Use a unique domain name to ensure test isolation
         let test_domain = format!(
             "test-allowed-{}.example.invalid",
             chrono::Utc::now().timestamp_millis()
@@ -806,13 +513,12 @@ mod tests {
 
         // Test: Check if domain is allowed
         let result = client.is_domain_allowed(&test_domain).await;
-
         assert!(result.is_ok());
         assert!(result.unwrap(), "Domain should be allowed");
 
-        // Cleanup: Remove the test domain
+        // Cleanup
         client
-            .delete_allowed_domain(&test_domain)
+            .hard_delete_allowed_domain(&test_domain)
             .await
             .expect("Failed to clean up test domain");
     }
@@ -822,7 +528,6 @@ mod tests {
     async fn test_get_and_set_setting() {
         let client = create_test_client().await;
 
-        // Use a unique setting key to avoid collision
         let test_key = format!("test_setting_{}", chrono::Utc::now().timestamp_millis());
 
         // Test: Initially no setting exists
@@ -844,14 +549,11 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Some("test_value".to_string()));
 
-        // Cleanup: Delete the test setting
-        let delete_query = format!(
-            "DELETE FROM {}.settings WHERE setting_key = ?",
-            client.keyspace
-        );
-        client
-            .session
-            .query_unpaged(delete_query, (&test_key,))
+        // Cleanup
+        sqlx::query("DELETE FROM settings WHERE tenant_id = $1 AND setting_key = $2")
+            .bind(client.tenant_id)
+            .bind(&test_key)
+            .execute(client.pool())
             .await
             .ok();
     }
@@ -861,7 +563,6 @@ mod tests {
     async fn test_crawling_enabled_flag() {
         let client = create_test_client().await;
 
-        // Set crawling to enabled
         client
             .set_crawling_enabled(true)
             .await
@@ -871,7 +572,6 @@ mod tests {
         assert!(result.is_ok());
         assert!(result.unwrap(), "Crawling should be enabled");
 
-        // Set crawling to disabled
         client
             .set_crawling_enabled(false)
             .await
@@ -885,34 +585,26 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_ensure_default_tenant_is_idempotent() {
-        let system_client = create_system_test_client().await;
-        let tenant_ks = std::env::var("CASSANDRA_KEYSPACE")
-            .unwrap_or_else(|_| "lalasearch_default".to_string());
+        let client = create_test_client().await;
 
         // Should be idempotent - calling twice should not error
-        system_client
-            .ensure_default_tenant(&tenant_ks)
+        client
+            .ensure_default_tenant(client.tenant_id, "Test")
             .await
             .expect("First call should succeed");
-        system_client
-            .ensure_default_tenant(&tenant_ks)
+        client
+            .ensure_default_tenant(client.tenant_id, "Test")
             .await
-            .expect("Second call should also succeed (IF NOT EXISTS)");
+            .expect("Second call should also succeed (ON CONFLICT DO NOTHING)");
 
         // Verify the tenant row exists
-        let query = format!(
-            "SELECT tenant_id FROM {}.tenants WHERE tenant_id = ?",
-            system_client.keyspace
-        );
-        let result = system_client
-            .session
-            .query_unpaged(query, (&tenant_ks,))
+        let row = sqlx::query("SELECT tenant_id FROM tenants WHERE tenant_id = $1")
+            .bind(client.tenant_id)
+            .fetch_optional(client.pool())
             .await
             .unwrap();
-        let rows_result = result.into_rows_result().unwrap();
-        let mut rows = rows_result.rows::<(String,)>().unwrap();
         assert!(
-            rows.next().is_some(),
+            row.is_some(),
             "Tenant row should exist after ensure_default_tenant"
         );
     }

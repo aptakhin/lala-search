@@ -27,17 +27,16 @@ impl CompressionType {
         }
     }
 
-    /// Convert to database tinyint representation
-    pub fn to_db_value(&self) -> i8 {
+    /// Convert to database SMALLINT representation
+    pub fn to_db_value(&self) -> i16 {
         match self {
             CompressionType::None => 0,
             CompressionType::Gzip => 1,
         }
     }
 
-    /// Parse from database tinyint representation
-    /// Handles NULL values (from rows created before the column existed)
-    pub fn from_db_value(value: Option<i8>) -> Self {
+    /// Parse from database SMALLINT representation
+    pub fn from_db_value(value: Option<i16>) -> Self {
         match value {
             Some(1) => CompressionType::Gzip,
             _ => CompressionType::None,

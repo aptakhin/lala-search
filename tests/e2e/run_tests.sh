@@ -72,6 +72,23 @@ wait_for_service() {
     return 1
 }
 
+wait_for_postgres() {
+    local elapsed=0
+    echo "Waiting for PostgreSQL to be ready..."
+    while [ $elapsed -lt $MAX_WAIT ]; do
+        if docker compose exec -T postgres pg_isready -U lalasearch -d lalasearch > /dev/null 2>&1; then
+            echo -e "${GREEN}✓ PostgreSQL is ready${NC}"
+            return 0
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+        echo -n "."
+    done
+    echo ""
+    echo -e "${RED}✗ PostgreSQL failed to start within ${MAX_WAIT}s${NC}"
+    return 1
+}
+
 # ---------------------------------------------------------------------------
 # Step 1: Check Docker Compose availability
 # ---------------------------------------------------------------------------
@@ -93,10 +110,10 @@ echo ""
 echo "Step 2: Checking Docker services..."
 cd "$PROJECT_ROOT"
 
-if ! docker compose ps --status running | grep -q "lalasearch-cassandra"; then
-    echo -e "${YELLOW}Starting base services (Cassandra, Meilisearch, SeaweedFS)...${NC}"
-    docker compose up -d cassandra meilisearch seaweedfs --build
-    wait_for_service "Cassandra" "http://localhost:9042" 2>/dev/null || sleep 20
+if ! docker compose ps --status running | grep -q "lalasearch-postgres"; then
+    echo -e "${YELLOW}Starting base services (PostgreSQL, Meilisearch, SeaweedFS)...${NC}"
+    docker compose up -d postgres meilisearch seaweedfs seaweedfs-init --build
+    wait_for_postgres
     wait_for_service "Meilisearch" "http://localhost:7700/health" || exit 1
 else
     echo -e "${GREEN}✓ Base services are already running${NC}"
@@ -104,57 +121,47 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 3: Set up test keyspaces
+# Step 3: Set up test environment
 # ---------------------------------------------------------------------------
 echo "Step 3: Setting up test environment..."
 cd "$PROJECT_ROOT"
 
-# -- 3a: System keyspace (auth tables) --
-# cassandra-init creates lalasearch_system when the agent starts; ensure it exists now.
-echo "Ensuring system keyspace is initialised..."
-docker cp docker/cassandra/schema_system.cql lalasearch-cassandra:/tmp/schema_system.template
-docker exec lalasearch-cassandra bash -c "
-    sed 's/\${SYSTEM_KEYSPACE_NAME}/lalasearch_system/g' /tmp/schema_system.template > /tmp/schema_system.cql
-    cqlsh -f /tmp/schema_system.cql
+# The PostgreSQL schema is applied automatically via /docker-entrypoint-initdb.d/.
+# For E2E tests, we use the same database with different tenant IDs.
+
+# Create test tenants
+TENANT1_ID="00000000-0000-0000-0000-000000000001"
+TENANT2_ID="00000000-0000-0000-0000-000000000002"
+
+echo "Ensuring test tenants exist..."
+docker compose exec -T postgres psql -U lalasearch -d lalasearch -c "
+INSERT INTO tenants (tenant_id, name, created_at) VALUES ('$TENANT1_ID', 'Test Tenant', NOW()) ON CONFLICT DO NOTHING;
+INSERT INTO tenants (tenant_id, name, created_at) VALUES ('$TENANT2_ID', 'Test Tenant 2', NOW()) ON CONFLICT DO NOTHING;
 "
-echo -e "${GREEN}✓ System keyspace ready${NC}"
+echo -e "${GREEN}✓ Test tenants ready${NC}"
 
-# -- 3b: Tenant-1 test keyspace (lalasearch_test) --
-echo "Creating test keyspace (lalasearch_test)..."
-docker cp docker/cassandra/schema.cql lalasearch-cassandra:/tmp/schema.template
-docker exec lalasearch-cassandra bash -c "
-    sed 's/\${KEYSPACE_NAME}/lalasearch_test/g' /tmp/schema.template > /tmp/schema_test.cql
-    cqlsh -f /tmp/schema_test.cql
-"
-echo -e "${GREEN}✓ lalasearch_test keyspace ready${NC}"
-
-# Register tenant-1 in system keyspace so the multi-tenant scheduler picks it up
-docker exec lalasearch-cassandra cqlsh -e "USE lalasearch_system; INSERT INTO tenants (tenant_id, name, created_at) VALUES ('lalasearch_test', 'Test Tenant', toTimestamp(now())) IF NOT EXISTS;"
-
-# -- 3c: Tenant-2 test keyspace (lalasearch_test_tenant2) --
-echo "Creating tenant2 keyspace (lalasearch_test_tenant2)..."
-docker exec lalasearch-cassandra bash -c "
-    sed 's/\${KEYSPACE_NAME}/lalasearch_test_tenant2/g' /tmp/schema.template > /tmp/schema_tenant2.cql
-    cqlsh -f /tmp/schema_tenant2.cql
-"
-echo -e "${GREEN}✓ lalasearch_test_tenant2 keyspace ready${NC}"
-
-# Register tenant-2 in system keyspace
-docker exec lalasearch-cassandra cqlsh -e "USE lalasearch_system; INSERT INTO tenants (tenant_id, name, created_at) VALUES ('lalasearch_test_tenant2', 'Test Tenant 2', toTimestamp(now())) IF NOT EXISTS;"
-
-# Truncate tenant tables for a clean test run
+# Clean test data for both tenants
 echo "Cleaning test data..."
-docker exec lalasearch-cassandra cqlsh -e "USE lalasearch_test; TRUNCATE allowed_domains; TRUNCATE crawl_queue; TRUNCATE crawled_pages; TRUNCATE crawl_errors; TRUNCATE crawl_stats; TRUNCATE robots_cache; TRUNCATE settings;" >/dev/null 2>&1 || true
-docker exec lalasearch-cassandra cqlsh -e "USE lalasearch_test_tenant2; TRUNCATE allowed_domains; TRUNCATE crawl_queue; TRUNCATE crawled_pages; TRUNCATE crawl_errors; TRUNCATE crawl_stats; TRUNCATE robots_cache; TRUNCATE settings;" >/dev/null 2>&1 || true
+docker compose exec -T postgres psql -U lalasearch -d lalasearch -c "
+DELETE FROM crawl_errors WHERE tenant_id IN ('$TENANT1_ID', '$TENANT2_ID');
+DELETE FROM crawl_queue WHERE tenant_id IN ('$TENANT1_ID', '$TENANT2_ID');
+DELETE FROM crawled_pages WHERE tenant_id IN ('$TENANT1_ID', '$TENANT2_ID');
+DELETE FROM allowed_domains WHERE tenant_id IN ('$TENANT1_ID', '$TENANT2_ID');
+DELETE FROM settings WHERE tenant_id IN ('$TENANT1_ID', '$TENANT2_ID');
+DELETE FROM robots_cache WHERE tenant_id IN ('$TENANT1_ID', '$TENANT2_ID');
+" >/dev/null 2>&1 || true
 echo -e "${GREEN}✓ Test data cleaned${NC}"
 
-# -- 3d: Pre-seed invitation for user2 → lalasearch_test_tenant2 --
-# Token: "e2e-test-tenant2-invite-0001"  (raw, unhashed)
+# Pre-seed invitation for user2 → tenant2
+# Token: "e2e-test-tenant2-invite-0001" (raw, unhashed)
 echo "Seeding tenant2 invitation for user2@test.e2e..."
 INVITE_TOKEN_HASH=$(node -e "const crypto = require('crypto'); console.log(crypto.createHash('sha256').update('e2e-test-tenant2-invite-0001').digest('hex'))")
-FUTURE_EXPIRES_MS=$(node -e "console.log(Math.floor(Date.now() + 86400000))")
 DUMMY_UUID="00000000-0000-0000-0000-000000000001"
-docker exec lalasearch-cassandra cqlsh -e "USE lalasearch_system; DELETE FROM org_invitations WHERE token_hash = '$INVITE_TOKEN_HASH'; INSERT INTO org_invitations (token_hash, tenant_id, email, role, invited_by, created_at, expires_at, accepted) VALUES ('$INVITE_TOKEN_HASH', 'lalasearch_test_tenant2', 'user2@test.e2e', 'Owner', $DUMMY_UUID, toTimestamp(now()), $FUTURE_EXPIRES_MS, false);"
+docker compose exec -T postgres psql -U lalasearch -d lalasearch -c "
+DELETE FROM org_invitations WHERE token_hash = '$INVITE_TOKEN_HASH';
+INSERT INTO org_invitations (token_hash, tenant_id, email, role, invited_by, created_at, expires_at, accepted)
+VALUES ('$INVITE_TOKEN_HASH', '$TENANT2_ID', 'user2@test.e2e', 'owner', '$DUMMY_UUID', NOW(), NOW() + INTERVAL '1 day', false);
+"
 echo -e "${GREEN}✓ Tenant2 invitation seeded${NC}"
 echo ""
 

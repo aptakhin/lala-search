@@ -8,8 +8,7 @@ services:
   # Override agent with test environment
   lala-agent:
     environment:
-      # Use test keyspace and index to avoid interfering with development data
-      - CASSANDRA_KEYSPACE=lalasearch_test
+      # Use test-specific Meilisearch index to avoid interfering with development data
       - MEILISEARCH_INDEX=documents_test
       # Mark as test agent in user agent string
       - USER_AGENT=LalaSearchBot/0.1 (E2E-Test)

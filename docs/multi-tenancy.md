@@ -7,84 +7,88 @@ LalaSearch supports two deployment modes, controlled by the `DEPLOYMENT_MODE` en
 | Mode | Value | Use Case |
 |------|-------|----------|
 | Single-tenant | `single_tenant` | Community edition — self-hosted, fully open source |
-| Multi-tenant | `multi_tenant` | SaaS hosted version — one keyspace per customer |
+| Multi-tenant | `multi_tenant` | SaaS hosted version — tenant isolation via PostgreSQL RLS |
 
 The codebase is shared between both modes. Multi-tenancy infrastructure is currently
 **open source** in this repository. This may change as the SaaS offering matures — billing,
 tenant provisioning, and payment processing code may be extracted to a private repository.
 The Community (single-tenant) edition will always remain fully open source.
 
-## Keyspace Layout
+## Design: Row-Level Security (RLS)
+
+Multi-tenancy uses PostgreSQL Row-Level Security to isolate tenant data within a single database:
+
+1. All tenant-scoped tables have a `tenant_id UUID NOT NULL` column
+2. RLS policies restrict rows to the tenant set via `SET LOCAL app.current_tenant`
+3. The `DbClient` sets the session variable at the start of each transaction
+4. **One shared connection pool** serves all tenants — no per-tenant databases or schemas
+
+### How It Works
+
+```sql
+-- RLS policy on each tenant table (e.g., crawled_pages)
+CREATE POLICY tenant_isolation ON crawled_pages
+  USING (tenant_id = current_setting('app.current_tenant')::uuid);
+
+ALTER TABLE crawled_pages ENABLE ROW LEVEL SECURITY;
+```
+
+```rust
+// In Rust, the DbClient stores tenant_id and sets the session variable
+let db = state.db_client.with_tenant(tenant_id);
+// All subsequent queries through this client are automatically scoped
+db.is_domain_allowed(&domain).await
+```
+
+### Why RLS Over Separate Schemas/Databases?
+
+- **Simpler operations**: Single database, single schema, standard migrations
+- **Better resource utilization**: Shared connection pool, no per-tenant overhead
+- **Standard PostgreSQL feature**: Well-tested, no custom code needed
+- **JOIN-friendly**: Cross-tenant admin queries possible when RLS is bypassed
+- **Easy to reason about**: All data in one place with policy-enforced isolation
+
+## Tenant Layout
 
 ```
-lalasearch_system          ← global registry (tenants table, future billing)
-lalasearch_<tenant_id>     ← per-tenant data (crawling tables)
+PostgreSQL (lalasearch)
+  ├── tenants               ← global registry (not RLS-scoped)
+  ├── users                 ← global user accounts (not RLS-scoped)
+  ├── sessions              ← global sessions (not RLS-scoped)
+  ├── org_memberships       ← user-tenant mapping (not RLS-scoped)
+  ├── crawl_queue           ← per-tenant (RLS-scoped)
+  ├── crawled_pages         ← per-tenant (RLS-scoped)
+  ├── crawl_errors          ← per-tenant (RLS-scoped)
+  ├── allowed_domains       ← per-tenant (RLS-scoped)
+  ├── robots_cache          ← per-tenant (RLS-scoped)
+  └── settings              ← per-tenant (RLS-scoped)
 ```
 
-| Keyspace | Env var | Default | Contains |
-|----------|---------|---------|----------|
-| System | `CASSANDRA_SYSTEM_KEYSPACE` | `lalasearch_system` | `tenants` table |
-| Tenant | `CASSANDRA_KEYSPACE` | `lalasearch_default` | All crawling tables |
+**Single-tenant mode**: A default tenant is created with `DEFAULT_TENANT_ID` (env var, defaults
+to `00000000-0000-0000-0000-000000000001`). All data uses this single tenant ID.
 
-**Single-tenant mode**: system keyspace has one `tenant_id = 'default'` row; data keyspace is
-`lalasearch_default` (or whatever `CASSANDRA_KEYSPACE` is set to).
-
-**Multi-tenant mode**: each customer gets their own data keyspace, e.g. `lalasearch_acme`. The
-system keyspace has one row per customer.
-
-## Design: One Keyspace Per Tenant
-
-All Cassandra queries use fully qualified table names (`keyspace.table`) instead of relying on a
-`USE keyspace` session state. This means:
-
-1. The `CassandraClient` stores the target keyspace name
-2. All queries embed the keyspace: `SELECT * FROM lalasearch_acme.crawled_pages WHERE ...`
-3. In multi-tenant mode, scope a request: `db_client.with_keyspace("lalasearch_acme")`
-4. **One shared connection pool** serves all tenants — no switching, no per-tenant connections
-
-### Why Not `tenant_id` Column?
-
-Adding a `tenant_id` column to every row was considered and rejected:
-
-- Wastes storage on every row in single-tenant mode
-- Requires schema changes to all tables
-- Every query needs `WHERE tenant_id = ?` — easy to forget
-- Keyspace isolation is stronger and Cassandra-native
-
-### Why Not `USE keyspace` Per Request?
-
-`session.use_keyspace()` in the Scylla/Cassandra driver is **session-level**, not request-level.
-In an async server with a shared `Arc<Session>`, calling it per-request would race with concurrent
-requests from other tenants. Fully qualified table names solve this with zero overhead.
-
-## Cassandra Keyspace Naming Rules
-
-Tenant IDs used in keyspace names must follow Cassandra naming constraints:
-
-- Only letters, digits, and underscores: `[a-z0-9_]`
-- Must start with a letter or underscore
-- Maximum 37 characters (48 max minus the 11-char `lalasearch_` prefix)
-- Case-insensitive (Cassandra stores lowercase)
-
-Valid: `lalasearch_acme`, `lalasearch_tech_corp`
-Invalid: `lalasearch_acme-corp` (hyphen), `lalasearch_1st` (starts with digit)
+**Multi-tenant mode**: Each organization gets its own tenant_id (UUID). The session cookie
+determines which tenant's data is accessible.
 
 ## Code Hook Points
 
 In single-tenant mode, handlers use the default client directly:
 
 ```rust
-// Single-tenant: AppState.db_client points to lalasearch_default
+// Single-tenant: AppState.db_client points to the default tenant
 state.db_client.is_domain_allowed(&domain).await
 ```
 
-In multi-tenant mode, scope the client to the authenticated tenant's keyspace:
+In multi-tenant mode, the `TenantDb` extractor resolves the tenant from the session:
 
 ```rust
-// Multi-tenant: scope to tenant keyspace extracted from auth header
-let tenant_keyspace = format!("lalasearch_{}", tenant_id);
-let tenant_db = state.db_client.with_keyspace(&tenant_keyspace);
-tenant_db.is_domain_allowed(&domain).await
+// Multi-tenant: TenantDb extractor validates session and scopes to tenant
+async fn add_domain_handler(
+    TenantDb(db): TenantDb,  // automatically scoped to authenticated tenant
+    Json(payload): Json<AddDomainRequest>,
+) -> Result<Json<AddDomainResponse>, (StatusCode, String)> {
+    db.insert_allowed_domain(&payload.domain, "api", payload.notes.as_deref()).await
+}
 ```
 
 The core crawling, storage, search, and queue logic is **identical** between both modes.
@@ -93,9 +97,9 @@ The core crawling, storage, search, and queue logic is **identical** between bot
 
 The open source codebase is designed so adding SaaS functionality requires minimal code:
 
-1. **Auth middleware**: Extract `tenant_id` from JWT or API key in request headers
-2. **Tenant routing**: Call `db_client.with_keyspace(tenant_keyspace)` per request (one line change)
-3. **Tenant provisioning**: API endpoint to create a keyspace and apply `schema.cql`
+1. **Auth middleware**: Extract `tenant_id` from session cookie
+2. **Tenant routing**: `TenantDb` extractor calls `db_client.with_tenant(tenant_id)` per request
+3. **Tenant provisioning**: Create a row in `tenants` table (no schema creation needed)
 4. **Billing** (future, currently open source): Payment processing and usage metering
 
 Note: SaaS-specific code (particularly billing and tenant provisioning) is currently open
@@ -107,5 +111,5 @@ The Community (single-tenant) edition will always remain fully open source.
 | Variable | Single-tenant default | Multi-tenant |
 |----------|----------------------|--------------|
 | `DEPLOYMENT_MODE` | `single_tenant` | `multi_tenant` |
-| `CASSANDRA_KEYSPACE` | `lalasearch_default` | Tenant data keyspace |
-| `CASSANDRA_SYSTEM_KEYSPACE` | `lalasearch_system` | `lalasearch_system` |
+| `DATABASE_URL` | `postgres://lalasearch:lalasearch@postgres:5432/lalasearch` | Same (single shared database) |
+| `DEFAULT_TENANT_ID` | `00000000-0000-0000-0000-000000000001` | Same (used for default tenant) |

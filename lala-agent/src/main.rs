@@ -7,29 +7,27 @@ use lala_agent::models::deployment::DeploymentMode;
 use lala_agent::routes::AuthState;
 use lala_agent::services::auth::AuthConfig;
 use lala_agent::services::auth_db::AuthDbClient;
-use lala_agent::services::db::CassandraClient;
+use lala_agent::services::db::DbClient;
 use lala_agent::services::email::{EmailConfig, EmailService};
 use lala_agent::services::queue_processor::QueueProcessor;
 use lala_agent::services::search::SearchClient;
 use lala_agent::services::storage::{S3Config, StorageClient};
+use sqlx::postgres::PgPool;
 use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use uuid::Uuid;
 
 #[tokio::main]
 async fn main() {
-    let cassandra_hosts: Vec<String> = env::var("CASSANDRA_HOSTS")
-        .expect("CASSANDRA_HOSTS environment variable must be set")
-        .split(',')
-        .map(|s| s.to_string())
-        .collect();
+    let database_url =
+        env::var("DATABASE_URL").expect("DATABASE_URL environment variable must be set");
 
-    let cassandra_keyspace = env::var("CASSANDRA_KEYSPACE")
-        .expect("CASSANDRA_KEYSPACE environment variable must be set");
-
-    let cassandra_system_keyspace = env::var("CASSANDRA_SYSTEM_KEYSPACE")
-        .expect("CASSANDRA_SYSTEM_KEYSPACE environment variable must be set");
+    let default_tenant_id: Uuid = env::var("DEFAULT_TENANT_ID")
+        .unwrap_or_else(|_| "00000000-0000-0000-0000-000000000001".to_string())
+        .parse()
+        .expect("DEFAULT_TENANT_ID must be a valid UUID");
 
     let agent_mode = AgentMode::from_env();
     let deployment_mode = DeploymentMode::from_env();
@@ -48,29 +46,31 @@ async fn main() {
         env::var("MEILISEARCH_INDEX").unwrap_or_else(|_| "documents".to_string());
 
     // Initialize database, search, and storage clients
-    let system_db = init_cassandra_client(&cassandra_hosts, &cassandra_system_keyspace).await;
-    let base_db = init_cassandra_client(&cassandra_hosts, &cassandra_keyspace).await;
+    let pool = init_db_pool(&database_url).await;
+    let db_client = Arc::new(DbClient::new(pool.clone(), default_tenant_id));
     let search_client = init_search_client(&meilisearch_host, &meilisearch_index).await;
     let storage_client = init_storage_client().await;
 
-    // Ensure the default tenant row exists in the system keyspace
-    if let Err(e) = system_db.ensure_default_tenant(&cassandra_keyspace).await {
-        eprintln!("Failed to ensure default tenant in system keyspace: {}", e);
+    // Ensure the default tenant row exists
+    if let Err(e) = db_client
+        .ensure_default_tenant(default_tenant_id, "default")
+        .await
+    {
+        eprintln!("Failed to ensure default tenant: {}", e);
     }
 
     println!("Deployment mode: {}", deployment_mode);
 
-    let tenant_keyspaces =
-        resolve_tenant_keyspaces(&system_db, &cassandra_keyspace, deployment_mode).await;
+    let tenant_ids = resolve_tenant_ids(&db_client, default_tenant_id, deployment_mode).await;
 
-    // Start one queue processor per tenant keyspace (if agent mode requires it)
+    // Start one queue processor per tenant (if agent mode requires it)
     if agent_mode.should_process_queue() {
         let poll_interval = Duration::from_secs(poll_interval_secs);
-        for ks in &tenant_keyspaces {
-            let tenant_db = Arc::new(base_db.with_keyspace(ks));
+        for &tid in &tenant_ids {
+            let tenant_db = Arc::new(db_client.with_tenant(tid));
             // In multi-tenant mode, pass tenant_id for Meilisearch isolation
-            let tenant_id = if deployment_mode == DeploymentMode::MultiTenant {
-                Some(ks.clone())
+            let tenant_id_str = if deployment_mode == DeploymentMode::MultiTenant {
+                Some(tid.to_string())
             } else {
                 None
             };
@@ -80,20 +80,21 @@ async fn main() {
                 storage_client.clone(),
                 user_agent.clone(),
                 poll_interval,
-                tenant_id,
+                tenant_id_str,
             );
         }
+        let tenant_list: Vec<String> = tenant_ids.iter().map(|id| id.to_string()).collect();
         println!(
-            "Queue processor(s) started for {} keyspace(s): {}",
-            tenant_keyspaces.len(),
-            tenant_keyspaces.join(", ")
+            "Queue processor(s) started for {} tenant(s): {}",
+            tenant_ids.len(),
+            tenant_list.join(", ")
         );
     }
 
     // Initialize auth state and build the HTTP app
-    let auth_state = init_auth_state(system_db, &cassandra_keyspace).await;
+    let auth_state = init_auth_state(pool, default_tenant_id).await;
     let state = AppState {
-        db_client: base_db,
+        db_client,
         search_client,
         deployment_mode,
         auth_state,
@@ -112,75 +113,49 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-/// Resolve the list of Cassandra keyspaces the queue processor should handle.
+/// Resolve the list of tenant IDs the queue processor should handle.
 ///
-/// In multi-tenant mode, queries the tenants table in the system keyspace.
-/// Falls back to `default_keyspace` if the query fails or returns no rows.
-async fn resolve_tenant_keyspaces(
-    system_db: &Arc<CassandraClient>,
-    default_keyspace: &str,
+/// In multi-tenant mode, queries the tenants table for all active tenants.
+/// Falls back to `default_tenant_id` if the query fails or returns no rows.
+async fn resolve_tenant_ids(
+    db_client: &DbClient,
+    default_tenant_id: Uuid,
     mode: DeploymentMode,
-) -> Vec<String> {
+) -> Vec<Uuid> {
     if mode != DeploymentMode::MultiTenant {
-        return vec![default_keyspace.to_string()];
+        return vec![default_tenant_id];
     }
-    let all_keyspaces = match system_db.list_tenant_keyspaces().await {
-        Ok(ks) if !ks.is_empty() => ks,
+
+    match db_client.list_tenant_ids().await {
+        Ok(ids) if !ids.is_empty() => {
+            let id_list: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+            println!(
+                "Scheduler: found {} valid tenant(s): {}",
+                ids.len(),
+                id_list.join(", ")
+            );
+            ids
+        }
         Ok(_) => {
             println!(
-                "Scheduler: no tenants found in system keyspace, using default: {}",
-                default_keyspace
+                "Scheduler: no tenants found, using default: {}",
+                default_tenant_id
             );
-            return vec![default_keyspace.to_string()];
+            vec![default_tenant_id]
         }
         Err(e) => {
             eprintln!(
                 "Scheduler: failed to list tenants ({}), using default: {}",
-                e, default_keyspace
+                e, default_tenant_id
             );
-            return vec![default_keyspace.to_string()];
-        }
-    };
-
-    // Validate that each keyspace actually exists in Cassandra
-    let mut valid = Vec::new();
-    for ks in &all_keyspaces {
-        match system_db.keyspace_exists(ks).await {
-            Ok(true) => valid.push(ks.clone()),
-            Ok(false) => {
-                eprintln!(
-                    "Scheduler: skipping tenant '{}' — keyspace does not exist in Cassandra",
-                    ks
-                );
-            }
-            Err(e) => {
-                eprintln!(
-                    "Scheduler: skipping tenant '{}' — failed to verify keyspace: {}",
-                    ks, e
-                );
-            }
+            vec![default_tenant_id]
         }
     }
-
-    if valid.is_empty() {
-        println!(
-            "Scheduler: no valid tenant keyspaces found, using default: {}",
-            default_keyspace
-        );
-        return vec![default_keyspace.to_string()];
-    }
-
-    println!(
-        "Scheduler: found {} valid tenant keyspace(s): {}",
-        valid.len(),
-        valid.join(", ")
-    );
-    valid
 }
 
-/// Spawn a background queue processor for one tenant's keyspace.
+/// Spawn a background queue processor for one tenant.
 fn spawn_queue_processor(
-    db_client: Arc<CassandraClient>,
+    db_client: Arc<DbClient>,
     search_client: Option<Arc<SearchClient>>,
     storage_client: Option<Arc<StorageClient>>,
     user_agent: String,
@@ -218,26 +193,11 @@ fn spawn_queue_processor(
     });
 }
 
-/// Initialize Cassandra database client.
-async fn init_cassandra_client(hosts: &[String], keyspace: &str) -> Arc<CassandraClient> {
-    match CassandraClient::new(hosts.to_vec(), keyspace.to_string()).await {
-        Ok(client) => {
-            println!(
-                "Connected to Cassandra at {:?} using keyspace '{}'",
-                hosts, keyspace
-            );
-            Arc::new(client)
-        }
-        Err(e) => {
-            eprintln!("Failed to connect to Cassandra: {}", e);
-            eprintln!("Continuing without database connection");
-            Arc::new(
-                CassandraClient::new(vec!["127.0.0.1:9042".to_string()], keyspace.to_string())
-                    .await
-                    .unwrap(),
-            )
-        }
-    }
+/// Initialize PostgreSQL connection pool.
+async fn init_db_pool(database_url: &str) -> PgPool {
+    PgPool::connect(database_url)
+        .await
+        .unwrap_or_else(|e| panic!("Failed to connect to PostgreSQL at {}: {}", database_url, e))
 }
 
 /// Initialize Meilisearch client.
@@ -277,10 +237,7 @@ async fn init_storage_client() -> Option<Arc<StorageClient>> {
 }
 
 /// Initialize auth state if email is configured.
-async fn init_auth_state(
-    system_db: Arc<CassandraClient>,
-    default_tenant_id: &str,
-) -> Option<AuthState> {
+async fn init_auth_state(pool: PgPool, default_tenant_id: Uuid) -> Option<AuthState> {
     let email_config = match EmailConfig::from_env() {
         Ok(config) => config,
         Err(e) => {
@@ -306,17 +263,14 @@ async fn init_auth_state(
         }
     };
 
-    let keyspace =
-        env::var("CASSANDRA_SYSTEM_KEYSPACE").unwrap_or_else(|_| "lalasearch_system".to_string());
-
-    let auth_db = AuthDbClient::new(system_db.session(), keyspace);
+    let auth_db = AuthDbClient::new(pool);
     let auth_config = AuthConfig::from_env();
 
     Some(AuthState::new(
         auth_db,
         email_service,
         auth_config,
-        default_tenant_id.to_string(),
+        default_tenant_id,
     ))
 }
 
@@ -338,26 +292,24 @@ mod tests {
     use lala_agent::models::queue::{AddToQueueRequest, AddToQueueResponse};
     use lala_agent::models::settings::{CrawlingEnabledResponse, SetCrawlingEnabledRequest};
     use lala_agent::models::version::VersionResponse;
-    use lala_agent::services::db::CassandraClient;
+    use lala_agent::services::db::DbClient;
     use tower::ServiceExt;
 
     async fn create_test_app() -> axum::Router {
-        let db_client = match CassandraClient::new(
-            vec!["127.0.0.1:9042".to_string()],
-            "lalasearch_test".to_string(),
-        )
-        .await
-        {
-            Ok(client) => Arc::new(client),
-            Err(_) => Arc::new(
-                CassandraClient::new(
-                    vec!["127.0.0.1:9042".to_string()],
-                    "lalasearch_default".to_string(),
-                )
-                .await
-                .expect("Failed to connect to database"),
-            ),
-        };
+        let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://lalasearch:lalasearch@127.0.0.1:5432/lalasearch".to_string()
+        });
+
+        let pool = PgPool::connect(&database_url)
+            .await
+            .expect("Failed to connect to PostgreSQL");
+
+        let default_tenant_id: Uuid = env::var("DEFAULT_TENANT_ID")
+            .unwrap_or_else(|_| "00000000-0000-0000-0000-000000000001".to_string())
+            .parse()
+            .expect("DEFAULT_TENANT_ID must be a valid UUID");
+
+        let db_client = Arc::new(DbClient::new(pool, default_tenant_id));
 
         let state = AppState {
             db_client,
@@ -369,7 +321,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Cassandra
+    #[ignore] // Requires PostgreSQL
     async fn test_version_endpoint_response() {
         let app = create_test_app().await;
 
@@ -398,7 +350,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Cassandra
+    #[ignore] // Requires PostgreSQL
     async fn test_version_follows_semver_format() {
         let app = create_test_app().await;
 
@@ -425,7 +377,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Cassandra
+    #[ignore] // Requires PostgreSQL
     async fn test_invalid_route_returns_404() {
         let app = create_test_app().await;
 
@@ -443,7 +395,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Cassandra
+    #[ignore] // Requires PostgreSQL
     async fn test_concurrent_requests_succeed() {
         let app = create_test_app().await;
 
@@ -472,7 +424,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Cassandra connection
+    #[ignore] // Requires PostgreSQL
     async fn test_add_to_queue_valid_url() {
         let app = create_test_app().await;
 
@@ -506,7 +458,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Cassandra connection
+    #[ignore] // Requires PostgreSQL
     async fn test_add_to_queue_invalid_url() {
         let app = create_test_app().await;
 
@@ -531,7 +483,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Cassandra connection
+    #[ignore] // Requires PostgreSQL
     async fn test_add_to_queue_domain_not_allowed() {
         let app = create_test_app().await;
 
@@ -564,7 +516,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Cassandra connection
+    #[ignore] // Requires PostgreSQL
     async fn test_add_domain_success() {
         use chrono::Utc;
         let app = create_test_app().await;
@@ -613,7 +565,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Cassandra connection
+    #[ignore] // Requires PostgreSQL
     async fn test_add_domain_empty_domain() {
         let app = create_test_app().await;
 
@@ -645,7 +597,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Cassandra connection
+    #[ignore] // Requires PostgreSQL
     async fn test_list_domains_success() {
         let app = create_test_app().await;
 
@@ -671,7 +623,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Cassandra connection
+    #[ignore] // Requires PostgreSQL
     async fn test_list_domains_includes_added_domain() {
         use chrono::Utc;
         let app = create_test_app().await;
@@ -745,7 +697,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Cassandra connection
+    #[ignore] // Requires PostgreSQL
     async fn test_delete_domain_success() {
         use chrono::Utc;
         let app = create_test_app().await;
@@ -795,7 +747,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Cassandra connection
+    #[ignore] // Requires PostgreSQL
     async fn test_delete_nonexistent_domain() {
         use chrono::Utc;
         let app = create_test_app().await;
@@ -826,7 +778,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Cassandra connection
+    #[ignore] // Requires PostgreSQL
     async fn test_get_crawling_enabled() {
         let app = create_test_app().await;
 
@@ -852,7 +804,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Cassandra connection
+    #[ignore] // Requires PostgreSQL
     async fn test_set_crawling_enabled() {
         let app = create_test_app().await;
 

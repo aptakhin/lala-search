@@ -5,18 +5,18 @@ use std::env;
 
 /// Deployment mode controlling single-tenant vs multi-tenant operation.
 ///
-/// Single-tenant: One Cassandra keyspace per installation. Default for the open source
+/// Single-tenant: One PostgreSQL database shared by all data. Default for the open source
 /// self-hosted version. No tenant isolation needed.
 ///
-/// Multi-tenant: One Cassandra keyspace per customer. Used in the SaaS/hosted version.
-/// Handlers scope database queries to the authenticated tenant's keyspace via
-/// `CassandraClient::with_keyspace()`.
+/// Multi-tenant: Row-level security (RLS) isolates each tenant's data within the same
+/// PostgreSQL database. Used in the SaaS/hosted version. Handlers scope database queries
+/// to the authenticated tenant via `DbClient::with_tenant()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeploymentMode {
-    /// Single installation, one keyspace, no tenant isolation needed.
+    /// Single installation, no tenant isolation needed.
     /// Default for the open source self-hosted version.
     SingleTenant,
-    /// Multiple customers, one keyspace per tenant.
+    /// Multiple customers, RLS-isolated per tenant.
     /// Used in the SaaS/hosted version.
     MultiTenant,
 }

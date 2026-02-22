@@ -7,14 +7,15 @@ This guide explains how to run LalaSearch using Docker and Docker Compose.
 The Docker setup includes:
 
 - **lala-agent**: Web crawler and search agent (Rust application)
-- **Apache Cassandra**: High-performance NoSQL database for storing crawl metadata
-- **cassandra-init**: One-time initialization service for database schema
+- **PostgreSQL**: Relational database for crawl metadata, auth, and tenant management
+- **Meilisearch**: Full-text search engine
+- **SeaweedFS**: S3-compatible object storage for raw HTML content
 
 ## Prerequisites
 
 - Docker Engine 20.10+
 - Docker Compose 2.0+
-- 2GB+ available RAM (Apache Cassandra needs ~1GB, rest for agent and overhead)
+- 2GB+ available RAM
 
 ## Quick Start
 
@@ -29,14 +30,13 @@ cp .env.example .env
 ### 2. Start All Services
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
 This will:
 1. Build the lala-agent Docker image
-2. Start Apache Cassandra container
-3. Initialize the database schema
-4. Start the lala-agent service
+2. Start PostgreSQL and initialize the schema
+3. Start Meilisearch, SeaweedFS, and the agent
 
 ### 3. Check Service Status
 
@@ -48,8 +48,7 @@ Expected output:
 ```
 NAME                     STATUS    PORTS
 lalasearch-agent         Up        0.0.0.0:3000->3000/tcp
-lalasearch-cassandra        Up        0.0.0.0:9042->9042/tcp, ...
-lalasearch-cassandra-init   Exited (0)
+lalasearch-postgres      Up        0.0.0.0:5432->5432/tcp
 ```
 
 ### 4. View Logs
@@ -60,7 +59,7 @@ docker compose logs -f
 
 # Specific service
 docker compose logs -f lala-agent
-docker compose logs -f scylla
+docker compose logs -f postgres
 ```
 
 ### 5. Test the Agent
@@ -83,79 +82,63 @@ curl http://localhost:3000/version
 **Environment Variables:**
 - `RUST_LOG=info`: Log level (debug, info, warn, error)
 - `AGENT_MODE=all`: Agent mode (all, manager, serve, worker)
-- `CASSANDRA_HOSTS=cassandra:9042`: Apache Cassandra connection
-- `CASSANDRA_KEYSPACE=lalasearch`: Database keyspace name
+- `DATABASE_URL=postgres://lalasearch:lalasearch@postgres:5432/lalasearch`: PostgreSQL connection
 
 **Volumes:**
 - Source code mounted for hot-reload (development)
 
-### Apache Cassandra
+### PostgreSQL
 
 **Exposed Ports:**
-- `9042`: CQL native protocol (client connections)
+- `5432`: PostgreSQL client connections
 
 **Data Persistence:**
-- Volume `cassandra-data` stores database data
+- Volume `postgres-data` stores database data
 - Survives container restarts
 
-**Resource Limits:**
-- MAX_HEAP_SIZE=512M
-- HEAP_NEWSIZE=100M
+**Schema Initialization:**
+- `docker/postgres/schema.sql` is mounted into `/docker-entrypoint-initdb.d/` and runs automatically on first start
 
 ## Database Schema
 
-The Apache Cassandra schema includes:
+The PostgreSQL schema includes:
 
 ### Tables
 
 1. **crawled_pages**: Metadata about crawled web pages
-   - Primary key: `(domain, url_path)`
+   - Primary key: `page_id` (UUID v7)
+   - Unique constraint: `(tenant_id, domain, url_path)`
    - Tracks crawl frequency, status, content hash, etc.
 
 2. **crawl_queue**: URLs waiting to be crawled
-   - Primary key: `(priority, scheduled_at, url)`
-   - Ordered by priority and schedule time
+   - Primary key: `queue_id` (UUID v7)
+   - Uses `FOR UPDATE SKIP LOCKED` for concurrent processing
 
-3. **robots_cache**: Cached robots.txt files
-   - Primary key: `domain`
-   - Avoids repeated fetches
+3. **allowed_domains**: Domain allowlist per tenant
+   - Primary key: `(tenant_id, domain)`
+   - Soft deletion via `deleted_at`
 
-4. **crawl_stats**: Aggregated crawling statistics
-   - Primary key: `((date, hour), domain)`
-   - Uses counters for efficient aggregation
+4. **robots_cache**: Cached robots.txt files
+   - Primary key: `(tenant_id, domain)`
+
+5. **settings**: Per-tenant runtime configuration
+   - Primary key: `(tenant_id, key)`
+
+6. **tenants**: Global tenant registry
 
 ### Accessing the Database
 
 ```bash
-# Connect to Apache Cassandra with cqlsh
-docker exec -it lalasearch-cassandra cqlsh
+# Connect to PostgreSQL with psql
+docker exec -it lalasearch-postgres psql -U lalasearch -d lalasearch
 
 # Example queries
-cqlsh> USE lalasearch;
-cqlsh:lalasearch> DESCRIBE TABLES;
-cqlsh:lalasearch> SELECT * FROM crawled_pages LIMIT 10;
-cqlsh:lalasearch> SELECT * FROM crawl_queue;
+lalasearch=# \dt                                    -- List tables
+lalasearch=# SELECT * FROM crawled_pages LIMIT 10;
+lalasearch=# SELECT * FROM crawl_queue;
 ```
 
 ## Development Workflow
-
-### Hot Reload (Development Mode)
-
-Uncomment the `command` override in `docker compose.yml`:
-
-```yaml
-lala-agent:
-  # ... other config ...
-  command: cargo watch -x run
-```
-
-Then restart:
-
-```bash
-docker compose restart lala-agent
-```
-
-Now source code changes will automatically trigger rebuilds.
 
 ### Running Tests
 
@@ -199,54 +182,39 @@ docker compose down -v
 
 ```bash
 docker compose restart lala-agent
-docker compose restart scylla
-```
-
-### Scale Workers (Future)
-
-When worker mode is implemented:
-
-```bash
-docker compose up -d --scale lala-agent=3
+docker compose restart postgres
 ```
 
 ## Troubleshooting
 
-### Apache Cassandra Not Starting
+### PostgreSQL Not Starting
 
-**Symptom**: cassandra-init fails with connection refused
+**Symptom**: Agent cannot connect to database
 
 **Solution**:
 ```bash
-# Wait for Apache Cassandra to fully start (can take 60-90 seconds)
-docker compose logs -f scylla
+# Check PostgreSQL logs
+docker compose logs -f postgres
 
-# Look for: "Starting listening for CQL clients"
+# Verify PostgreSQL is ready
+docker compose exec postgres pg_isready -U lalasearch
 ```
 
-### Agent Cannot Connect to Apache Cassandra
+### Agent Cannot Connect to PostgreSQL
 
 **Check network connectivity:**
 ```bash
-docker compose exec lala-agent ping scylla
+docker compose exec lala-agent ping postgres
 ```
 
-**Check Apache Cassandra health:**
+**Check PostgreSQL health:**
 ```bash
-docker compose exec scylla nodetool status
+docker compose exec postgres pg_isready -U lalasearch -d lalasearch
 ```
-
-### Out of Memory
-
-**Symptom**: Apache Cassandra crashes or becomes unresponsive
-
-**Solution**: Increase Docker Desktop memory limit:
-- Docker Desktop → Settings → Resources → Memory
-- Set to at least 4GB
 
 ### Port Already in Use
 
-**Symptom**: Error binding to port 3000 or 9042
+**Symptom**: Error binding to port 3000 or 5432
 
 **Solution**:
 ```bash
@@ -265,12 +233,12 @@ lsof -i :3000
 For production deployment:
 
 1. **Multi-stage Dockerfile**: Use smaller runtime image
-2. **Cassandra Cluster**: Multiple nodes with proper replication
+2. **PostgreSQL**: Configure connection pooling, tuning, and replication
 3. **Resource Limits**: Set memory/CPU limits in docker compose
 4. **Monitoring**: Add Prometheus and Grafana
 5. **Secrets Management**: Use Docker secrets or external vault
 6. **Reverse Proxy**: Add nginx or traefik for HTTPS
-7. **Backup**: Regular Cassandra snapshots using nodetool
+7. **Backup**: Regular PostgreSQL backups using `pg_dump` or WAL archiving
 
 ## Next Steps
 

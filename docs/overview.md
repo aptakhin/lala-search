@@ -14,7 +14,7 @@ Single-tenant, self-hosted, fully open source under BSD 3-Clause. Deploy on your
 
 ### SaaS Edition
 
-Multi-tenant hosted version sharing the same codebase. One Apache Cassandra keyspace per customer. SaaS-specific code (tenant provisioning, billing, payment processing) is currently open source but may move to a separate private repository as the offering matures.
+Multi-tenant hosted version sharing the same codebase. Uses PostgreSQL Row-Level Security (RLS) for tenant isolation. SaaS-specific code (tenant provisioning, billing, payment processing) is currently open source but may move to a separate private repository as the offering matures.
 
 The Community edition will always remain fully open source.
 
@@ -27,14 +27,14 @@ The Community edition will always remain fully open source.
 │                      lala-agent                         │
 │                                                         │
 │  HTTP API          Crawl Queue       Queue Processor    │
-│  (Axum)     ──►   (Cassandra)  ──►  (worker loop)      │
+│  (Axum)     ──►   (PostgreSQL) ──►  (worker loop)      │
 │                                          │              │
 │  Search API                         Web Crawler         │
 │  (Meilisearch)◄──  Search Index ◄── (robots.txt)       │
 │                    (Meilisearch)         │              │
 │                                    S3 Storage           │
 │                    Metadata ◄──    (SeaweedFS)          │
-│                    (Cassandra)                          │
+│                    (PostgreSQL)                         │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -46,7 +46,7 @@ The Community edition will always remain fully open source.
 2. The queue processor picks it up, fetches the page, respects `robots.txt`
 3. Raw HTML is stored in S3-compatible object storage (SeaweedFS by default)
 4. Extracted text is indexed in Meilisearch for full-text search
-5. Metadata (URL, timestamps, storage reference) is written to Cassandra
+5. Metadata (URL, timestamps, storage reference) is written to PostgreSQL
 
 ### Connector Model
 
@@ -74,7 +74,7 @@ The `lala-web` service provides a retro 1990s-style frontend served by Nginx:
 |-----------|-----------|-----|
 | Language | Rust | Performance, memory safety, async concurrency |
 | HTTP framework | Axum + Tokio | Ergonomic async web framework |
-| Crawl metadata | Apache Cassandra | Horizontally scalable, fast writes, no transactions needed |
+| Database | PostgreSQL | Transactions, JOINs, RLS multi-tenancy, `FOR UPDATE SKIP LOCKED` queue |
 | Full-text search | Meilisearch | Fast, open source, simple to operate |
 | Object storage | SeaweedFS | Open source S3-compatible, self-hostable |
 | Email delivery | SMTP (configurable) | Bring your own mail server or relay |
@@ -85,22 +85,27 @@ All dependencies are open source. See [CLAUDE.md](../CLAUDE.md) for the project'
 
 Controlled by the `DEPLOYMENT_MODE` environment variable:
 
-- **`single_tenant`** (default): Community edition. One tenant (`default`), one Cassandra keyspace (`lalasearch_default`).
-- **`multi_tenant`**: SaaS edition. Auth middleware extracts `tenant_id` from the session; all queries route to the tenant's dedicated keyspace (`lalasearch_<tenant_id>`).
+- **`single_tenant`** (default): Community edition. One tenant with a fixed `DEFAULT_TENANT_ID`.
+- **`multi_tenant`**: SaaS edition. Auth middleware extracts `tenant_id` from the session; all queries are scoped via PostgreSQL Row-Level Security (RLS) policies.
 
-The core crawling, queue, storage, and search logic is identical between modes. See [multi-tenancy.md](multi-tenancy.md) for the keyspace design.
+The core crawling, queue, storage, and search logic is identical between modes. See [multi-tenancy.md](multi-tenancy.md) for the RLS design.
 
 ## Data Model
 
 ```
-Cassandra (lalasearch_system)
-  └── tenants              ← global tenant registry
-
-Cassandra (lalasearch_<tenant_id>)
-  ├── crawl_queue          ← pending URLs
-  ├── crawled_pages        ← metadata + S3 reference
-  ├── allowed_domains      ← domain allowlist
-  └── settings             ← per-tenant runtime config
+PostgreSQL (single database: lalasearch)
+  ├── tenants              ← global tenant registry
+  ├── users                ← user accounts
+  ├── sessions             ← authenticated sessions
+  ├── magic_link_tokens    ← passwordless auth tokens
+  ├── org_memberships      ← user-to-tenant membership + roles
+  ├── org_invitations      ← pending org invitations
+  ├── crawl_queue          ← pending URLs (per tenant via RLS)
+  ├── crawled_pages        ← metadata + S3 reference (per tenant via RLS)
+  ├── crawl_errors         ← crawl failure logs (per tenant via RLS)
+  ├── allowed_domains      ← domain allowlist (per tenant via RLS)
+  ├── robots_cache         ← cached robots.txt (per tenant via RLS)
+  └── settings             ← per-tenant runtime config (per tenant via RLS)
 
 SeaweedFS / S3
   └── lalasearch-content/
@@ -117,6 +122,6 @@ Meilisearch
 2. **Test-driven development**: Tests before production code, always
 3. **Self-hostable**: Works fully offline with Docker Compose, no external services required
 4. **Single deployable**: One binary, one container, simple to operate
-5. **No vendor lock-in**: Standard protocols (S3, CQL, HTTP) throughout
+5. **No vendor lock-in**: Standard protocols (S3, SQL, HTTP) throughout
 
 See [CLAUDE.md](../CLAUDE.md) for detailed development guidelines and TDD workflow.

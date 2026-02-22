@@ -17,7 +17,7 @@ use crate::models::search::{SearchRequest, SearchResponse};
 use crate::models::settings::{CrawlingEnabledResponse, SetCrawlingEnabledRequest};
 use crate::models::version::VersionResponse;
 use crate::routes::{auth_router, AuthApiDoc, AuthState};
-use crate::services::db::CassandraClient;
+use crate::services::db::DbClient;
 use crate::services::search::SearchClient;
 use axum::{
     extract::{FromRequestParts, Path, State},
@@ -26,11 +26,11 @@ use axum::{
     Json, Router,
 };
 use chrono::Utc;
-use scylla::frame::value::CqlTimestamp;
 use std::sync::Arc;
 use tower_cookies::{CookieManagerLayer, Cookies};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
+use uuid::Uuid;
 
 /// Application version extracted from `Cargo.toml` at compile time.
 /// The patch segment can be overridden via `LALA_PATCH_VERSION` (see `build.rs`).
@@ -43,13 +43,13 @@ pub const VERSION: &str = env!("LALA_VERSION");
 /// Shared application state injected into every route handler via `State<AppState>`.
 #[derive(Clone)]
 pub struct AppState {
-    /// Base Cassandra client.  Used as-is in single-tenant mode; used as the
-    /// connection-pool source for `with_keyspace()` in multi-tenant mode.
-    pub db_client: Arc<CassandraClient>,
+    /// Base database client. Used as-is in single-tenant mode; used as the
+    /// connection-pool source for `with_tenant()` in multi-tenant mode.
+    pub db_client: Arc<DbClient>,
     pub search_client: Option<Arc<SearchClient>>,
     pub deployment_mode: DeploymentMode,
     /// Required in multi-tenant mode: validates session cookies and resolves
-    /// the authenticated user's tenant keyspace.
+    /// the authenticated user's tenant.
     pub auth_state: Option<AuthState>,
 }
 
@@ -57,19 +57,19 @@ pub struct AppState {
 // Per-request tenant DB extractor
 // ---------------------------------------------------------------------------
 
-/// Axum extractor that resolves the Cassandra client to use for the current request.
+/// Axum extractor that resolves the database client to use for the current request.
 ///
 /// When `auth_state` is configured, the session cookie is validated in **both**
 /// single-tenant and multi-tenant modes.  The only difference is how the DB
 /// client is selected after authentication succeeds:
 ///
 /// * **Single-tenant**: returns `state.db_client` directly.
-/// * **Multi-tenant**: returns `state.db_client.with_keyspace(tenant_id)` where
+/// * **Multi-tenant**: returns `state.db_client.with_tenant(tenant_id)` where
 ///   `tenant_id` comes from the authenticated session.
 ///
 /// When `auth_state` is `None` (email not configured), routes are open and the
 /// default `db_client` is returned without authentication.
-pub struct TenantDb(pub Arc<CassandraClient>);
+pub struct TenantDb(pub Arc<DbClient>);
 
 impl FromRequestParts<AppState> for TenantDb {
     type Rejection = (StatusCode, String);
@@ -89,7 +89,7 @@ impl FromRequestParts<AppState> for TenantDb {
             return Ok(TenantDb(state.db_client.clone()));
         }
 
-        // Multi-tenant: validate session and resolve tenant keyspace
+        // Multi-tenant: validate session and resolve tenant
         resolve_multi_tenant_db(parts, state).await.map(TenantDb)
     }
 }
@@ -101,7 +101,7 @@ impl FromRequestParts<AppState> for TenantDb {
 async fn validate_session(
     parts: &mut Parts,
     state: &AppState,
-) -> Result<String, (StatusCode, String)> {
+) -> Result<Uuid, (StatusCode, String)> {
     let auth_state = state.auth_state.as_ref().ok_or_else(|| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -152,9 +152,9 @@ async fn validate_session(
 async fn resolve_multi_tenant_db(
     parts: &mut Parts,
     state: &AppState,
-) -> Result<Arc<CassandraClient>, (StatusCode, String)> {
+) -> Result<Arc<DbClient>, (StatusCode, String)> {
     let tenant_id = validate_session(parts, state).await?;
-    Ok(Arc::new(state.db_client.with_keyspace(&tenant_id)))
+    Ok(Arc::new(state.db_client.with_tenant(tenant_id)))
 }
 
 // ---------------------------------------------------------------------------
@@ -196,15 +196,16 @@ pub async fn add_to_queue_handler(
     }
 
     let now = Utc::now();
-    let now_ts = CqlTimestamp(now.timestamp_millis());
     let entry = CrawlQueueEntry {
+        queue_id: Uuid::now_v7(),
+        tenant_id: db.tenant_id,
         priority: payload.priority,
-        scheduled_at: now_ts,
+        scheduled_at: now,
         url: payload.url.clone(),
         domain: domain.clone(),
         last_attempt_at: None,
         attempt_count: 0,
-        created_at: now_ts,
+        created_at: now,
     };
 
     db.insert_queue_entry(&entry).await.map_err(|e| {
@@ -235,7 +236,7 @@ impl FromRequestParts<AppState> for SearchTenantId {
     ) -> Result<Self, Self::Rejection> {
         if state.deployment_mode == DeploymentMode::MultiTenant && state.auth_state.is_some() {
             let tenant_id = validate_session(parts, state).await?;
-            Ok(SearchTenantId(Some(tenant_id)))
+            Ok(SearchTenantId(Some(tenant_id.to_string())))
         } else {
             Ok(SearchTenantId(None))
         }

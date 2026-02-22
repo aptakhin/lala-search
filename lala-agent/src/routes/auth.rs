@@ -24,13 +24,14 @@ use axum::{
 use std::sync::Arc;
 use tower_cookies::Cookies;
 use utoipa::OpenApi;
+use uuid::Uuid;
 
 /// State for auth routes.
 #[derive(Clone)]
 pub struct AuthState {
     pub auth_service: Arc<AuthService>,
     pub auth_config: AuthConfig,
-    pub default_tenant_id: String,
+    pub default_tenant_id: Uuid,
 }
 
 impl AuthState {
@@ -39,7 +40,7 @@ impl AuthState {
         auth_db: AuthDbClient,
         email_service: EmailService,
         auth_config: AuthConfig,
-        default_tenant_id: String,
+        default_tenant_id: Uuid,
     ) -> Self {
         let auth_service = Arc::new(AuthService::new(
             auth_db,
@@ -159,6 +160,19 @@ async fn get_auth_user(
         })
 }
 
+/// Parse a tenant_id from a URL path segment.
+fn parse_tenant_id(tenant_id: &str) -> Result<Uuid, (StatusCode, Json<MessageResponse>)> {
+    Uuid::parse_str(tenant_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(MessageResponse {
+                success: false,
+                message: "Invalid tenant ID".to_string(),
+            }),
+        )
+    })
+}
+
 // ============================================================================
 // Public Route Handlers
 // ============================================================================
@@ -218,7 +232,7 @@ async fn verify_link_handler(
 ) -> Response {
     match state
         .auth_service
-        .verify_magic_link(&token, None, None, &state.default_tenant_id)
+        .verify_magic_link(&token, None, None, state.default_tenant_id)
         .await
     {
         Ok((session_token, _user, _tenant_id)) => {
@@ -325,7 +339,7 @@ async fn me_handler(
     let org_infos: Vec<OrgInfo> = orgs
         .into_iter()
         .map(|m| OrgInfo {
-            tenant_id: m.tenant_id,
+            tenant_id: m.tenant_id.to_string(),
             name: String::new(), // TODO: fetch tenant names
             role: m.role.as_str().to_string(),
         })
@@ -405,7 +419,7 @@ async fn list_organizations_handler(
     let org_infos: Vec<OrgInfo> = orgs
         .into_iter()
         .map(|m| OrgInfo {
-            tenant_id: m.tenant_id,
+            tenant_id: m.tenant_id.to_string(),
             name: String::new(), // TODO: fetch tenant names
             role: m.role.as_str().to_string(),
         })
@@ -442,10 +456,11 @@ async fn list_members_handler(
     Path(tenant_id): Path<String>,
 ) -> Result<Json<OrgMembersResponse>, (StatusCode, Json<MessageResponse>)> {
     let auth_user = get_auth_user(&state, &cookies).await?;
+    let tenant_id = parse_tenant_id(&tenant_id)?;
 
     let members = state
         .auth_service
-        .get_org_members(&tenant_id, &auth_user)
+        .get_org_members(tenant_id, &auth_user)
         .await
         .map_err(|e| {
             let status = if e.to_string().contains("permission") {
@@ -463,7 +478,7 @@ async fn list_members_handler(
         })?;
 
     // Batch fetch all user emails in a single query
-    let user_ids: Vec<uuid::Uuid> = members.iter().map(|m| m.user_id).collect();
+    let user_ids: Vec<Uuid> = members.iter().map(|m| m.user_id).collect();
     let users = state
         .auth_service
         .get_users_by_ids(user_ids)
@@ -479,7 +494,7 @@ async fn list_members_handler(
         })?;
 
     // Create a map of user_id -> email for fast lookup
-    let email_map: std::collections::HashMap<uuid::Uuid, String> =
+    let email_map: std::collections::HashMap<Uuid, String> =
         users.into_iter().map(|u| (u.user_id, u.email)).collect();
 
     // Build member info with emails
@@ -489,9 +504,7 @@ async fn list_members_handler(
             user_id: m.user_id.to_string(),
             email: email_map.get(&m.user_id).cloned().unwrap_or_default(),
             role: m.role.as_str().to_string(),
-            joined_at: chrono::DateTime::from_timestamp_millis(m.joined_at)
-                .map(|dt| dt.to_rfc3339())
-                .unwrap_or_default(),
+            joined_at: m.joined_at.to_rfc3339(),
         })
         .collect();
 
@@ -540,6 +553,16 @@ async fn invite_user_handler(
             )
         })?;
 
+    let tenant_id = Uuid::parse_str(&tenant_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(InviteUserResponse {
+                success: false,
+                message: "Invalid tenant ID".to_string(),
+            }),
+        )
+    })?;
+
     let role = UserRole::parse(&payload.role).ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
@@ -550,9 +573,10 @@ async fn invite_user_handler(
         )
     })?;
 
+    let tenant_id_str = tenant_id.to_string();
     let invite = InviteRequest {
-        tenant_id: &tenant_id,
-        tenant_name: &tenant_id, // TODO: fetch actual tenant name
+        tenant_id,
+        tenant_name: &tenant_id_str, // TODO: fetch actual tenant name
         email: &payload.email,
         role,
         inviter: &auth_user,
@@ -605,8 +629,9 @@ async fn remove_member_handler(
     Path((tenant_id, user_id)): Path<(String, String)>,
 ) -> Result<Json<MessageResponse>, (StatusCode, Json<MessageResponse>)> {
     let auth_user = get_auth_user(&state, &cookies).await?;
+    let tenant_id = parse_tenant_id(&tenant_id)?;
 
-    let target_user_id = uuid::Uuid::parse_str(&user_id).map_err(|_| {
+    let target_user_id = Uuid::parse_str(&user_id).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             Json(MessageResponse {
@@ -618,7 +643,7 @@ async fn remove_member_handler(
 
     state
         .auth_service
-        .remove_member(&tenant_id, target_user_id, &auth_user)
+        .remove_member(tenant_id, target_user_id, &auth_user)
         .await
         .map_err(|e| {
             let status = if e.to_string().contains("permission") {

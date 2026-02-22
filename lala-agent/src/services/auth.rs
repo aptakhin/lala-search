@@ -14,6 +14,7 @@ use hex;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::env;
+use uuid::Uuid;
 
 /// Configuration for the auth service.
 #[derive(Debug, Clone)]
@@ -55,7 +56,7 @@ pub struct AuthService {
 
 /// Request to invite a user to an organization.
 pub struct InviteRequest<'a> {
-    pub tenant_id: &'a str,
+    pub tenant_id: Uuid,
     pub tenant_name: &'a str,
     pub email: &'a str,
     pub role: UserRole,
@@ -94,8 +95,8 @@ impl AuthService {
     pub async fn request_magic_link(&self, email: &str) -> Result<()> {
         let (raw_token, token_hash) = Self::generate_token();
 
-        let expires_at = chrono::Utc::now().timestamp_millis()
-            + (self.config.magic_link_expiry_minutes as i64 * 60 * 1000);
+        let expires_at = chrono::Utc::now()
+            + chrono::Duration::minutes(self.config.magic_link_expiry_minutes as i64);
 
         self.db
             .create_magic_link_token(&CreateMagicLinkParams {
@@ -117,14 +118,14 @@ impl AuthService {
     }
 
     /// Verify a magic link and create a session.
-    /// Returns the session token and user info.
+    /// Returns the session token, user info, and tenant ID.
     pub async fn verify_magic_link(
         &self,
         token: &str,
         user_agent: Option<&str>,
         ip_address: Option<&str>,
-        default_tenant_id: &str,
-    ) -> Result<(String, User, String)> {
+        default_tenant_id: Uuid,
+    ) -> Result<(String, User, Uuid)> {
         let token_hash = Self::hash_token(token);
 
         // Get and validate token
@@ -155,10 +156,7 @@ impl AuthService {
             .await?;
 
         // Determine tenant to use for session
-        let tenant_id = magic_token
-            .tenant_id
-            .as_deref()
-            .unwrap_or(default_tenant_id);
+        let tenant_id = magic_token.tenant_id.unwrap_or(default_tenant_id);
 
         // Create session
         let session_token = self
@@ -175,11 +173,11 @@ impl AuthService {
                 .unwrap_or_default()
         );
 
-        Ok((session_token, user, tenant_id.to_string()))
+        Ok((session_token, user, tenant_id))
     }
 
     /// Get an existing user by email, or create a new one.
-    async fn get_or_create_user(&self, email: &str, default_tenant_id: &str) -> Result<User> {
+    async fn get_or_create_user(&self, email: &str, default_tenant_id: Uuid) -> Result<User> {
         match self
             .db
             .get_user_by_email(email)
@@ -213,7 +211,7 @@ impl AuthService {
     }
 
     /// Create a new user and add them to the default tenant.
-    async fn create_new_user(&self, email: &str, default_tenant_id: &str) -> Result<User> {
+    async fn create_new_user(&self, email: &str, default_tenant_id: Uuid) -> Result<User> {
         let user_id = self
             .db
             .create_user(email)
@@ -247,14 +245,14 @@ impl AuthService {
     /// Create a session for a user and return the session token.
     async fn create_user_session(
         &self,
-        user_id: uuid::Uuid,
-        tenant_id: &str,
+        user_id: Uuid,
+        tenant_id: Uuid,
         user_agent: Option<&str>,
         ip_address: Option<&str>,
     ) -> Result<String> {
         let (session_token, session_hash) = Self::generate_token();
-        let expires_at = chrono::Utc::now().timestamp_millis()
-            + (self.config.session_max_age_days as i64 * 24 * 60 * 60 * 1000);
+        let expires_at =
+            chrono::Utc::now() + chrono::Duration::days(self.config.session_max_age_days as i64);
 
         self.db
             .create_session(&CreateSessionParams {
@@ -307,7 +305,7 @@ impl AuthService {
         // Get user's role in the session's tenant
         let membership = self
             .db
-            .get_org_membership(&session.tenant_id, session.user_id)
+            .get_org_membership(session.tenant_id, session.user_id)
             .await
             .context("Failed to get org membership")?
             .ok_or_else(|| anyhow!("User not a member of tenant"))?;
@@ -334,7 +332,7 @@ impl AuthService {
     }
 
     /// Sign out all sessions for a user.
-    pub async fn sign_out_all(&self, user_id: uuid::Uuid) -> Result<()> {
+    pub async fn sign_out_all(&self, user_id: Uuid) -> Result<()> {
         self.db
             .delete_user_sessions(user_id)
             .await
@@ -352,8 +350,8 @@ impl AuthService {
 
         let (raw_token, token_hash) = Self::generate_token();
 
-        let expires_at = chrono::Utc::now().timestamp_millis()
-            + (self.config.invitation_expiry_days as i64 * 24 * 60 * 60 * 1000);
+        let expires_at =
+            chrono::Utc::now() + chrono::Duration::days(self.config.invitation_expiry_days as i64);
 
         self.db
             .create_invitation(&CreateInvitationParams {
@@ -395,7 +393,7 @@ impl AuthService {
         token: &str,
         user_agent: Option<&str>,
         ip_address: Option<&str>,
-    ) -> Result<(String, User, String)> {
+    ) -> Result<(String, User, Uuid)> {
         let token_hash = Self::hash_token(token);
 
         // Get and validate invitation
@@ -426,7 +424,7 @@ impl AuthService {
         // Add user to organization
         self.db
             .add_org_membership(
-                &invitation.tenant_id,
+                invitation.tenant_id,
                 user.user_id,
                 invitation.role,
                 Some(invitation.invited_by),
@@ -448,7 +446,7 @@ impl AuthService {
 
         // Create session
         let session_token = self
-            .create_user_session(user.user_id, &invitation.tenant_id, user_agent, ip_address)
+            .create_user_session(user.user_id, invitation.tenant_id, user_agent, ip_address)
             .await?;
 
         Ok((session_token, user, invitation.tenant_id))
@@ -500,7 +498,7 @@ impl AuthService {
     // ========== User Info ==========
 
     /// Get user's organizations.
-    pub async fn get_user_organizations(&self, user_id: uuid::Uuid) -> Result<Vec<OrgMembership>> {
+    pub async fn get_user_organizations(&self, user_id: Uuid) -> Result<Vec<OrgMembership>> {
         self.db
             .get_user_orgs(user_id)
             .await
@@ -508,7 +506,7 @@ impl AuthService {
     }
 
     /// Get user by ID.
-    pub async fn get_user_by_id(&self, user_id: uuid::Uuid) -> Result<Option<User>> {
+    pub async fn get_user_by_id(&self, user_id: Uuid) -> Result<Option<User>> {
         self.db
             .get_user_by_id(user_id)
             .await
@@ -516,7 +514,7 @@ impl AuthService {
     }
 
     /// Get multiple users by IDs in a single query.
-    pub async fn get_users_by_ids(&self, user_ids: Vec<uuid::Uuid>) -> Result<Vec<User>> {
+    pub async fn get_users_by_ids(&self, user_ids: Vec<Uuid>) -> Result<Vec<User>> {
         self.db
             .get_users_by_ids(user_ids)
             .await
@@ -526,7 +524,7 @@ impl AuthService {
     /// Get organization members.
     pub async fn get_org_members(
         &self,
-        tenant_id: &str,
+        tenant_id: Uuid,
         requester: &AuthUser,
     ) -> Result<Vec<OrgMembership>> {
         if !requester.can_manage_settings() {
@@ -542,8 +540,8 @@ impl AuthService {
     /// Remove a member from an organization.
     pub async fn remove_member(
         &self,
-        tenant_id: &str,
-        user_id: uuid::Uuid,
+        tenant_id: Uuid,
+        user_id: Uuid,
         requester: &AuthUser,
     ) -> Result<()> {
         if !requester.can_remove_members() {

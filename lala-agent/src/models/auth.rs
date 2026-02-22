@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Aleksandr Ptakhin
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -93,9 +94,9 @@ pub struct User {
     pub user_id: Uuid,
     pub email: String,
     pub email_verified: bool,
-    pub created_at: i64,
-    pub updated_at: i64,
-    pub last_login_at: Option<i64>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub last_login_at: Option<DateTime<Utc>>,
     pub status: UserStatus,
 }
 
@@ -104,10 +105,10 @@ pub struct User {
 pub struct Session {
     pub session_id: String, // SHA-256 hash
     pub user_id: Uuid,
-    pub tenant_id: String,
-    pub created_at: i64,
-    pub expires_at: i64,
-    pub last_active_at: i64,
+    pub tenant_id: Uuid,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub last_active_at: DateTime<Utc>,
     pub user_agent: Option<String>,
     pub ip_address: Option<String>,
 }
@@ -115,8 +116,7 @@ pub struct Session {
 impl Session {
     /// Check if the session has expired
     pub fn is_expired(&self) -> bool {
-        let now = chrono::Utc::now().timestamp_millis();
-        self.expires_at < now
+        self.expires_at < Utc::now()
     }
 }
 
@@ -125,18 +125,17 @@ impl Session {
 pub struct MagicLinkToken {
     pub token: String, // SHA-256 hash
     pub email: String,
-    pub tenant_id: Option<String>,
+    pub tenant_id: Option<Uuid>,
     pub redirect_url: Option<String>,
-    pub created_at: i64,
-    pub expires_at: i64,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
     pub used: bool,
 }
 
 impl MagicLinkToken {
     /// Check if the token has expired
     pub fn is_expired(&self) -> bool {
-        let now = chrono::Utc::now().timestamp_millis();
-        self.expires_at < now
+        self.expires_at < Utc::now()
     }
 
     /// Check if the token is valid (not expired and not used)
@@ -148,10 +147,10 @@ impl MagicLinkToken {
 /// Organization membership record.
 #[derive(Debug, Clone)]
 pub struct OrgMembership {
-    pub tenant_id: String,
+    pub tenant_id: Uuid,
     pub user_id: Uuid,
     pub role: UserRole,
-    pub joined_at: i64,
+    pub joined_at: DateTime<Utc>,
     pub invited_by: Option<Uuid>,
 }
 
@@ -159,20 +158,19 @@ pub struct OrgMembership {
 #[derive(Debug, Clone)]
 pub struct OrgInvitation {
     pub token: String, // SHA-256 hash
-    pub tenant_id: String,
+    pub tenant_id: Uuid,
     pub email: String,
     pub role: UserRole,
     pub invited_by: Uuid,
-    pub created_at: i64,
-    pub expires_at: i64,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
     pub accepted: bool,
 }
 
 impl OrgInvitation {
     /// Check if the invitation has expired
     pub fn is_expired(&self) -> bool {
-        let now = chrono::Utc::now().timestamp_millis();
-        self.expires_at < now
+        self.expires_at < Utc::now()
     }
 
     /// Check if the invitation is valid (not expired and not accepted)
@@ -315,7 +313,7 @@ pub struct InvitationDetailsResponse {
 pub struct AuthUser {
     pub user_id: Uuid,
     pub email: String,
-    pub tenant_id: String,
+    pub tenant_id: Uuid,
     pub role: UserRole,
 }
 
@@ -403,26 +401,29 @@ mod tests {
 
     #[test]
     fn test_session_expiry() {
+        let past = DateTime::from_timestamp(0, 0).unwrap();
+        let now = Utc::now();
+
         let expired_session = Session {
             session_id: "test".to_string(),
             user_id: Uuid::new_v4(),
-            tenant_id: "default".to_string(),
-            created_at: 0,
-            expires_at: 0, // Expired at epoch
-            last_active_at: 0,
+            tenant_id: Uuid::new_v4(),
+            created_at: past,
+            expires_at: past, // Expired at epoch
+            last_active_at: past,
             user_agent: None,
             ip_address: None,
         };
         assert!(expired_session.is_expired());
 
-        let future_timestamp = chrono::Utc::now().timestamp_millis() + 3600000; // 1 hour from now
+        let future = now + chrono::Duration::hours(1);
         let valid_session = Session {
             session_id: "test".to_string(),
             user_id: Uuid::new_v4(),
-            tenant_id: "default".to_string(),
-            created_at: 0,
-            expires_at: future_timestamp,
-            last_active_at: 0,
+            tenant_id: Uuid::new_v4(),
+            created_at: now,
+            expires_at: future,
+            last_active_at: now,
             user_agent: None,
             ip_address: None,
         };
@@ -431,15 +432,17 @@ mod tests {
 
     #[test]
     fn test_magic_link_validity() {
-        let future_timestamp = chrono::Utc::now().timestamp_millis() + 3600000;
+        let now = Utc::now();
+        let past = DateTime::from_timestamp(0, 0).unwrap();
+        let future = now + chrono::Duration::hours(1);
 
         let valid_token = MagicLinkToken {
             token: "test".to_string(),
             email: "test@example.com".to_string(),
             tenant_id: None,
             redirect_url: None,
-            created_at: 0,
-            expires_at: future_timestamp,
+            created_at: now,
+            expires_at: future,
             used: false,
         };
         assert!(valid_token.is_valid());
@@ -449,8 +452,8 @@ mod tests {
             email: "test@example.com".to_string(),
             tenant_id: None,
             redirect_url: None,
-            created_at: 0,
-            expires_at: future_timestamp,
+            created_at: now,
+            expires_at: future,
             used: true,
         };
         assert!(!used_token.is_valid());
@@ -460,8 +463,8 @@ mod tests {
             email: "test@example.com".to_string(),
             tenant_id: None,
             redirect_url: None,
-            created_at: 0,
-            expires_at: 0,
+            created_at: past,
+            expires_at: past,
             used: false,
         };
         assert!(!expired_token.is_valid());

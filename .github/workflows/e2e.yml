@@ -94,5 +94,5 @@ jobs:
           echo "=== Docker Compose Status ==="
           docker compose ps || true
           echo ""
-          echo "=== Cassandra Logs (last 50 lines) ==="
-          docker logs lalasearch-cassandra --tail 50 2>&1 || true
+          echo "=== PostgreSQL Logs (last 50 lines) ==="
+          docker logs lalasearch-postgres --tail 50 2>&1 || true

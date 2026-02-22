@@ -14,7 +14,7 @@ Two editions share the same codebase:
 | Edition | Description |
 |---------|-------------|
 | **Community** | Single-tenant, self-hosted, fully open source. Deploy on your own server. |
-| **SaaS** | Multi-tenant hosted version. One Cassandra keyspace per customer. May move to a separate private repository as the offering matures. |
+| **SaaS** | Multi-tenant hosted version. Tenant isolation via PostgreSQL Row-Level Security. May move to a separate private repository as the offering matures. |
 
 ## What It Does
 
@@ -42,7 +42,7 @@ lalasearch/
 │   │   ├── models/                # Data models
 │   │   │   ├── agent.rs          # AgentMode enum (worker/manager/all)
 │   │   │   ├── deployment.rs     # DeploymentMode enum (single/multi tenant)
-│   │   │   ├── db.rs             # Cassandra row types
+│   │   │   ├── db.rs             # PostgreSQL row types
 │   │   │   ├── crawler.rs        # Crawler request/result models
 │   │   │   ├── queue.rs          # Crawl queue entry model
 │   │   │   ├── search.rs         # Search request/response models
@@ -51,7 +51,7 @@ lalasearch/
 │   │   │   └── version.rs        # Version response model
 │   │   └── services/              # Business logic
 │   │       ├── crawler.rs        # Web crawler with robots.txt support
-│   │       ├── db.rs             # Cassandra client (fully qualified table names)
+│   │       ├── db.rs             # PostgreSQL client (sqlx + PgPool)
 │   │       ├── queue_processor.rs # Queue processing and crawl pipeline
 │   │       ├── search.rs         # Meilisearch client
 │   │       └── storage.rs        # S3 storage client with gzip compression
@@ -62,9 +62,8 @@ lalasearch/
 │   ├── Cargo.toml                 # Rust dependencies
 │   └── build.rs                   # Build-time version extraction
 ├── docker/                        # Docker configuration
-│   └── cassandra/
-│       ├── schema.cql             # Tenant keyspace schema (lalasearch_default)
-│       └── schema_system.cql      # System keyspace schema (lalasearch_system)
+│   └── postgres/
+│       └── schema.sql             # PostgreSQL schema (all tables, RLS policies)
 ├── .github/workflows/
 │   ├── ci.yml                    # Build & Test pipeline (fmt, clippy, unit, storage, integration)
 │   └── e2e.yml                   # E2E Test pipeline (Docker Compose + Playwright)
@@ -78,7 +77,7 @@ lalasearch/
 
 ### Option 1: Docker (Recommended)
 
-Run LalaSearch with Docker Compose (includes Apache Cassandra, Meilisearch, and SeaweedFS):
+Run LalaSearch with Docker Compose (includes PostgreSQL, Meilisearch, and SeaweedFS):
 
 ```bash
 # Copy environment configuration
@@ -187,7 +186,7 @@ LalaSearch stores raw crawled content in S3-compatible object storage.
 Storage details:
 - Content stored with UUID v7 keys (time-ordered, sortable)
 - Files named `{uuid}.html` or `{uuid}.html.gz` based on compression
-- Cassandra stores `storage_id` (UUID) and `storage_compression` type
+- PostgreSQL stores `storage_id` (UUID) and `storage_compression` type
 
 ## Deployment Modes
 
@@ -196,7 +195,7 @@ Controlled by the `DEPLOYMENT_MODE` environment variable:
 | Mode | Value | Description |
 |------|-------|-------------|
 | Single-tenant | `single_tenant` | Self-hosted Community edition (default) |
-| Multi-tenant | `multi_tenant` | SaaS hosted version — one keyspace per customer |
+| Multi-tenant | `multi_tenant` | SaaS hosted version — tenant isolation via PostgreSQL RLS |
 
 The core crawling, storage, search, and queue logic is identical between both modes. See [docs/multi-tenancy.md](docs/multi-tenancy.md) for the full architecture.
 
@@ -207,14 +206,13 @@ The core crawling, storage, search, and queue logic is identical between both mo
 **Implemented:**
 - HTTP server with version and health endpoints
 - Web crawler with robots.txt compliance
-- Apache Cassandra for crawl metadata storage
+- PostgreSQL for crawl metadata, auth, and tenant management
 - Crawl queue management and processing pipeline
 - S3-compatible storage for crawled HTML content with gzip compression
 - Meilisearch integration for full-text search
 - Magic-link authentication and session management
 - Organization-based access control (owner/admin/member roles)
-- Single-tenant / multi-tenant deployment modes
-- System keyspace (`lalasearch_system`) with global tenant registry
+- Single-tenant / multi-tenant deployment modes with PostgreSQL RLS
 - Docker and Docker Compose setup with proper startup ordering
 - Test-driven development workflow and pre-commit hooks
 - GitHub Actions CI/CD (Build & Test + E2E pipelines)

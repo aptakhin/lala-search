@@ -59,7 +59,7 @@ Ask clarifying questions when:
 - **Prometheus** - Open source monitoring and metrics
 
 ### AVOID - Proprietary/Closed Source Solutions
-- **ScyllaDB** - Changed from AGPL to proprietary "source-available" license in Dec 2024 (use Apache Cassandra instead)
+- **ScyllaDB** - Changed from AGPL to proprietary "source-available" license in Dec 2024 (use PostgreSQL instead)
 - **MinIO** - Abandoned open source community in Feb 2026, pushing users to proprietary AIStor (use SeaweedFS instead)
 - **DataStax Astra** - Proprietary managed database service
 - **Splunk** - Proprietary log aggregation and analysis
@@ -134,7 +134,7 @@ Run automatically by `./scripts/pre-commit.sh`. Must complete quickly.
 | Test Type | Location | Marker | Description |
 |-----------|----------|--------|-------------|
 | Unit tests | `src/**/*.rs` | None | Pure logic, no external dependencies |
-| Storage-dependent | `src/**/*.rs` | `#[ignore]` | Require Cassandra/SeaweedFS/Meilisearch |
+| Storage-dependent | `src/**/*.rs` | `#[ignore]` | Require PostgreSQL/SeaweedFS/Meilisearch |
 
 **Rules for Tier 1 tests:**
 - Each test must complete in **under 500ms**
@@ -198,7 +198,7 @@ This runs:
 3. `cargo test --lib` (unit tests)
 4. `docker compose up -d` + `cargo test --lib -- --ignored` (storage-dependent tests)
 
-The script automatically starts Docker services (Cassandra, SeaweedFS, Meilisearch) for storage-dependent tests.
+The script automatically starts Docker services (PostgreSQL, SeaweedFS, Meilisearch) for storage-dependent tests.
 
 ### Windows Support
 
@@ -216,7 +216,7 @@ If any check fails, fix the issues before committing.
 
 **Every feature MUST be completed with**:
 1. Update `README.md` if project structure changed (new files, directories, tests, status)
-2. Update any relevant files in `docs/` — keep architecture docs, keyspace names, env vars, and feature descriptions in sync with the code
+2. Update any relevant files in `docs/` — keep architecture docs, env vars, and feature descriptions in sync with the code
 3. Run `./scripts/pre-commit.sh`
 4. Commit: `git add . && git commit -m "feat: description"`
 
@@ -241,9 +241,8 @@ lalasearch/
 │   ├── Dockerfile                # Container image definition
 │   └── Cargo.toml                # Rust dependencies
 ├── docker/                       # Docker configuration
-│   └── cassandra/
-│       ├── schema.cql            # Apache Cassandra database schema
-│       └── migrations/           # Database migration files
+│   └── postgres/
+│       └── schema.sql            # PostgreSQL schema (all tables, RLS policies)
 ├── docker-compose.yml            # Multi-container setup
 ├── .env.example                  # Environment variables template
 └── scripts/
@@ -450,23 +449,28 @@ let email_map: HashMap<Uuid, String> = users
 - Resolving foreign keys or references
 - Any loop that makes database queries
 
-### Cassandra-Specific Tips
+### PostgreSQL Tips
 
-Cassandra doesn't support JOINs, so use these patterns:
+PostgreSQL supports JOINs, so prefer them over N+1 queries:
 
-1. **IN clause for batch primary key lookups**:
-   ```cql
-   SELECT * FROM users WHERE user_id IN ?
+1. **JOIN for related data**:
+   ```sql
+   SELECT m.user_id, m.role, u.email
+   FROM org_memberships m
+   JOIN users u ON u.user_id = m.user_id
+   WHERE m.tenant_id = $1
    ```
 
-2. **Denormalization** (when appropriate):
-   - Store frequently accessed data together to avoid lookups
-   - Example: Store email in `org_memberships` if always needed
-   - Trade-off: Data consistency vs query performance
+2. **IN clause for batch primary key lookups**:
+   ```sql
+   SELECT * FROM users WHERE user_id = ANY($1)
+   ```
 
-3. **Secondary indexes with filtering** (use sparingly):
-   ```cql
-   SELECT * FROM users WHERE tenant_id = ? ALLOW FILTERING
+3. **Subqueries** (when JOINs are awkward):
+   ```sql
+   SELECT * FROM users WHERE user_id IN (
+     SELECT user_id FROM org_memberships WHERE tenant_id = $1
+   )
    ```
 
 ### When in Doubt, Ask!
@@ -789,13 +793,13 @@ async fn enqueue_link(&self, link: &str) {
 
 **BAD** - Hardcoded defaults:
 ```rust
-let db_host = env::var("DB_HOST").unwrap_or("127.0.0.1:9042".to_string());
+let db_url = env::var("DB_URL").unwrap_or("postgres://localhost:5432".to_string());
 ```
 
 **GOOD** - Environment variables only:
 ```rust
-let db_host = env::var("CASSANDRA_HOSTS")
-    .expect("CASSANDRA_HOSTS environment variable must be set");
+let db_url = env::var("DATABASE_URL")
+    .expect("DATABASE_URL environment variable must be set");
 ```
 
 ### File Structure
@@ -850,151 +854,83 @@ docker compose restart lala-agent       # Doesn't rebuild, just restarts
 
 ### Migration Strategy
 
-Cassandra doesn't have built-in migration tools, so we use a simple file-based approach:
+PostgreSQL schema is defined in `docker/postgres/schema.sql`. This file contains the full current schema and is applied automatically on first database start via Docker's `/docker-entrypoint-initdb.d/` mechanism.
 
-1. **Schema file** (`docker/cassandra/schema.cql`): Contains the full current schema for fresh deployments
-2. **Migrations directory** (`docker/cassandra/migrations/`): Contains numbered migration files for existing deployments
+For existing deployments, use standard PostgreSQL migrations:
 
 ### Creating a Migration
 
 When adding/modifying schema:
 
-1. Update `schema.cql` with the new column/table
-2. Create a migration file in `migrations/` with format: `NNN_description.cql`
-3. Document the migration with date and purpose
+1. Update `docker/postgres/schema.sql` with the new column/table
+2. Write the corresponding `ALTER TABLE` SQL for existing deployments
+3. Apply to running database via `psql`
 
-**Example migration file** (`migrations/001_add_storage_compression.cql`):
+**Example migration:**
 ```sql
--- Migration 001: Add storage_compression column to crawled_pages
--- Date: 2026-01-18
--- Description: Track compression type for stored content (0=none, 1=gzip)
-
-USE ${KEYSPACE_NAME};
-
-ALTER TABLE crawled_pages ADD storage_compression tinyint;
+-- Add storage_compression column to crawled_pages
+ALTER TABLE crawled_pages ADD COLUMN IF NOT EXISTS storage_compression SMALLINT DEFAULT 0;
 ```
 
 ### Running Migrations
 
 **For existing deployments:**
 ```bash
-# Run specific migration
-docker exec lalasearch-cassandra cqlsh -e "USE lalasearch; ALTER TABLE crawled_pages ADD storage_compression tinyint;"
-
-# Or run migration file (after copying to container)
-docker exec lalasearch-cassandra cqlsh -f /path/to/migration.cql
+# Connect to PostgreSQL and run migration
+docker exec -it lalasearch-postgres psql -U lalasearch -d lalasearch -c "
+ALTER TABLE crawled_pages ADD COLUMN IF NOT EXISTS storage_compression SMALLINT DEFAULT 0;
+"
 ```
 
 **For fresh deployments:**
 ```bash
-# Schema already contains all columns - no migration needed
-docker compose up -d cassandra cassandra-init
+# Schema is applied automatically on first start
+docker compose up -d postgres
 ```
 
 ### Migration Principles
 
-1. **Additive only**: Only add columns/tables, never remove or rename
-2. **Safe to re-run**: Migrations should be idempotent (use IF NOT EXISTS, ADD ignores existing)
+1. **Additive only**: Only add columns/tables, never remove or rename in production
+2. **Safe to re-run**: Use `IF NOT EXISTS` / `IF EXISTS` for idempotency
 3. **No data loss**: Never drop tables or columns with production data
-4. **Document changes**: Each migration file explains what and why
-5. **Update schema.cql**: Always keep schema.cql in sync with migrations
+4. **Document changes**: Comment each migration with date and purpose
+5. **Update schema.sql**: Always keep `docker/postgres/schema.sql` in sync
 
 ### Handling New Columns in Rust Code
 
-**CRITICAL**: When adding columns to existing tables, existing rows will have NULL values for the new column. Always use `Option<T>` in Rust deserialization.
+**CRITICAL**: When adding nullable columns to existing tables, use `Option<T>` in Rust structs.
 
 **BAD** - Non-nullable type for new column:
 ```rust
 // This will fail for existing rows where storage_compression is NULL
-rows::<(String, String, i8)>()  // i8 can't deserialize NULL
-
-pub fn from_db_value(value: i8) -> Self {
-    match value {
-        1 => CompressionType::Gzip,
-        _ => CompressionType::None,
-    }
-}
+pub storage_compression: i16,  // i16 can't deserialize NULL
 ```
 
-**GOOD** - Use Option for new columns:
+**GOOD** - Use Option for nullable columns:
 ```rust
-// Option<i8> handles NULL values from existing rows
-rows::<(String, String, Option<i8>)>()
-
-pub fn from_db_value(value: Option<i8>) -> Self {
-    match value {
-        Some(1) => CompressionType::Gzip,
-        _ => CompressionType::None,  // NULL defaults to None
-    }
-}
+// Option<i16> handles NULL values from existing rows
+pub storage_compression: Option<i16>,
 ```
 
 **Checklist when adding a column to existing table:**
-1. ✅ Create migration file with ALTER TABLE ADD
-2. ✅ Update schema.cql with new column
-3. ✅ Use `Option<T>` in Rust deserialization tuple
-4. ✅ Handle `None` case with sensible default
-5. ✅ Add test for NULL/None handling
+1. Update `docker/postgres/schema.sql` with new column
+2. Write `ALTER TABLE ADD COLUMN IF NOT EXISTS` for existing deployments
+3. Use `Option<T>` in Rust struct if column can be NULL
+4. Handle `None` case with sensible default
+5. Add test for NULL/None handling
 
-### Applying Schema Changes
-
-**How to apply schema changes for both single-tenant and multi-tenant:**
-
-#### Method 1: Re-run cassandra-init (Recommended for Development)
-
-The cassandra-init service is idempotent and can be run multiple times safely:
+### Verification
 
 ```bash
-docker compose up cassandra-init
+# List all tables
+docker exec lalasearch-postgres psql -U lalasearch -d lalasearch -c "\dt"
+
+# Describe a specific table
+docker exec lalasearch-postgres psql -U lalasearch -d lalasearch -c "\d crawled_pages"
+
+# Check RLS policies
+docker exec lalasearch-postgres psql -U lalasearch -d lalasearch -c "SELECT * FROM pg_policies;"
 ```
-
-This will:
-- Apply all schema changes from `schema_system.cql` (system keyspace)
-- Apply all schema changes from `schema.cql` (tenant keyspace)
-- Use `CREATE TABLE IF NOT EXISTS` to safely skip existing tables
-- Substitute environment variables for keyspace names
-
-#### Method 2: Manual Migration (For Production)
-
-For production systems with existing data:
-
-```bash
-# Apply to system keyspace
-docker exec lalasearch-cassandra cqlsh -e "
-USE lalasearch_system;
-ALTER TABLE existing_table ADD new_column text;
-"
-
-# Apply to tenant keyspace(s)
-docker exec lalasearch-cassandra cqlsh -e "
-USE lalasearch_default;
-ALTER TABLE existing_table ADD new_column text;
-"
-```
-
-#### Important Notes
-
-1. **Reserved Keywords**: Avoid CQL reserved keywords (`token`, `user`, `key`, etc.)
-   - Use descriptive names: `token_hash` instead of `token`
-   - If unavoidable, escape with double quotes: `"token"` (but this makes it case-sensitive)
-
-2. **Environment Variables**: Schema files use placeholders like `${SYSTEM_KEYSPACE_NAME}` and `${KEYSPACE_NAME}`
-   - cassandra-init substitutes these automatically via sed
-   - Manual execution requires replacing these first
-
-3. **Single vs Multi-Tenant**:
-   - **System keyspace** (`lalasearch_system`): Always one instance, shared across all tenants
-   - **Tenant keyspaces** (`lalasearch_*`): One per tenant in multi-tenant mode
-   - Both are created by cassandra-init based on env vars
-
-4. **Verification**:
-   ```bash
-   # Check system keyspace tables
-   docker exec lalasearch-cassandra cqlsh -e "DESCRIBE KEYSPACE lalasearch_system;"
-
-   # Check tenant keyspace tables
-   docker exec lalasearch-cassandra cqlsh -e "DESCRIBE KEYSPACE lalasearch_default;"
-   ```
 
 ## Cross-Platform Compatibility
 
@@ -1005,7 +941,7 @@ ALTER TABLE existing_table ADD new_column text;
 #[cfg(target_os = "windows")]
 let config_path = "C:\\Users\\...";
 
-let db_host = "127.0.0.1:9042";  // Fails in Docker
+let db_url = "postgres://localhost:5432/lalasearch";  // Fails in Docker
 ```
 
 **GOOD** - Cross-platform solutions:
@@ -1013,8 +949,8 @@ let db_host = "127.0.0.1:9042";  // Fails in Docker
 let config_path = env::var("CONFIG_PATH")
     .unwrap_or_else(|_| "config.toml".to_string());
 
-let db_host = env::var("CASSANDRA_HOSTS")
-    .expect("CASSANDRA_HOSTS must be set");
+let db_url = env::var("DATABASE_URL")
+    .expect("DATABASE_URL must be set");
 ```
 
 **Target Platforms**:

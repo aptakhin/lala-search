@@ -34,26 +34,26 @@ else
     esac
 fi
 
-# --- Helper: start infrastructure and wait for cassandra-init ---
+# --- Helper: start infrastructure and wait for postgres ---
 start_infrastructure() {
     cd "$PROJECT_ROOT"
 
-    echo "    Starting Docker services (cassandra, seaweedfs, meilisearch)..."
-    docker compose up -d cassandra seaweedfs meilisearch cassandra-init
+    echo "    Starting Docker services (postgres, seaweedfs, meilisearch)..."
+    docker compose up -d postgres seaweedfs meilisearch seaweedfs-init
 
-    echo "    Waiting for cassandra-init to complete schema creation..."
-    exit_code=$(timeout 120 docker wait lalasearch-cassandra-init 2>/dev/null) || true
-    if [ -z "$exit_code" ]; then
-        echo "    ❌ Timed out waiting for cassandra-init (120s)"
-        docker compose logs cassandra-init
-        exit 1
-    fi
-    if [ "$exit_code" != "0" ]; then
-        echo "    ❌ cassandra-init failed with exit code $exit_code"
-        docker compose logs cassandra-init
-        exit 1
-    fi
-    echo "    cassandra-init completed successfully."
+    echo "    Waiting for PostgreSQL to be ready..."
+    max_wait=60
+    waited=0
+    while ! docker compose exec -T postgres pg_isready -U lalasearch -d lalasearch > /dev/null 2>&1; do
+        sleep 2
+        waited=$((waited + 2))
+        if [ "$waited" -ge "$max_wait" ]; then
+            echo "    ❌ Timed out waiting for PostgreSQL (${max_wait}s)"
+            docker compose logs postgres
+            exit 1
+        fi
+    done
+    echo "    PostgreSQL is ready."
 }
 
 # --- Docker mode: run all checks inside lala-agent container ---
@@ -61,9 +61,9 @@ if [ "$USE_DOCKER" = true ]; then
     echo "Running pre-commit checks in Docker (via docker compose run)..."
     cd "$PROJECT_ROOT"
 
-    # docker compose run starts dependencies automatically (cassandra, seaweedfs,
-    # meilisearch) and waits for health checks / cassandra-init completion via
-    # the depends_on conditions defined in docker-compose.yml.
+    # docker compose run starts dependencies automatically (postgres, seaweedfs,
+    # meilisearch) and waits for health checks via the depends_on conditions
+    # defined in docker-compose.yml.
     echo "Running fmt, clippy, and tests in lala-agent container..."
     docker compose run --rm lala-agent sh -c '
         rustup component add rustfmt clippy > /dev/null 2>&1 && \

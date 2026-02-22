@@ -7,10 +7,8 @@
  *
  * Prerequisites (set up by run_tests.sh):
  *   - Agent running with DEPLOYMENT_MODE=multi_tenant
- *   - lalasearch_test keyspace (tenant 1 — default test tenant)
- *   - lalasearch_test_tenant2 keyspace (tenant 2)
- *   - lalasearch_system.tenants rows for both keyspaces
- *   - Pre-seeded org_invitation for user2@test.e2e → lalasearch_test_tenant2
+ *   - PostgreSQL with test tenant rows for tenant 1 and tenant 2
+ *   - Pre-seeded org_invitation for user2@test.e2e → tenant 2
  *     with raw token "e2e-test-tenant2-invite-0001"
  *
  * Environment variables required:

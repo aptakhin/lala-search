@@ -4,35 +4,42 @@
 use axum::{routing::get, Router};
 use chrono::Utc;
 use lala_agent::models::db::{CrawlQueueEntry, CrawledPage};
-use lala_agent::services::db::{CassandraClient, CassandraConfig};
+use lala_agent::services::db::DbClient;
 use lala_agent::services::queue_processor::QueueProcessor;
 use lala_agent::services::storage::{S3Config, StorageClient};
-use scylla::frame::value::CqlTimestamp;
+use sqlx::postgres::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
+use uuid::Uuid;
 
 // Integration tests for queue processor workflows (Tier 2).
-// These tests require running Cassandra and SeaweedFS instances.
+// These tests require running PostgreSQL and SeaweedFS instances.
 // Run with: cargo test --test queue_processor_integration_test
 //
 // Required environment variables (loaded from .env):
-// - CASSANDRA_HOSTS: Cassandra host(s), e.g., "127.0.0.1:9042"
-// - CASSANDRA_KEYSPACE: Cassandra keyspace, e.g., "lalasearch_default"
+// - DATABASE_URL: PostgreSQL connection URL, e.g., "postgres://lalasearch:lalasearch@127.0.0.1:5432/lalasearch"
 // - S3_ENDPOINT: SeaweedFS/S3 endpoint, e.g., "http://127.0.0.1:8333"
 // - S3_BUCKET: S3 bucket name
 // - S3_ACCESS_KEY: S3 access key
 // - S3_SECRET_KEY: S3 secret key
 
-/// Helper to create a CassandraClient from environment variables.
-async fn create_db_client() -> Arc<CassandraClient> {
-    let config = CassandraConfig::from_env()
-        .expect("CASSANDRA_HOSTS and CASSANDRA_KEYSPACE environment variables must be set");
-    Arc::new(
-        CassandraClient::from_config(config)
-            .await
-            .expect("Failed to connect to Cassandra"),
-    )
+/// Helper to create a DbClient from environment variables.
+async fn create_db_client() -> Arc<DbClient> {
+    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://lalasearch:lalasearch@127.0.0.1:5432/lalasearch".to_string()
+    });
+
+    let pool = PgPool::connect(&database_url)
+        .await
+        .expect("Failed to connect to PostgreSQL");
+
+    let default_tenant_id: Uuid = std::env::var("DEFAULT_TENANT_ID")
+        .unwrap_or_else(|_| "00000000-0000-0000-0000-000000000001".to_string())
+        .parse()
+        .expect("DEFAULT_TENANT_ID must be a valid UUID");
+
+    Arc::new(DbClient::new(pool, default_tenant_id))
 }
 
 /// Helper to create a StorageClient from environment variables.
@@ -48,7 +55,7 @@ async fn create_storage_client() -> StorageClient {
 #[tokio::test]
 async fn test_queue_processor_workflow() {
     let db_client = create_db_client().await;
-    println!("✓ Connected to Cassandra");
+    println!("✓ Connected to PostgreSQL");
 
     // Setup: Create a unique test domain and ensure it's allowed
     let test_domain = format!(
@@ -65,16 +72,17 @@ async fn test_queue_processor_workflow() {
     // Create a test queue entry
     let test_url = format!("https://{}/test-page", test_domain);
     let now = Utc::now();
-    let now_timestamp = CqlTimestamp(now.timestamp_millis());
 
     let entry = CrawlQueueEntry {
+        queue_id: Uuid::now_v7(),
+        tenant_id: db_client.tenant_id,
         priority: 1,
-        scheduled_at: now_timestamp,
+        scheduled_at: now,
         url: test_url.clone(),
         domain: test_domain.clone(),
         last_attempt_at: None,
         attempt_count: 0,
-        created_at: now_timestamp,
+        created_at: now,
     };
 
     // Insert the queue entry
@@ -114,7 +122,7 @@ async fn test_queue_processor_workflow() {
 #[tokio::test]
 async fn test_upsert_crawled_page() {
     let db_client = create_db_client().await;
-    println!("✓ Connected to Cassandra");
+    println!("✓ Connected to PostgreSQL");
 
     // Use unique test data to ensure isolation
     let test_domain = format!(
@@ -125,18 +133,18 @@ async fn test_upsert_crawled_page() {
     let test_url = format!("https://{}{}", test_domain, test_path);
 
     let now = Utc::now();
-    let now_timestamp = CqlTimestamp(now.timestamp_millis());
     let crawl_frequency_hours: i32 = 24;
-    let next_crawl = now + chrono::Duration::hours(crawl_frequency_hours as i64);
-    let next_crawl_at = CqlTimestamp(next_crawl.timestamp_millis());
+    let next_crawl_at = now + chrono::Duration::hours(crawl_frequency_hours as i64);
 
     let page = CrawledPage {
+        page_id: Uuid::now_v7(),
+        tenant_id: db_client.tenant_id,
         domain: test_domain.clone(),
         url_path: test_path.to_string(),
         url: test_url.clone(),
         storage_id: None,
         storage_compression: lala_agent::models::storage::CompressionType::None,
-        last_crawled_at: now_timestamp,
+        last_crawled_at: now,
         next_crawl_at,
         crawl_frequency_hours,
         http_status: 200,
@@ -145,8 +153,8 @@ async fn test_upsert_crawled_page() {
         robots_allowed: true,
         error_message: None,
         crawl_count: 1,
-        created_at: now_timestamp,
-        updated_at: now_timestamp,
+        created_at: now,
+        updated_at: now,
     };
 
     // Insert the page
@@ -180,20 +188,20 @@ async fn test_upsert_crawled_page() {
     println!("\n✅ Upsert crawled page test passed!");
 }
 
-/// Integration test for the full page crawling workflow with Cassandra and S3 storage.
+/// Integration test for the full page crawling workflow with PostgreSQL and S3 storage.
 ///
 /// This test verifies the complete flow:
 /// 1. Set up test domain in allowed_domains
 /// 2. Upload HTML content to S3 storage
-/// 3. Create and store CrawledPage with storage_id in Cassandra
-/// 4. Verify the page can be retrieved from Cassandra with correct storage_id
+/// 3. Create and store CrawledPage with storage_id in PostgreSQL
+/// 4. Verify the page can be retrieved from PostgreSQL with correct storage_id
 /// 5. Verify the content can be retrieved from S3 using storage_id
 /// 6. Clean up all test data
 #[tokio::test]
 async fn test_full_crawl_workflow_with_storage() {
     // Setup clients from environment variables
     let db_client = create_db_client().await;
-    println!("✓ Connected to Cassandra");
+    println!("✓ Connected to PostgreSQL");
 
     let storage_client = create_storage_client().await;
     println!("✓ Connected to S3/SeaweedFS storage");
@@ -238,45 +246,45 @@ async fn test_full_crawl_workflow_with_storage() {
         storage_id, compression_type
     );
 
-    // Step 3: Create and store CrawledPage in Cassandra
+    // Step 3: Create and store CrawledPage in PostgreSQL
     let now = Utc::now();
-    let now_timestamp = CqlTimestamp(now.timestamp_millis());
     let crawl_frequency_hours: i32 = 24;
-    let next_crawl = now + chrono::Duration::hours(crawl_frequency_hours as i64);
-    let next_crawl_at = CqlTimestamp(next_crawl.timestamp_millis());
+    let next_crawl_at = now + chrono::Duration::hours(crawl_frequency_hours as i64);
     let content_hash = format!("{:x}", md5::compute(test_content.as_bytes()));
 
     let crawled_page = CrawledPage {
+        page_id: Uuid::now_v7(),
+        tenant_id: db_client.tenant_id,
         domain: test_domain.clone(),
         url_path: test_path.to_string(),
         url: test_url.clone(),
         storage_id: Some(storage_id),
         storage_compression: compression_type,
-        last_crawled_at: now_timestamp,
+        last_crawled_at: now,
         next_crawl_at,
         crawl_frequency_hours,
         http_status: 200,
         content_hash: content_hash.clone(),
-        content_length: test_content.len() as i64,
+        content_length: test_content.len() as i32,
         robots_allowed: true,
         error_message: None,
         crawl_count: 1,
-        created_at: now_timestamp,
-        updated_at: now_timestamp,
+        created_at: now,
+        updated_at: now,
     };
 
     db_client
         .upsert_crawled_page(&crawled_page)
         .await
-        .expect("Failed to insert crawled page into Cassandra");
-    println!("✓ Stored CrawledPage in Cassandra");
+        .expect("Failed to insert crawled page into PostgreSQL");
+    println!("✓ Stored CrawledPage in PostgreSQL");
 
-    // Step 4: Verify page retrieval from Cassandra
+    // Step 4: Verify page retrieval from PostgreSQL
     let retrieved_page = db_client
         .get_crawled_page(&test_domain, test_path)
         .await
         .expect("Failed to query crawled page")
-        .expect("CrawledPage not found in Cassandra");
+        .expect("CrawledPage not found in PostgreSQL");
 
     assert_eq!(retrieved_page.url, test_url);
     assert_eq!(retrieved_page.http_status, 200);
@@ -286,7 +294,7 @@ async fn test_full_crawl_workflow_with_storage() {
         Some(storage_id),
         "storage_id should match"
     );
-    println!("✓ Retrieved and verified CrawledPage from Cassandra");
+    println!("✓ Retrieved and verified CrawledPage from PostgreSQL");
 
     // Step 5: Verify content retrieval from S3 using storage_id
     let retrieved_storage_id = retrieved_page
@@ -318,7 +326,7 @@ async fn test_full_crawl_workflow_with_storage() {
     println!("\n✅ Full crawl workflow integration test passed!");
     println!("   - Allowed domain set up");
     println!("   - Content uploaded to S3 (storage_id: {})", storage_id);
-    println!("   - CrawledPage stored in Cassandra");
+    println!("   - CrawledPage stored in PostgreSQL");
     println!("   - Page retrieved with correct storage_id");
     println!("   - Content retrieved from S3 matches original");
     println!("   - Test data cleaned up");
@@ -328,7 +336,7 @@ async fn test_full_crawl_workflow_with_storage() {
 #[tokio::test]
 async fn test_queue_entry_workflow() {
     let db_client = create_db_client().await;
-    println!("✓ Connected to Cassandra");
+    println!("✓ Connected to PostgreSQL");
 
     // Setup: Create a unique test domain and ensure it's allowed
     let test_domain = format!(
@@ -344,17 +352,18 @@ async fn test_queue_entry_workflow() {
 
     // Create a unique test entry
     let now = Utc::now();
-    let now_timestamp = CqlTimestamp(now.timestamp_millis());
     let test_url = format!("https://{}/page-{}", test_domain, now.timestamp_millis());
 
     let entry = CrawlQueueEntry {
+        queue_id: Uuid::now_v7(),
+        tenant_id: db_client.tenant_id,
         priority: 5,
-        scheduled_at: now_timestamp,
+        scheduled_at: now,
         url: test_url.clone(),
         domain: test_domain.clone(),
         last_attempt_at: None,
         attempt_count: 0,
-        created_at: now_timestamp,
+        created_at: now,
     };
 
     // Insert entry
@@ -397,7 +406,7 @@ async fn test_queue_entry_workflow() {
 /// 1. Setup: Start local HTTP server, add allowed domain
 /// 2. Add page to crawl queue
 /// 3. Call QueueProcessor::process_next_entry() (single production code call)
-/// 4. Verify: crawled page in Cassandra + content in S3
+/// 4. Verify: crawled page in PostgreSQL + content in S3
 /// 5. Cleanup
 #[tokio::test]
 async fn test_crawl_pipeline_end_to_end() {
@@ -452,7 +461,7 @@ async fn test_crawl_pipeline_end_to_end() {
 
     // Setup clients
     let db_client = create_db_client().await;
-    println!("✓ Connected to Cassandra");
+    println!("✓ Connected to PostgreSQL");
 
     let storage_client = create_storage_client().await;
     println!("✓ Connected to S3/SeaweedFS storage");
@@ -473,16 +482,17 @@ async fn test_crawl_pipeline_end_to_end() {
 
     // Step 2: Add page to crawl queue
     let now = Utc::now();
-    let now_timestamp = CqlTimestamp(now.timestamp_millis());
 
     let queue_entry = CrawlQueueEntry {
+        queue_id: Uuid::now_v7(),
+        tenant_id: db_client.tenant_id,
         priority: 1,
-        scheduled_at: now_timestamp,
+        scheduled_at: now,
         url: test_url.clone(),
         domain: test_domain.clone(),
         last_attempt_at: None,
         attempt_count: 0,
-        created_at: now_timestamp,
+        created_at: now,
     };
 
     db_client
@@ -509,12 +519,12 @@ async fn test_crawl_pipeline_end_to_end() {
     println!("✓ Processed crawl entry via production code");
 
     // Step 4: Verify results
-    // 4a: Check crawled page exists in Cassandra
+    // 4a: Check crawled page exists in PostgreSQL
     let crawled_page = db_client
         .get_crawled_page(&test_domain, "/test-page")
         .await
         .expect("Failed to query crawled page")
-        .expect("Crawled page not found in Cassandra");
+        .expect("Crawled page not found in PostgreSQL");
 
     assert_eq!(crawled_page.url, test_url);
     assert_eq!(crawled_page.http_status, 200);
@@ -523,7 +533,7 @@ async fn test_crawl_pipeline_end_to_end() {
         crawled_page.storage_id.is_some(),
         "storage_id should be set"
     );
-    println!("✓ Verified crawled page in Cassandra");
+    println!("✓ Verified crawled page in PostgreSQL");
 
     // 4b: Check content exists in S3 and matches
     let storage_client = create_storage_client().await;
@@ -554,6 +564,6 @@ async fn test_crawl_pipeline_end_to_end() {
     println!("\n✅ End-to-end crawl pipeline test passed!");
     println!("   - Local HTTP server served test content");
     println!("   - Single process_next_entry() call processed the crawl");
-    println!("   - Crawled page verified in Cassandra");
+    println!("   - Crawled page verified in PostgreSQL");
     println!("   - Content verified in S3");
 }

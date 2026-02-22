@@ -17,20 +17,20 @@ docker compose up -d --build
 ```
 
 This removes:
-- All Cassandra data (crawled pages, queue, settings)
+- All PostgreSQL data (crawled pages, queue, settings, users, sessions)
 - All Meilisearch indexes (search data)
 - All SeaweedFS objects (stored HTML content)
 
 ### Selective Cleanup
 
-#### Reset Cassandra Only
+#### Reset PostgreSQL Only
 
 ```bash
 # Stop all services
 docker compose down
 
-# Remove only Cassandra volume
-docker volume rm lalasearch_cassandra-data
+# Remove only PostgreSQL volume
+docker volume rm lalasearch_postgres-data
 
 # Restart (will reinitialize schema)
 docker compose up -d --build
@@ -39,23 +39,15 @@ docker compose up -d --build
 Or truncate tables without removing the volume:
 
 ```bash
-# Connect to Cassandra
-docker exec -it lalasearch-cassandra cqlsh
+# Connect to PostgreSQL
+docker exec -it lalasearch-postgres psql -U lalasearch -d lalasearch
 
 # Truncate specific tables
-cqlsh> USE lalasearch;
-cqlsh:lalasearch> TRUNCATE crawled_pages;
-cqlsh:lalasearch> TRUNCATE crawl_queue;
-cqlsh:lalasearch> TRUNCATE crawl_errors;
-cqlsh:lalasearch> TRUNCATE allowed_domains;
-cqlsh:lalasearch> TRUNCATE settings;
-
-# Or truncate all tables
-cqlsh:lalasearch> TRUNCATE crawled_pages;
-cqlsh:lalasearch> TRUNCATE crawl_queue;
-cqlsh:lalasearch> TRUNCATE crawl_errors;
-cqlsh:lalasearch> TRUNCATE allowed_domains;
-cqlsh:lalasearch> TRUNCATE settings;
+lalasearch=# TRUNCATE crawled_pages CASCADE;
+lalasearch=# TRUNCATE crawl_queue CASCADE;
+lalasearch=# TRUNCATE crawl_errors CASCADE;
+lalasearch=# TRUNCATE allowed_domains CASCADE;
+lalasearch=# TRUNCATE settings CASCADE;
 ```
 
 #### Reset Meilisearch Only
@@ -112,13 +104,12 @@ exit
 To stop current crawling and clear the queue without losing crawled data:
 
 ```bash
-# Connect to Cassandra
-docker exec -it lalasearch-cassandra cqlsh
+# Connect to PostgreSQL
+docker exec -it lalasearch-postgres psql -U lalasearch -d lalasearch
 
 # Clear only the queue
-cqlsh> USE lalasearch;
-cqlsh:lalasearch> TRUNCATE crawl_queue;
-cqlsh:lalasearch> TRUNCATE crawl_errors;
+lalasearch=# TRUNCATE crawl_queue;
+lalasearch=# TRUNCATE crawl_errors;
 ```
 
 ### Clear Specific Domain Data
@@ -126,19 +117,17 @@ cqlsh:lalasearch> TRUNCATE crawl_errors;
 To remove all data for a specific domain:
 
 ```bash
-# Connect to Cassandra
-docker exec -it lalasearch-cassandra cqlsh
-
-cqlsh> USE lalasearch;
+# Connect to PostgreSQL
+docker exec -it lalasearch-postgres psql -U lalasearch -d lalasearch
 
 # Delete crawled pages for domain
-cqlsh:lalasearch> DELETE FROM crawled_pages WHERE domain = 'example.com';
+lalasearch=# DELETE FROM crawled_pages WHERE domain = 'example.com';
 
 # Delete from queue
-cqlsh:lalasearch> DELETE FROM crawl_queue WHERE domain = 'example.com';
+lalasearch=# DELETE FROM crawl_queue WHERE domain = 'example.com';
 
-# Remove from allowed domains
-cqlsh:lalasearch> DELETE FROM allowed_domains WHERE domain = 'example.com';
+# Soft-delete from allowed domains
+lalasearch=# UPDATE allowed_domains SET deleted_at = NOW() WHERE domain = 'example.com';
 ```
 
 For Meilisearch, filter and delete:
@@ -166,7 +155,7 @@ docker compose logs -f
 
 # Specific service
 docker compose logs -f lala-agent
-docker compose logs -f cassandra
+docker compose logs -f postgres
 docker compose logs -f meilisearch
 docker compose logs -f seaweedfs
 ```
@@ -189,18 +178,24 @@ docker compose up -d --build lala-agent
 
 ## Database Inspection
 
-### Cassandra
+### PostgreSQL
 
 ```bash
-# Connect to cqlsh
-docker exec -it lalasearch-cassandra cqlsh
+# Connect to psql
+docker exec -it lalasearch-postgres psql -U lalasearch -d lalasearch
 
 # Common queries
-cqlsh> USE lalasearch;
-cqlsh:lalasearch> SELECT COUNT(*) FROM crawled_pages;
-cqlsh:lalasearch> SELECT COUNT(*) FROM crawl_queue;
-cqlsh:lalasearch> SELECT * FROM settings;
-cqlsh:lalasearch> SELECT * FROM allowed_domains;
+lalasearch=# SELECT COUNT(*) FROM crawled_pages;
+lalasearch=# SELECT COUNT(*) FROM crawl_queue;
+lalasearch=# SELECT * FROM settings;
+lalasearch=# SELECT * FROM allowed_domains WHERE deleted_at IS NULL;
+lalasearch=# SELECT * FROM tenants WHERE deleted_at IS NULL;
+
+# List all tables
+lalasearch=# \dt
+
+# Describe a table
+lalasearch=# \d crawled_pages
 ```
 
 ### Meilisearch
@@ -234,14 +229,20 @@ curl http://localhost:9333/dir/status
 
 ## Backup and Restore
 
-### Backup Cassandra
+### Backup PostgreSQL
 
 ```bash
-# Create snapshot
-docker exec lalasearch-cassandra nodetool snapshot lalasearch
+# Create a full database dump
+docker exec lalasearch-postgres pg_dump -U lalasearch -d lalasearch > backup/postgres/lalasearch.sql
 
-# Copy snapshot from container
-docker cp lalasearch-cassandra:/var/lib/cassandra/data/lalasearch/ ./backup/cassandra/
+# Or create a compressed dump
+docker exec lalasearch-postgres pg_dump -U lalasearch -d lalasearch -Fc > backup/postgres/lalasearch.dump
+
+# Restore from dump
+docker exec -i lalasearch-postgres psql -U lalasearch -d lalasearch < backup/postgres/lalasearch.sql
+
+# Restore from compressed dump
+docker exec -i lalasearch-postgres pg_restore -U lalasearch -d lalasearch backup/postgres/lalasearch.dump
 ```
 
 ### Backup Meilisearch
@@ -287,12 +288,15 @@ docker system prune -a
 docker volume prune
 ```
 
-### Cassandra Performance Issues
+### PostgreSQL Performance Issues
 
 ```bash
-# Check node status
-docker exec lalasearch-cassandra nodetool status
+# Check active connections
+docker exec lalasearch-postgres psql -U lalasearch -d lalasearch -c "SELECT count(*) FROM pg_stat_activity;"
 
-# Check table statistics
-docker exec lalasearch-cassandra nodetool tablestats lalasearch
+# Check long-running queries
+docker exec lalasearch-postgres psql -U lalasearch -d lalasearch -c "SELECT pid, now() - pg_stat_activity.query_start AS duration, query FROM pg_stat_activity WHERE state != 'idle' ORDER BY duration DESC LIMIT 10;"
+
+# Check table sizes
+docker exec lalasearch-postgres psql -U lalasearch -d lalasearch -c "SELECT relname, pg_size_pretty(pg_total_relation_size(relid)) AS total_size FROM pg_catalog.pg_statio_user_tables ORDER BY pg_total_relation_size(relid) DESC;"
 ```

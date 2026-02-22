@@ -2,27 +2,25 @@
 # Copyright (c) 2026 Aleksandr Ptakhin
 
 services:
-  # Apache Cassandra - Open source distributed NoSQL database
-  cassandra:
-    image: cassandra:5.0
-    container_name: lalasearch-cassandra
+  # PostgreSQL - Open source relational database
+  postgres:
+    image: postgres:17-alpine
+    container_name: lalasearch-postgres
     ports:
-      - "9042:9042"  # CQL native transport
+      - "5432:5432"
     volumes:
-      - cassandra-data:/var/lib/cassandra
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     environment:
-      - CASSANDRA_CLUSTER_NAME=lalasearch
-      - CASSANDRA_DC=datacenter1
-      - CASSANDRA_ENDPOINT_SNITCH=SimpleSnitch
-      - CASSANDRA_BROADCAST_RPC_ADDRESS=cassandra
-      - MAX_HEAP_SIZE=512M
-      - HEAP_NEWSIZE=100M
+      - POSTGRES_DB=lalasearch
+      - POSTGRES_USER=lalasearch
+      - POSTGRES_PASSWORD=lalasearch
     healthcheck:
-      test: ["CMD-SHELL", "cqlsh -e 'SELECT now() FROM system.local'"]
-      interval: 30s
-      timeout: 10s
+      test: ["CMD-SHELL", "pg_isready -U lalasearch -d lalasearch"]
+      interval: 10s
+      timeout: 5s
       retries: 5
-      start_period: 60s
+      start_period: 10s
     networks:
       - lalasearch-network
 
@@ -65,12 +63,12 @@ services:
       - .env
     environment:
       # Override specific values for Docker environment
-      - CASSANDRA_HOSTS=cassandra:9042
+      - DATABASE_URL=postgres://lalasearch:lalasearch@postgres:5432/lalasearch
       - MEILISEARCH_HOST=meilisearch:7700
       - S3_ENDPOINT=http://seaweedfs:8333
     depends_on:
-      cassandra-init:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
       meilisearch:
         condition: service_healthy
       seaweedfs-init:
@@ -85,34 +83,6 @@ services:
       - lalasearch-network
     # For development, you can override to run in debug mode:
     # command: cargo run
-
-  # Cassandra initialization service (runs once to create schema)
-  cassandra-init:
-    image: cassandra:5.0
-    container_name: lalasearch-cassandra-init
-    depends_on:
-      cassandra:
-        condition: service_healthy
-    volumes:
-      - ./docker/cassandra/schema.cql:/schema.cql.template:ro
-      - ./docker/cassandra/schema_system.cql:/schema_system.cql.template:ro
-    env_file:
-      - .env
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        echo 'Waiting for Cassandra to be ready...'
-        sleep 10
-        echo 'Initializing system keyspace: '$$CASSANDRA_SYSTEM_KEYSPACE
-        sed "s/\$${SYSTEM_KEYSPACE_NAME}/$$CASSANDRA_SYSTEM_KEYSPACE/g" /schema_system.cql.template > /schema_system.cql
-        cqlsh cassandra -f /schema_system.cql
-        echo 'Initializing tenant keyspace: '$$CASSANDRA_KEYSPACE
-        sed "s/\$${KEYSPACE_NAME}/$$CASSANDRA_KEYSPACE/g" /schema.cql.template > /schema.cql
-        cqlsh cassandra -f /schema.cql
-        echo 'Schema initialized successfully!'
-    networks:
-      - lalasearch-network
-    restart: "no"
 
   # LalaSearch Web Frontend - Retro 1990s-style UI
   lala-web:
@@ -207,7 +177,7 @@ services:
 
 
 volumes:
-  cassandra-data:
+  postgres-data:
     driver: local
   meilisearch-data:
     driver: local

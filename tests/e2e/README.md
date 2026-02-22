@@ -6,9 +6,9 @@ End-to-end tests for the complete LalaSearch system, using [Playwright](https://
 
 These tests run in an **isolated environment** to avoid interfering with development data:
 
-- **Test Keyspace**: `lalasearch_test` (separate from `lalasearch`)
+- **Test Tenants**: Separate tenant UUIDs for each test user
 - **Test Index**: `documents_test` (separate from `documents`)
-- **Auto-cleanup**: Tables are truncated before each test run
+- **Auto-cleanup**: Tenant data is deleted before each test run
 
 This means you can run E2E tests while actively developing without data conflicts.
 
@@ -38,8 +38,8 @@ This means you can run E2E tests while actively developing without data conflict
 
 This script will:
 1. Check Docker Compose availability
-2. Start services with test configuration (isolated keyspace/index)
-3. Create test keyspaces and clean test data
+2. Start services with test configuration (isolated tenant IDs)
+3. Create test tenants and clean test data
 4. Install dependencies with npm
 5. Run single-tenant E2E tests with Playwright
 6. (Optional) Run multi-tenant E2E tests if Mailtrap is configured
