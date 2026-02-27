@@ -17,6 +17,11 @@ body {
     line-height: 1.6;
 }
 
+/* Alpine.js: hide elements until processed */
+[x-cloak] {
+    display: none !important;
+}
+
 /* Header */
 header {
     background-color: #cccccc;

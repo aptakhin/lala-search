@@ -207,22 +207,6 @@ function onboardingPage() {
         return;
       }
 
-      // Check if tenant already has domains — shouldn't be on onboarding
-      try {
-        const res = await fetch('/api/admin/allowed-domains', {
-          credentials: 'include',
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.domains && data.domains.length > 0) {
-            window.location.href = '/dashboard';
-            return;
-          }
-        }
-      } catch {
-        // Continue with onboarding
-      }
-
       this.suggestDomain();
       this.ready = true;
     },
