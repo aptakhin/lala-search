@@ -411,6 +411,39 @@ impl DbClient {
         self.set_setting("crawling_enabled", value).await
     }
 
+    /// Get recently crawled pages for a domain, ordered by last_crawled_at descending.
+    /// Returns tuples of (url, http_status, content_length, last_crawled_at).
+    pub async fn get_recent_crawled_pages(
+        &self,
+        domain: &str,
+        limit: i64,
+    ) -> Result<Vec<(String, i32, i32, DateTime<Utc>)>> {
+        let rows = sqlx::query(
+            "SELECT url, http_status, content_length, last_crawled_at
+             FROM crawled_pages
+             WHERE tenant_id = $1 AND domain = $2
+             ORDER BY last_crawled_at DESC
+             LIMIT $3",
+        )
+        .bind(self.tenant_id)
+        .bind(domain)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .with_context(|| format!("Failed to get recent crawled pages for domain: {domain}"))?;
+
+        Ok(rows
+            .iter()
+            .map(|r| {
+                let url: String = r.get("url");
+                let http_status: i32 = r.get("http_status");
+                let content_length: i32 = r.get("content_length");
+                let last_crawled_at: DateTime<Utc> = r.get("last_crawled_at");
+                (url, http_status, content_length, last_crawled_at)
+            })
+            .collect())
+    }
+
     /// Re-queue an entry with incremented attempt count for retry.
     /// Schedules the retry with exponential backoff based on attempt count.
     pub async fn requeue_with_retry(&self, entry: &CrawlQueueEntry) -> Result<()> {
@@ -580,6 +613,85 @@ mod tests {
         let result = client.is_crawling_enabled().await;
         assert!(result.is_ok());
         assert!(!result.unwrap(), "Crawling should be disabled");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_get_recent_crawled_pages_returns_pages_sorted_by_crawled_at() {
+        let client = create_test_client().await;
+
+        let test_domain = format!(
+            "test-recent-{}.example.invalid",
+            chrono::Utc::now().timestamp_millis()
+        );
+
+        // Insert two crawled pages with different timestamps
+        let now = Utc::now();
+        let older_page = CrawledPage {
+            page_id: Uuid::now_v7(),
+            tenant_id: client.tenant_id,
+            domain: test_domain.clone(),
+            url_path: "/old".to_string(),
+            url: format!("https://{}/old", test_domain),
+            storage_id: None,
+            storage_compression: CompressionType::None,
+            last_crawled_at: now - chrono::Duration::hours(1),
+            next_crawl_at: now + chrono::Duration::hours(24),
+            crawl_frequency_hours: 24,
+            http_status: 200,
+            content_hash: "abc123".to_string(),
+            content_length: 5000,
+            robots_allowed: true,
+            error_message: None,
+            crawl_count: 1,
+            created_at: now - chrono::Duration::hours(1),
+            updated_at: now - chrono::Duration::hours(1),
+        };
+        let newer_page = CrawledPage {
+            page_id: Uuid::now_v7(),
+            tenant_id: client.tenant_id,
+            domain: test_domain.clone(),
+            url_path: "/new".to_string(),
+            url: format!("https://{}/new", test_domain),
+            last_crawled_at: now,
+            content_hash: "def456".to_string(),
+            content_length: 8000,
+            created_at: now,
+            updated_at: now,
+            ..older_page.clone()
+        };
+
+        client
+            .upsert_crawled_page(&older_page)
+            .await
+            .expect("Failed to insert older page");
+        client
+            .upsert_crawled_page(&newer_page)
+            .await
+            .expect("Failed to insert newer page");
+
+        // Query recent pages
+        let result = client
+            .get_recent_crawled_pages(&test_domain, 10)
+            .await
+            .expect("Failed to get recent pages");
+
+        assert_eq!(result.len(), 2);
+        // First result should be newer (DESC order)
+        assert!(result[0].0.contains("/new"));
+        assert!(result[1].0.contains("/old"));
+        assert_eq!(result[0].1, 200); // http_status
+        assert_eq!(result[0].2, 8000); // content_length
+
+        // Cleanup
+        client
+            .delete_crawled_page(&test_domain, "/old")
+            .await
+            .expect("Failed to clean up");
+        client
+            .delete_crawled_page(&test_domain, "/new")
+            .await
+            .expect("Failed to clean up");
     }
 
     #[tokio::test]

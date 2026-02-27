@@ -485,3 +485,173 @@ footer {
 .btn-delete:hover {
     background-color: #ff9999;
 }
+
+/* ============================================================
+   Onboarding Page
+   ============================================================ */
+
+.onboarding-welcome {
+    text-align: center;
+    margin-bottom: 25px;
+}
+
+.onboarding-welcome h2 {
+    color: #000066;
+    margin-bottom: 8px;
+}
+
+.onboarding-welcome p {
+    color: #666666;
+    font-size: 13px;
+}
+
+.onboarding-domain-suggestion {
+    background-color: #ccffcc;
+    border: 2px solid #009900;
+    padding: 10px 15px;
+    font-family: "Courier New", monospace;
+    font-size: 16px;
+    color: #006600;
+    text-align: center;
+}
+
+.onboarding-presets {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.onboarding-preset-btn {
+    padding: 8px 14px;
+    font-size: 12px;
+    background-color: #cccccc;
+    border: 3px outset #ffffff;
+    border-left-color: #ffffff;
+    border-top-color: #ffffff;
+    border-right-color: #999999;
+    border-bottom-color: #999999;
+    cursor: pointer;
+    font-family: Arial, sans-serif;
+    font-weight: bold;
+}
+
+.onboarding-preset-btn:hover {
+    background-color: #dddddd;
+}
+
+.onboarding-preset-btn.preset-selected {
+    background-color: #ffcc00;
+    border-style: inset;
+    border-left-color: #999999;
+    border-top-color: #999999;
+    border-right-color: #ffffff;
+    border-bottom-color: #ffffff;
+}
+
+/* Console (terminal aesthetic) */
+.onboarding-console {
+    background-color: #000000;
+    border: 2px solid #333333;
+    font-family: "Courier New", monospace;
+    font-size: 12px;
+    color: #00ff00;
+}
+
+.console-header {
+    background-color: #1a1a1a;
+    padding: 8px 12px;
+    border-bottom: 1px solid #333333;
+    font-size: 11px;
+    color: #aaaaaa;
+}
+
+.console-body {
+    padding: 10px 12px;
+    max-height: 300px;
+    overflow-y: auto;
+    min-height: 80px;
+}
+
+.console-line {
+    margin-bottom: 4px;
+    line-height: 1.5;
+    word-break: break-all;
+}
+
+.console-waiting {
+    color: #666666;
+}
+
+.console-status {
+    color: #00ff00;
+    margin-right: 6px;
+}
+
+.console-url {
+    color: #66ccff;
+    margin-right: 8px;
+}
+
+.console-size {
+    color: #999999;
+    margin-right: 8px;
+}
+
+.console-title {
+    color: #ffffff;
+    margin-right: 8px;
+}
+
+.console-keywords {
+    color: #ffcc00;
+}
+
+.console-footer {
+    background-color: #1a1a1a;
+    padding: 6px 12px;
+    border-top: 1px solid #333333;
+    font-size: 11px;
+    color: #aaaaaa;
+}
+
+/* Integration cards */
+.onboarding-integrations {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.integration-card {
+    flex: 1;
+    min-width: 180px;
+    background-color: #ffffff;
+    border: 2px solid #cccccc;
+    padding: 15px;
+    text-align: center;
+}
+
+.integration-card strong {
+    display: block;
+    color: #000066;
+    margin-bottom: 6px;
+}
+
+.integration-card p {
+    font-size: 11px;
+    color: #666666;
+    margin-bottom: 8px;
+}
+
+.integration-coming-soon {
+    opacity: 0.7;
+}
+
+.badge-coming-soon {
+    display: inline-block;
+    background-color: #cccccc;
+    border: 1px solid #999999;
+    font-size: 10px;
+    font-weight: bold;
+    padding: 2px 8px;
+    color: #666666;
+}

@@ -59,6 +59,23 @@ function dashboardPage() {
         window.location.href = '/signin';
         return;
       }
+
+      // Redirect to onboarding if no domains are configured yet
+      try {
+        const domainsRes = await fetch('/api/admin/allowed-domains', {
+          credentials: 'include',
+        });
+        if (domainsRes.ok) {
+          const data = await domainsRes.json();
+          if (!data.domains || data.domains.length === 0) {
+            window.location.href = '/onboarding';
+            return;
+          }
+        }
+      } catch {
+        // Continue to dashboard if domains check fails
+      }
+
       this.ready = true;
     },
 

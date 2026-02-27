@@ -184,6 +184,42 @@ impl SearchClient {
         Ok(())
     }
 
+    /// List documents by domain, sorted by crawled_at descending.
+    /// Uses an empty-query search with domain filter for browsing.
+    pub async fn list_by_domain(
+        &self,
+        domain: &str,
+        tenant_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<IndexedDocument>> {
+        let index = self.client.index(&self.index_name);
+
+        let filter = match tenant_id {
+            Some(tid) => format!("domain = '{}' AND tenant_id = '{}'", domain, tid),
+            None => format!("domain = '{}'", domain),
+        };
+
+        let mut query = index.search();
+        query
+            .with_query("")
+            .with_limit(limit)
+            .with_filter(&filter)
+            .with_sort(&["crawled_at:desc"]);
+
+        let search_result = query
+            .execute::<IndexedDocument>()
+            .await
+            .map_err(|e| anyhow::anyhow!("List by domain failed (domain={}): {}", domain, e))?;
+
+        let docs: Vec<IndexedDocument> = search_result
+            .hits
+            .into_iter()
+            .map(|hit| hit.result)
+            .collect();
+
+        Ok(docs)
+    }
+
     /// Get index statistics
     pub async fn get_stats(&self) -> Result<String> {
         let _stats = self.client.get_stats().await?;
@@ -203,6 +239,65 @@ mod tests {
             .expect("MEILISEARCH_HOST environment variable must be set");
         let client = SearchClient::new(&host, "documents".to_string()).await;
         assert!(client.is_ok());
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires Meilisearch running
+    async fn test_list_by_domain_returns_documents_sorted_by_crawled_at() {
+        let host = std::env::var("MEILISEARCH_HOST")
+            .expect("MEILISEARCH_HOST environment variable must be set");
+        let index_name = format!(
+            "test_list_by_domain_{}",
+            chrono::Utc::now().timestamp_millis()
+        );
+        let client = SearchClient::new(&host, index_name)
+            .await
+            .expect("Failed to create client");
+        client.init_index().await.expect("Failed to init index");
+
+        let docs = vec![
+            IndexedDocument {
+                id: "lbd-old".to_string(),
+                tenant_id: None,
+                url: "https://example.com/old".to_string(),
+                domain: "example.com".to_string(),
+                title: Some("Old Page".to_string()),
+                content: "Old content".to_string(),
+                excerpt: "Old content".to_string(),
+                crawled_at: 1000000000,
+                http_status: 200,
+            },
+            IndexedDocument {
+                id: "lbd-new".to_string(),
+                tenant_id: None,
+                url: "https://example.com/new".to_string(),
+                domain: "example.com".to_string(),
+                title: Some("New Page".to_string()),
+                content: "New content".to_string(),
+                excerpt: "New content".to_string(),
+                crawled_at: 1700000000,
+                http_status: 200,
+            },
+        ];
+        client
+            .index_documents(&docs)
+            .await
+            .expect("Failed to index");
+
+        // Wait for Meilisearch to process
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        let results = client
+            .list_by_domain("example.com", None, 10)
+            .await
+            .expect("Failed to list by domain");
+
+        assert!(results.len() >= 2);
+        // First result should be the newer document (sorted by crawled_at desc)
+        assert_eq!(results[0].id, "lbd-new");
+
+        // Cleanup
+        client.clear_index().await.expect("Failed to clear");
     }
 
     #[tokio::test]

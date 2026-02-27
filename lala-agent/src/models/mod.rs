@@ -7,6 +7,7 @@ pub mod crawler;
 pub mod db;
 pub mod deployment;
 pub mod domain;
+pub mod onboarding;
 pub mod queue;
 pub mod search;
 pub mod settings;

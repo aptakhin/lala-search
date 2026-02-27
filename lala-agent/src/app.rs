@@ -12,6 +12,7 @@ use crate::models::deployment::DeploymentMode;
 use crate::models::domain::{
     AddDomainRequest, AddDomainResponse, DeleteDomainResponse, DomainInfo, ListDomainsResponse,
 };
+use crate::models::onboarding::{RecentPageInfo, RecentPagesQuery, RecentPagesResponse};
 use crate::models::queue::{AddToQueueRequest, AddToQueueResponse};
 use crate::models::search::{SearchRequest, SearchResponse};
 use crate::models::settings::{CrawlingEnabledResponse, SetCrawlingEnabledRequest};
@@ -20,7 +21,7 @@ use crate::routes::{auth_router, AuthApiDoc, AuthState};
 use crate::services::db::DbClient;
 use crate::services::search::SearchClient;
 use axum::{
-    extract::{FromRequestParts, Path, State},
+    extract::{FromRequestParts, Path, Query, State},
     http::{request::Parts, StatusCode},
     routing::{delete, get, post, put},
     Json, Router,
@@ -370,6 +371,80 @@ pub async fn set_crawling_enabled_handler(
     }))
 }
 
+pub async fn recent_crawled_pages_handler(
+    TenantDb(db): TenantDb,
+    State(state): State<AppState>,
+    Query(params): Query<RecentPagesQuery>,
+) -> Result<Json<RecentPagesResponse>, (StatusCode, String)> {
+    if params.domain.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "domain parameter is required".to_string(),
+        ));
+    }
+
+    let limit = params.limit.unwrap_or(10).min(50) as i64;
+
+    // Query the database for recently crawled pages
+    let db_pages = db
+        .get_recent_crawled_pages(&params.domain, limit)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Database error: {e}"),
+            )
+        })?;
+
+    let total = db_pages.len() as u32;
+
+    let mut pages: Vec<RecentPageInfo> = db_pages
+        .into_iter()
+        .map(
+            |(url, http_status, content_length, last_crawled_at)| RecentPageInfo {
+                url,
+                http_status,
+                content_length,
+                last_crawled_at: last_crawled_at.timestamp(),
+                title: None,
+                excerpt: None,
+            },
+        )
+        .collect();
+
+    // Optionally enrich with titles/excerpts from Meilisearch
+    if params.enrich.unwrap_or(false) {
+        if let Some(search_client) = state.search_client.as_ref() {
+            let tenant_id_str = db.tenant_id.to_string();
+            let tenant_filter = if state.deployment_mode == DeploymentMode::MultiTenant {
+                Some(tenant_id_str.as_str())
+            } else {
+                None
+            };
+
+            if let Ok(docs) = search_client
+                .list_by_domain(&params.domain, tenant_filter, limit as usize)
+                .await
+            {
+                // Build URL → (title, excerpt) map for O(1) lookup
+                let enrichment: std::collections::HashMap<String, (Option<String>, String)> = docs
+                    .into_iter()
+                    .map(|doc| (doc.url.clone(), (doc.title, doc.excerpt)))
+                    .collect();
+
+                for page in &mut pages {
+                    if let Some((title, excerpt)) = enrichment.get(&page.url) {
+                        page.title.clone_from(title);
+                        page.excerpt = Some(excerpt.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(Json(RecentPagesResponse { pages, total }))
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -390,6 +465,10 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/admin/allowed-domains/{domain}",
             delete(delete_domain_handler),
+        )
+        .route(
+            "/admin/crawled-pages/recent",
+            get(recent_crawled_pages_handler),
         )
         .route(
             "/admin/settings/crawling-enabled",

@@ -46,6 +46,7 @@ lalasearch/
 │   │   │   ├── crawler.rs        # Crawler request/result models
 │   │   │   ├── queue.rs          # Crawl queue entry model
 │   │   │   ├── search.rs         # Search request/response models
+│   │   │   ├── onboarding.rs     # Onboarding/recent pages models
 │   │   │   ├── settings.rs       # Settings model
 │   │   │   ├── storage.rs        # S3 storage models
 │   │   │   └── version.rs        # Version response model
@@ -212,6 +213,7 @@ The core crawling, storage, search, and queue logic is identical between both mo
 - Meilisearch integration for full-text search
 - Magic-link authentication and session management
 - Organization-based access control (owner/admin/member roles)
+- Onboarding page for first-time tenant setup with live crawl console
 - Single-tenant / multi-tenant deployment modes with PostgreSQL RLS
 - Docker and Docker Compose setup with proper startup ordering
 - Test-driven development workflow and pre-commit hooks

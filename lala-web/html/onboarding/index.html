@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!--#include virtual="/includes/head.html" -->
+    <title>Get Started - LalaSearch</title>
+    <script defer src="/js/onboarding.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="onboardingPage()" x-init="init()">
+    <!--#include virtual="/includes/header.html" -->
+
+    <!-- Loading state -->
+    <div class="container" x-show="!ready">
+        <div class="loading" style="margin-top: 40px;">
+            <span class="spinner"></span> Loading...
+        </div>
+    </div>
+
+    <!-- Onboarding content -->
+    <div class="container" x-show="ready && user" x-cloak>
+
+        <div class="onboarding-welcome">
+            <h2>Welcome to LalaSearch!</h2>
+            <p>Let's index your first domain to get started.</p>
+        </div>
+
+        <!-- Step 1: Domain Selection (before adding) -->
+        <div x-show="!domainAdded" class="dashboard-section">
+            <h3>Step 1: Choose a Domain to Index</h3>
+
+            <!-- Corporate email: suggest their domain -->
+            <div x-show="!isConsumerEmail">
+                <p style="margin-bottom: 10px;">
+                    Based on your email, we suggest indexing:
+                </p>
+                <div class="onboarding-domain-suggestion">
+                    <strong x-text="suggestedDomain"></strong>
+                </div>
+                <div class="inline-form" style="margin-top: 10px;">
+                    <input
+                        type="text"
+                        x-model="selectedDomain"
+                        placeholder="example.com"
+                        data-testid="onboarding-domain-input"
+                    >
+                    <button
+                        @click="addDomainAndStartCrawl()"
+                        :disabled="addingDomain"
+                        data-testid="onboarding-start-button"
+                    >
+                        <span x-show="!addingDomain">START INDEXING</span>
+                        <span x-show="addingDomain"><span class="spinner"></span></span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Consumer email: show preset options -->
+            <div x-show="isConsumerEmail">
+                <p style="margin-bottom: 10px;">
+                    Choose a domain to try LalaSearch:
+                </p>
+                <div class="onboarding-presets">
+                    <template x-for="preset in presetDomains" :key="preset.domain">
+                        <button
+                            class="onboarding-preset-btn"
+                            :class="{ 'preset-selected': selectedDomain === preset.domain }"
+                            @click="selectPreset(preset.domain)"
+                            x-text="preset.label + ' (' + preset.domain + ')'"
+                        ></button>
+                    </template>
+                </div>
+                <div style="margin-top: 15px;">
+                    <p style="font-size: 12px; margin-bottom: 10px;">Or enter a custom domain:</p>
+                    <div class="inline-form">
+                        <input
+                            type="text"
+                            x-model="selectedDomain"
+                            placeholder="example.com"
+                            data-testid="onboarding-domain-input"
+                        >
+                        <button
+                            @click="addDomainAndStartCrawl()"
+                            :disabled="addingDomain"
+                            data-testid="onboarding-start-button"
+                        >
+                            <span x-show="!addingDomain">START INDEXING</span>
+                            <span x-show="addingDomain"><span class="spinner"></span></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div x-show="addError" class="msg-error" style="margin-top: 10px;"
+                 @click="addError = null" data-testid="onboarding-error-message"
+                 x-text="addError"></div>
+        </div>
+
+        <!-- Step 2: Crawl Progress Console -->
+        <div x-show="domainAdded" class="dashboard-section">
+            <h3>Indexing: <span x-text="selectedDomain"></span></h3>
+
+            <div class="onboarding-console" data-testid="onboarding-console">
+                <div class="console-header">
+                    <span x-show="polling">
+                        <span class="spinner" style="width: 14px; height: 14px; border-width: 2px;"></span>
+                        Crawling in progress...
+                    </span>
+                    <span x-show="!polling && recentPages.length > 0">
+                        Crawling started. Pages will continue to appear as they are indexed.
+                    </span>
+                    <span x-show="!polling && recentPages.length === 0">
+                        Waiting for pages to be crawled... This may take a moment.
+                    </span>
+                </div>
+                <div class="console-body">
+                    <template x-for="page in recentPages" :key="page.url">
+                        <div class="console-line">
+                            <span class="console-status" x-text="'[' + page.http_status + ']'"></span>
+                            <span class="console-url" x-text="page.url"></span>
+                            <span class="console-size" x-text="formatBytes(page.content_length)"></span>
+                            <template x-if="page.title">
+                                <span class="console-title" x-text="'&quot;' + page.title + '&quot;'"></span>
+                            </template>
+                            <template x-if="page.keywords && page.keywords.length > 0">
+                                <span class="console-keywords" x-text="'[' + page.keywords.join(', ') + ']'"></span>
+                            </template>
+                        </div>
+                    </template>
+                    <div x-show="recentPages.length === 0 && polling" class="console-line console-waiting">
+                        &gt; Waiting for first page...
+                    </div>
+                </div>
+                <div class="console-footer">
+                    <span x-text="totalCrawled"></span> page(s) indexed for <span x-text="selectedDomain"></span>
+                </div>
+            </div>
+
+            <div style="margin-top: 20px; text-align: center;">
+                <button @click="goToDashboard()" data-testid="onboarding-go-to-dashboard"
+                        style="font-size: 16px; padding: 12px 30px;">
+                    GO TO DASHBOARD
+                </button>
+            </div>
+        </div>
+
+        <!-- Future Integrations Section -->
+        <div class="dashboard-section" style="margin-top: 30px;">
+            <h3>Coming Soon: Integrations</h3>
+            <div class="onboarding-integrations">
+                <div class="integration-card integration-coming-soon">
+                    <strong>Google Drive</strong>
+                    <p>Index documents, spreadsheets, and presentations</p>
+                    <span class="badge-coming-soon">COMING SOON</span>
+                </div>
+                <div class="integration-card integration-coming-soon">
+                    <strong>Slack</strong>
+                    <p>Index messages, threads, and shared files</p>
+                    <span class="badge-coming-soon">COMING SOON</span>
+                </div>
+                <div class="integration-card integration-coming-soon">
+                    <strong>Microsoft Teams</strong>
+                    <p>Index conversations, meetings, and shared content</p>
+                    <span class="badge-coming-soon">COMING SOON</span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!--#include virtual="/includes/footer.html" -->
+
+</body>
+</html>
