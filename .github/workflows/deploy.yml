@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Aleksandr Ptakhin
+#
+# Deploy to Production
+# Runs after Publish Docker Images completes, or manually via workflow_dispatch.
+# SSHs to the target server and deploys using scripts/deploy.sh.
+#
+# Required GitHub Secrets:
+#   DEPLOY_HOST          - Server IP or hostname
+#   DEPLOY_USER          - SSH user with sudo access
+#   DEPLOY_SSH_KEY       - Private SSH key (full PEM contents)
+#   POSTGRES_PASSWORD    - PostgreSQL password
+#   S3_ACCESS_KEY        - SeaweedFS S3 access key
+#   S3_SECRET_KEY        - SeaweedFS S3 secret key
+#
+# Optional GitHub Secrets:
+#   DEPLOY_PORT          - SSH port (default: 22)
+#   SMTP_HOST            - SMTP server
+#   SMTP_PORT            - SMTP port
+#   SMTP_USERNAME        - SMTP username
+#   SMTP_PASSWORD        - SMTP password
+#   SMTP_TLS             - true/false
+#   SMTP_FROM_EMAIL      - Sender email
+#   APP_BASE_URL         - Public URL (default: http://DEPLOY_HOST)
+
+name: Deploy
+
+on:
+  # Auto-deploy after images are published
+  workflow_run:
+    workflows: ["Publish Docker Images"]
+    types: [completed]
+    branches: [main]
+
+  # Manual deploy with optional version override
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Docker image tag to deploy (e.g., 0.3.0 or latest)'
+        required: false
+        default: 'latest'
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Only deploy if publish succeeded (for workflow_run trigger)
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine image tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "tag=${{ github.event.inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            # Extract version from the tag that triggered the publish workflow
+            REF="${{ github.event.workflow_run.head_branch }}"
+            TAG="${REF#v}"
+            if [[ -n "$TAG" ]]; then
+              echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+            else
+              echo "tag=latest" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy via SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+          S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_TLS: ${{ secrets.SMTP_TLS }}
+          SMTP_FROM_EMAIL: ${{ secrets.SMTP_FROM_EMAIL }}
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          IMAGE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          chmod +x scripts/deploy.sh
+          ./scripts/deploy.sh

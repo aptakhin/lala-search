@@ -152,6 +152,59 @@ sudo systemctl reload nginx
 
 Change `lala-web` port to `127.0.0.1:8081:80` to avoid conflict with host nginx on port 80.
 
+## Automated Deployment via CI/CD
+
+A deploy script and GitHub Actions workflow are provided for automated SSH-based deployments.
+
+### Script: `scripts/deploy.sh`
+
+The script SSHs to the target server, ensures Docker is installed, downloads deployment files, writes `.env.prod` from environment variables, and brings the stack up.
+
+```bash
+# Set required env vars
+export DEPLOY_HOST=203.0.113.10
+export DEPLOY_USER=deploy
+export DEPLOY_SSH_KEY="$(cat ~/.ssh/deploy_key)"
+export POSTGRES_PASSWORD="$(openssl rand -base64 32)"
+export S3_ACCESS_KEY="$(openssl rand -base64 16)"
+export S3_SECRET_KEY="$(openssl rand -base64 32)"
+
+# Optional
+export APP_BASE_URL=https://search.example.com
+export SMTP_HOST=smtp.mailgun.org
+export SMTP_PORT=587
+export SMTP_USERNAME=postmaster@example.com
+export SMTP_PASSWORD=your-smtp-password
+export SMTP_TLS=true
+export SMTP_FROM_EMAIL=noreply@example.com
+export IMAGE_TAG=0.3.0  # or "latest"
+
+./scripts/deploy.sh
+```
+
+### GitHub Actions: `.github/workflows/deploy.yml`
+
+Runs automatically after the Publish Docker Images workflow completes, or manually via `workflow_dispatch`.
+
+**Required GitHub Secrets:**
+
+| Secret | Description |
+|--------|-------------|
+| `DEPLOY_HOST` | Server IP or hostname |
+| `DEPLOY_USER` | SSH user with sudo access |
+| `DEPLOY_SSH_KEY` | Full private SSH key (PEM) |
+| `POSTGRES_PASSWORD` | PostgreSQL password |
+| `S3_ACCESS_KEY` | SeaweedFS S3 access key |
+| `S3_SECRET_KEY` | SeaweedFS S3 secret key |
+
+**Optional GitHub Secrets:** `DEPLOY_PORT`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_TLS`, `SMTP_FROM_EMAIL`, `APP_BASE_URL`
+
+To trigger manually with a specific version:
+
+```
+Actions → Deploy → Run workflow → image_tag: 0.3.0
+```
+
 ## Updating
 
 Pull new images and recreate containers:
