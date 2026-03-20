@@ -24,10 +24,11 @@ RUN mkdir -p src && \
 ARG LALA_PATCH_VERSION
 ENV LALA_PATCH_VERSION=${LALA_PATCH_VERSION}
 
-# Copy source code and templates
+# Copy source code, migrations, and templates
 COPY src ./src
 COPY tests ./tests
 COPY templates ./templates
+COPY migrations ./migrations
 
 # Build the application
 RUN cargo build --release
@@ -54,4 +55,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 RUN useradd --create-home --shell /bin/bash lala
 USER lala
 
-CMD ["lala-agent"]
+CMD ["sh", "-c", "lala-agent migrate && lala-agent serve"]

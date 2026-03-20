@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Aleksandr Ptakhin
 
+use clap::{Parser, Subcommand};
 use lala_agent::app::{create_router, AppState};
 use lala_agent::models::agent::AgentMode;
 use lala_agent::models::deployment::DeploymentMode;
@@ -19,8 +20,52 @@ use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
+#[derive(Parser)]
+#[command(name = "lala-agent", about = "LalaSearch web crawler and search agent")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Run database migrations to the latest version
+    Migrate,
+    /// Start the HTTP server (default)
+    Serve,
+}
+
 #[tokio::main]
 async fn main() {
+    let cli = Cli::parse();
+
+    match cli.command.unwrap_or(Command::Serve) {
+        Command::Migrate => run_migrate().await,
+        Command::Serve => run_serve().await,
+    }
+}
+
+/// Run database migrations and exit.
+async fn run_migrate() {
+    let database_url =
+        env::var("DATABASE_URL").expect("DATABASE_URL environment variable must be set");
+
+    println!("[MIGRATE] Connecting to database...");
+    let pool = PgPool::connect(&database_url)
+        .await
+        .unwrap_or_else(|e| panic!("Failed to connect to PostgreSQL at {}: {}", database_url, e));
+
+    println!("[MIGRATE] Running migrations...");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("Migration failed: {:#}", e));
+
+    println!("[MIGRATE] All migrations applied successfully.");
+}
+
+/// Start the HTTP server.
+async fn run_serve() {
     let database_url =
         env::var("DATABASE_URL").expect("DATABASE_URL environment variable must be set");
 

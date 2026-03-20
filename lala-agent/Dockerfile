@@ -29,10 +29,11 @@ RUN mkdir -p src && \
 ARG LALA_PATCH_VERSION
 ENV LALA_PATCH_VERSION=${LALA_PATCH_VERSION}
 
-# Copy source code and templates
+# Copy source code, migrations, and templates
 COPY src ./src
 COPY tests ./tests
 COPY templates ./templates
+COPY migrations ./migrations
 
 # Build the application
 RUN cargo build --release
@@ -44,6 +45,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:3000/version || exit 1
 
-# Default command runs the release binary
-# For development, use: cargo run (without hot-reload)
-CMD ["./target/release/lala-agent"]
+# Run migrations then start the server
+CMD ["sh", "-c", "./target/release/lala-agent migrate && ./target/release/lala-agent serve"]

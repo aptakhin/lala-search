@@ -61,8 +61,10 @@ All dependencies must be open source. Avoid: ScyllaDB (proprietary since Dec 202
 ## Database
 
 - **No N+1 queries** — use JOINs, `ANY($1)`, or batch fetches instead of loops with queries
-- **Migrations**: `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` — never drop tables
-- Update `docker/postgres/schema.sql` AND write migration SQL for existing deployments
+- **Migrations**: forward-only, managed by sqlx in `lala-agent/migrations/`. No rollbacks.
+  - Add new migrations as `NNNN_description.sql` (sequential numbering)
+  - Use `CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` — never drop tables
+  - Run with `lala-agent migrate` before starting the server
 - New nullable columns → `Option<T>` in Rust structs
 
 ## Testing Tiers
@@ -98,14 +100,14 @@ lalasearch/
 ├── docs/                         # overview.md, docker.md, versioning.md
 ├── lala-agent/
 │   ├── src/
-│   │   ├── main.rs               # HTTP server entry point
+│   │   ├── main.rs               # CLI entry point (migrate / serve subcommands)
 │   │   ├── lib.rs                # Library root
 │   │   ├── models/               # Data models
 │   │   └── services/             # Business logic
+│   ├── migrations/               # SQL migrations (forward-only, sqlx)
 │   ├── tests/                    # Integration tests (Tier 2)
 │   ├── Dockerfile
 │   └── Cargo.toml
-├── docker/postgres/schema.sql    # PostgreSQL schema
 ├── docker-compose.yml
 ├── .env.example
 └── scripts/pre-commit.sh
@@ -124,4 +126,6 @@ cargo test --test '*'               # Integration tests
 cargo fmt                           # Format
 cargo clippy -- -D warnings         # Lint
 ./scripts/pre-commit.sh             # Pre-commit (auto Docker on Windows)
+lala-agent migrate                  # Apply database migrations
+lala-agent serve                    # Start HTTP server (default)
 ```
