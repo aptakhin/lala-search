@@ -27,7 +27,6 @@ All features follow: **Analyze → Red → Green → Refactor → (repeat)**
 
 **Every completed task must end with a git commit. Never consider work done until it is committed!**
 
-Before committing: `./scripts/pre-commit.sh` (runs fmt, clippy, unit + storage-dependent tests).
 
 On Windows, the script runs all checks inside Docker automatically.
 
@@ -65,6 +64,7 @@ All dependencies must be open source. Avoid: ScyllaDB (proprietary since Dec 202
 - **Migrations**: forward-only, managed by sqlx in `lala-agent/migrations/`. No rollbacks.
   - Add new migrations as `NNNN_description.sql` (sequential numbering)
   - Use `CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` — never drop tables
+  - Don't allow long locks migrations to run. There should be an external approval for this.
   - Run with `lala-agent migrate` before starting the server
 - New nullable columns → `Option<T>` in Rust structs
 
@@ -90,7 +90,7 @@ All dependencies must be open source. Avoid: ScyllaDB (proprietary since Dec 202
 
 1. Update `README.md` if structure changed
 2. Update relevant `docs/` files
-3. Run `./scripts/pre-commit.sh`
+3. `cargo fmt`
 4. Commit
 
 ## Project Structure
@@ -116,7 +116,7 @@ lalasearch/
 
 ## Windows PDB Linker Error (LNK1318)
 
-Try in order: `cargo clean && cargo build` → close IDEs/kill rust-analyzer → check antivirus → check disk space. Use `--no-verify` only as last resort when `cargo fmt --check`, `cargo clippy`, and `cargo check` all pass, and document in commit message.
+Run build within docker.
 
 ## Commands Reference
 

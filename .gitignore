@@ -7,3 +7,5 @@ lala-web/html/js/
 # Environment variables
 .env
 .env.prod
+
+.claude/settings.local.json
