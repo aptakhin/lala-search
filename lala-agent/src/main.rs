@@ -68,25 +68,14 @@ async fn run_migrate() {
 async fn run_serve() {
     let database_url =
         env::var("DATABASE_URL").expect("DATABASE_URL environment variable must be set");
-
     let default_tenant_id: Uuid = env::var("DEFAULT_TENANT_ID")
         .unwrap_or_else(|_| "00000000-0000-0000-0000-000000000001".to_string())
         .parse()
         .expect("DEFAULT_TENANT_ID must be a valid UUID");
-
     let agent_mode = AgentMode::from_env();
     let deployment_mode = DeploymentMode::from_env();
-
-    let poll_interval_secs = env::var("QUEUE_POLL_INTERVAL_SECS")
-        .expect("QUEUE_POLL_INTERVAL_SECS environment variable must be set")
-        .parse::<u64>()
-        .expect("QUEUE_POLL_INTERVAL_SECS must be a valid number");
-
-    let user_agent = env::var("USER_AGENT").expect("USER_AGENT environment variable must be set");
-
     let meilisearch_host =
         env::var("MEILISEARCH_HOST").expect("MEILISEARCH_HOST environment variable must be set");
-
     let meilisearch_index =
         env::var("MEILISEARCH_INDEX").unwrap_or_else(|_| "documents".to_string());
 
@@ -105,32 +94,13 @@ async fn run_serve() {
     println!("Deployment mode: {}", deployment_mode);
 
     let tenant_ids = resolve_tenant_ids(&db_client, default_tenant_id, deployment_mode).await;
-
-    // Start one queue processor per tenant (if agent mode requires it)
     if agent_mode.should_process_queue() {
-        let poll_interval = Duration::from_secs(poll_interval_secs);
-        for &tid in &tenant_ids {
-            let tenant_db = Arc::new(db_client.with_tenant(tid));
-            // In multi-tenant mode, pass tenant_id for Meilisearch isolation
-            let tenant_id_str = if deployment_mode == DeploymentMode::MultiTenant {
-                Some(tid.to_string())
-            } else {
-                None
-            };
-            spawn_queue_processor(
-                tenant_db,
-                search_client.clone(),
-                storage_client.clone(),
-                user_agent.clone(),
-                poll_interval,
-                tenant_id_str,
-            );
-        }
-        let tenant_list: Vec<String> = tenant_ids.iter().map(|id| id.to_string()).collect();
-        println!(
-            "Queue processor(s) started for {} tenant(s): {}",
-            tenant_ids.len(),
-            tenant_list.join(", ")
+        start_queue_processors(
+            &db_client,
+            &search_client,
+            &storage_client,
+            &tenant_ids,
+            deployment_mode,
         );
     }
 
@@ -141,17 +111,14 @@ async fn run_serve() {
         deployment_mode,
         auth_state,
     };
-
     let app = create_router(state);
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-
     println!(
         "lala-agent v{} listening on {}",
         lala_agent::app::VERSION,
         addr
     );
-
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -195,21 +162,55 @@ async fn resolve_tenant_ids(
     }
 }
 
+/// Start queue processors for all tenants.
+fn start_queue_processors(
+    db_client: &Arc<DbClient>,
+    search_client: &Option<Arc<SearchClient>>,
+    storage_client: &Option<Arc<StorageClient>>,
+    tenant_ids: &[Uuid],
+    deployment_mode: DeploymentMode,
+) {
+    let user_agent = env::var("USER_AGENT").expect("USER_AGENT environment variable must be set");
+    let poll_interval_secs: u64 = env::var("QUEUE_POLL_INTERVAL_SECS")
+        .expect("QUEUE_POLL_INTERVAL_SECS environment variable must be set")
+        .parse()
+        .expect("QUEUE_POLL_INTERVAL_SECS must be a valid number");
+    let poll_interval = Duration::from_secs(poll_interval_secs);
+
+    for &tid in tenant_ids {
+        let tenant_db = Arc::new(db_client.with_tenant(tid));
+        let tenant_id_str = if deployment_mode == DeploymentMode::MultiTenant {
+            Some(tid.to_string())
+        } else {
+            None
+        };
+        spawn_queue_processor(
+            tenant_db,
+            search_client,
+            storage_client,
+            QueueConfig {
+                user_agent: user_agent.to_string(),
+                poll_interval,
+                tenant_id: tenant_id_str,
+            },
+        );
+    }
+    let tenant_list: Vec<String> = tenant_ids.iter().map(|id| id.to_string()).collect();
+    println!(
+        "Queue processor(s) started for {} tenant(s): {}",
+        tenant_ids.len(),
+        tenant_list.join(", ")
+    );
+}
+
 /// Spawn a background queue processor for one tenant.
 fn spawn_queue_processor(
     db_client: Arc<DbClient>,
-    search_client: Option<Arc<SearchClient>>,
-    storage_client: Option<Arc<StorageClient>>,
-    user_agent: String,
-    poll_interval: Duration,
-    tenant_id: Option<String>,
+    search_client: &Option<Arc<SearchClient>>,
+    storage_client: &Option<Arc<StorageClient>>,
+    config: QueueConfig,
 ) {
-    let config = QueueConfig {
-        user_agent,
-        poll_interval,
-        tenant_id,
-    };
-    let processor = match (&search_client, &storage_client) {
+    let processor = match (search_client, storage_client) {
         (Some(search), Some(storage)) => {
             QueueProcessor::with_all(db_client, search.clone(), storage.clone(), config)
         }
