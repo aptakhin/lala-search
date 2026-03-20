@@ -6,3 +6,4 @@ lala-web/html/js/
 
 # Environment variables
 .env
+.env.prod
