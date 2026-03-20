@@ -136,26 +136,6 @@ services:
       - lalasearch-network
     restart: "no"
 
-  # Postfix - SMTP relay (internal only)
-  # For production, consider using an external SMTP service instead
-  # and removing this container (set SMTP_HOST in .env.prod)
-  postfix:
-    image: boky/postfix:latest
-    container_name: lalasearch-postfix
-    environment:
-      - ALLOWED_SENDER_DOMAINS=${SMTP_FROM_EMAIL##*@}
-      - RELAYHOST=
-      - MESSAGE_SIZE_LIMIT=10485760
-    healthcheck:
-      test: ["CMD", "postfix", "status"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    restart: unless-stopped
-    networks:
-      - lalasearch-network
-
 volumes:
   postgres-data:
     driver: local
