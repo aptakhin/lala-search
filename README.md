@@ -32,6 +32,7 @@ lalasearch/
 ├── docs/                           # Documentation
 │   ├── overview.md                # Project vision and architecture
 │   ├── api.md                     # API reference with curl examples
+│   ├── deployment.md              # Production deployment guide (Linux VM)
 │   ├── docker.md                  # Docker setup and usage guide
 │   ├── versioning.md              # Version management
 │   └── multi-tenancy.md           # Multi-tenancy architecture
@@ -59,7 +60,8 @@ lalasearch/
 │   ├── tests/                     # Integration tests
 │   │   ├── crawler_integration_test.rs
 │   │   └── queue_processor_integration_test.rs
-│   ├── Dockerfile                 # Container image definition
+│   ├── Dockerfile                 # Development container image
+│   ├── Dockerfile.prod            # Production multi-stage image (~100MB)
 │   ├── Cargo.toml                 # Rust dependencies
 │   └── build.rs                   # Build-time version extraction
 ├── docker/                        # Docker configuration
@@ -67,9 +69,12 @@ lalasearch/
 │       └── schema.sql             # PostgreSQL schema (all tables, RLS policies)
 ├── .github/workflows/
 │   ├── ci.yml                    # Build & Test pipeline (fmt, clippy, unit, storage, integration)
-│   └── e2e.yml                   # E2E Test pipeline (Docker Compose + Playwright)
-├── docker-compose.yml             # Multi-container setup
-├── .env.example                   # Environment variables template
+│   ├── e2e.yml                   # E2E Test pipeline (Docker Compose + Playwright)
+│   └── publish.yml               # Publish Docker images to GHCR on version tags
+├── docker-compose.yml             # Development multi-container setup
+├── docker-compose.prod.yml        # Production deployment (pre-built images)
+├── .env.example                   # Development environment template
+├── .env.prod.example              # Production environment template
 └── scripts/
     └── pre-commit.sh              # Pre-commit validation script
 ```
@@ -99,6 +104,29 @@ curl http://localhost:3000/version
 ```
 
 See [docs/docker.md](docs/docker.md) for detailed Docker setup and usage.
+
+### Production Deployment
+
+Deploy LalaSearch on a Linux VM (Debian/Ubuntu) using pre-built Docker images:
+
+```bash
+# Download deployment files
+mkdir -p lalasearch/docker/postgres lalasearch/docker/seaweedfs && cd lalasearch
+REPO="https://raw.githubusercontent.com/aptakhin/lala-search/main"
+curl -fsSLO "$REPO/docker-compose.prod.yml"
+curl -fsSLO "$REPO/.env.prod.example"
+curl -fsSL "$REPO/docker/postgres/schema.sql" -o docker/postgres/schema.sql
+curl -fsSL "$REPO/docker/seaweedfs/s3.json" -o docker/seaweedfs/s3.json
+
+# Configure (change all CHANGE_ME values!)
+cp .env.prod.example .env.prod
+nano .env.prod
+
+# Start
+docker compose -f docker-compose.prod.yml up -d
+```
+
+See [docs/deployment.md](docs/deployment.md) for the full guide including HTTPS setup, backups, and troubleshooting.
 
 ### Option 2: Local Development
 

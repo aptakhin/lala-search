@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Aleksandr Ptakhin
+
+# Multi-stage production build
+# Stage 1: Build the Rust binary
+# Stage 2: Copy binary to minimal Debian runtime (~100MB)
+
+# === Stage 1: Builder ===
+FROM rust:bookworm AS builder
+
+WORKDIR /app
+
+# Copy Cargo files first for better dependency caching
+COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
+
+# Create dummy main.rs to build dependencies
+RUN mkdir -p src && \
+    echo "fn main() {}" > src/main.rs && \
+    cargo build --release && \
+    rm -rf src
+
+# CI/CD version override (set via docker compose build args or GitHub Actions)
+ARG LALA_PATCH_VERSION
+ENV LALA_PATCH_VERSION=${LALA_PATCH_VERSION}
+
+# Copy source code and templates
+COPY src ./src
+COPY tests ./tests
+COPY templates ./templates
+
+# Build the application
+RUN cargo build --release
+
+# === Stage 2: Runtime ===
+FROM debian:bookworm-slim
+
+# Install curl for health checks and ca-certificates for HTTPS crawling
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy the compiled binary from builder
+COPY --from=builder /app/target/release/lala-agent /usr/local/bin/lala-agent
+
+# Expose the application port
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3000/version || exit 1
+
+# Run as non-root user
+RUN useradd --create-home --shell /bin/bash lala
+USER lala
+
+CMD ["lala-agent"]

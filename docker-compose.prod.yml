@@ -1,0 +1,170 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Aleksandr Ptakhin
+#
+# Production Docker Compose for LalaSearch
+# Usage: docker compose -f docker-compose.prod.yml up -d
+#
+# Prerequisites:
+#   1. Copy .env.prod.example to .env.prod
+#   2. Update ALL passwords and secrets in .env.prod
+#   3. Place docker/postgres/schema.sql and docker/seaweedfs/s3.json
+
+services:
+  # PostgreSQL - Relational database (internal only, not exposed to host)
+  postgres:
+    image: postgres:17-alpine
+    container_name: lalasearch-postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    environment:
+      - POSTGRES_DB=lalasearch
+      - POSTGRES_USER=${POSTGRES_USER:-lalasearch}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.prod}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lalasearch -d lalasearch"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - lalasearch-network
+
+  # Meilisearch - Full-text search engine (internal only)
+  meilisearch:
+    image: getmeili/meilisearch:v1.31.0
+    container_name: lalasearch-meilisearch
+    volumes:
+      - meilisearch-data:/meili_data
+    environment:
+      - MEILI_NO_ANALYTICS=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - lalasearch-network
+
+  # LalaSearch Agent - Web crawler and search API
+  lala-agent:
+    image: ghcr.io/aptakhin/lala-search/lala-agent:latest
+    container_name: lalasearch-agent
+    ports:
+      - "127.0.0.1:3000:3000"  # API on localhost only (use reverse proxy for public access)
+    env_file:
+      - .env.prod
+    environment:
+      # Override hostnames for Docker internal network
+      - DATABASE_URL=postgres://${POSTGRES_USER:-lalasearch}:${POSTGRES_PASSWORD}@postgres:5432/lalasearch
+      - MEILISEARCH_HOST=meilisearch:7700
+      - S3_ENDPOINT=http://seaweedfs:8333
+    depends_on:
+      postgres:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+      seaweedfs-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/version"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - lalasearch-network
+
+  # LalaSearch Web Frontend
+  lala-web:
+    image: ghcr.io/aptakhin/lala-search/lala-web:latest
+    container_name: lalasearch-web
+    ports:
+      - "80:80"
+    depends_on:
+      lala-agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - lalasearch-network
+
+  # SeaweedFS - S3-compatible object storage (internal only)
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    container_name: lalasearch-seaweedfs
+    volumes:
+      - seaweedfs-data:/data
+      - ./docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    environment:
+      - WEED_MASTER_VOLUME_SIZE_LIMIT_MB=1024
+    command: 'server -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json -dir=/data -volume.max=0'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9333/cluster/status || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - lalasearch-network
+
+  # SeaweedFS S3 credential initialization (runs once)
+  seaweedfs-init:
+    image: chrislusf/seaweedfs:latest
+    container_name: lalasearch-seaweedfs-init
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    env_file:
+      - .env.prod
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo 'Configuring SeaweedFS S3 credentials...'
+        echo "s3.configure -access_key=$$S3_ACCESS_KEY -secret_key=$$S3_SECRET_KEY -user=admin -actions=Admin,Read,Write,List,Tagging -apply" | weed shell -master=seaweedfs:9333
+        echo 'SeaweedFS S3 credentials configured successfully!'
+    networks:
+      - lalasearch-network
+    restart: "no"
+
+  # Postfix - SMTP relay (internal only)
+  # For production, consider using an external SMTP service instead
+  # and removing this container (set SMTP_HOST in .env.prod)
+  postfix:
+    image: boky/postfix:latest
+    container_name: lalasearch-postfix
+    environment:
+      - ALLOWED_SENDER_DOMAINS=${SMTP_FROM_EMAIL##*@}
+      - RELAYHOST=
+      - MESSAGE_SIZE_LIMIT=10485760
+    healthcheck:
+      test: ["CMD", "postfix", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - lalasearch-network
+
+volumes:
+  postgres-data:
+    driver: local
+  meilisearch-data:
+    driver: local
+  seaweedfs-data:
+    driver: local
+
+networks:
+  lalasearch-network:
+    driver: bridge
