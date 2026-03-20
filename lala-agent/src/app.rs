@@ -7,6 +7,9 @@
 //! This module is `pub` so that integration tests can build a test router directly
 //! without starting the full binary.
 
+use crate::models::action_history::{
+    ActionType, EntityType, LastUndoableResponse, RollbackResponse,
+};
 use crate::models::db::CrawlQueueEntry;
 use crate::models::deployment::DeploymentMode;
 use crate::models::domain::{
@@ -288,10 +291,32 @@ pub async fn add_domain_handler(
             )
         })?;
 
+    let after_state = serde_json::json!({
+        "domain": payload.domain,
+        "added_by": "api",
+        "notes": payload.notes,
+    });
+
+    let action_id = db
+        .record_action(
+            EntityType::AllowedDomain,
+            ActionType::Create,
+            &payload.domain,
+            None,
+            None,
+            Some(&after_state),
+            &format!("Added domain {}", payload.domain),
+            None,
+        )
+        .await
+        .ok()
+        .map(|r| r.action_id.to_string());
+
     Ok(Json(AddDomainResponse {
         success: true,
         message: "Domain added to allowed list successfully".to_string(),
         domain: payload.domain,
+        action_id,
     }))
 }
 
@@ -326,6 +351,9 @@ pub async fn delete_domain_handler(
     TenantDb(db): TenantDb,
     Path(domain): Path<String>,
 ) -> Result<Json<DeleteDomainResponse>, (StatusCode, String)> {
+    // Snapshot before delete for rollback
+    let before_state = db.get_allowed_domain_snapshot(&domain).await.ok().flatten();
+
     db.delete_allowed_domain(&domain).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -333,10 +361,26 @@ pub async fn delete_domain_handler(
         )
     })?;
 
+    let action_id = db
+        .record_action(
+            EntityType::AllowedDomain,
+            ActionType::Delete,
+            &domain,
+            None,
+            before_state.as_ref(),
+            None,
+            &format!("Removed domain {domain}"),
+            None,
+        )
+        .await
+        .ok()
+        .map(|r| r.action_id.to_string());
+
     Ok(Json(DeleteDomainResponse {
         success: true,
         message: "Domain removed from allowed list successfully".to_string(),
         domain,
+        action_id,
     }))
 }
 
@@ -350,13 +394,24 @@ pub async fn get_crawling_enabled_handler(
         )
     })?;
 
-    Ok(Json(CrawlingEnabledResponse { enabled }))
+    Ok(Json(CrawlingEnabledResponse {
+        enabled,
+        action_id: None,
+    }))
 }
 
 pub async fn set_crawling_enabled_handler(
     TenantDb(db): TenantDb,
     Json(payload): Json<SetCrawlingEnabledRequest>,
 ) -> Result<Json<CrawlingEnabledResponse>, (StatusCode, String)> {
+    // Snapshot before change
+    let old_enabled = db.is_crawling_enabled().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {e}"),
+        )
+    })?;
+
     db.set_crawling_enabled(payload.enabled)
         .await
         .map_err(|e| {
@@ -366,8 +421,37 @@ pub async fn set_crawling_enabled_handler(
             )
         })?;
 
+    let before_state =
+        serde_json::json!({"key": "crawling_enabled", "value": old_enabled.to_string()});
+    let after_state =
+        serde_json::json!({"key": "crawling_enabled", "value": payload.enabled.to_string()});
+
+    let action_id = db
+        .record_action(
+            EntityType::Setting,
+            ActionType::Edit,
+            "crawling_enabled",
+            None,
+            Some(&before_state),
+            Some(&after_state),
+            &format!(
+                "Changed crawling from {} to {}",
+                if old_enabled { "enabled" } else { "disabled" },
+                if payload.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            ),
+            None,
+        )
+        .await
+        .ok()
+        .map(|r| r.action_id.to_string());
+
     Ok(Json(CrawlingEnabledResponse {
         enabled: payload.enabled,
+        action_id,
     }))
 }
 
@@ -446,6 +530,80 @@ pub async fn recent_crawled_pages_handler(
 }
 
 // ---------------------------------------------------------------------------
+// Action History Handlers
+// ---------------------------------------------------------------------------
+
+pub async fn last_undoable_action_handler(
+    TenantDb(db): TenantDb,
+) -> Result<Json<LastUndoableResponse>, (StatusCode, String)> {
+    let action = db.get_last_undoable_action().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {e}"),
+        )
+    })?;
+
+    Ok(Json(LastUndoableResponse { action }))
+}
+
+pub async fn rollback_action_handler(
+    TenantDb(db): TenantDb,
+    Path(action_id): Path<String>,
+) -> Result<Json<RollbackResponse>, (StatusCode, String)> {
+    let action_uuid = Uuid::parse_str(&action_id)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid action ID".to_string()))?;
+
+    let actions = db.list_action_history(100, 0).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {e}"),
+        )
+    })?;
+
+    let action = actions
+        .into_iter()
+        .find(|a| a.action_id == action_uuid)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Action not found".to_string()))?;
+
+    let rolled_back = db
+        .rollback_action(&action, None)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Rollback failed: {e}")))?;
+
+    Ok(Json(RollbackResponse {
+        success: true,
+        message: format!("Rolled back: {}", action.description),
+        rolled_back_action: rolled_back,
+    }))
+}
+
+pub async fn rollback_last_handler(
+    TenantDb(db): TenantDb,
+) -> Result<Json<RollbackResponse>, (StatusCode, String)> {
+    let action = db
+        .get_last_undoable_action()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Database error: {e}"),
+            )
+        })?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "No undoable actions".to_string()))?;
+
+    let rolled_back = db
+        .rollback_action(&action, None)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Rollback failed: {e}")))?;
+
+    Ok(Json(RollbackResponse {
+        success: true,
+        message: format!("Rolled back: {}", action.description),
+        rolled_back_action: rolled_back,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -477,6 +635,18 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/admin/settings/crawling-enabled",
             put(set_crawling_enabled_handler),
+        )
+        .route(
+            "/admin/action-history/last-undoable",
+            get(last_undoable_action_handler),
+        )
+        .route(
+            "/admin/action-history/{action_id}/rollback",
+            post(rollback_action_handler),
+        )
+        .route(
+            "/admin/action-history/rollback-last",
+            post(rollback_last_handler),
         )
         .with_state(state);
 

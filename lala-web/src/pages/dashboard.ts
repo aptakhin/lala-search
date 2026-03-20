@@ -28,10 +28,23 @@ interface Domain {
   added_at: string;
 }
 
+interface ActionRecord {
+  action_id: string;
+  entity_type: string;
+  action_type: string;
+  entity_id: string;
+  description: string;
+  performed_at: string;
+  rolled_back_at: string | null;
+}
+
 function dashboardPage() {
   return {
     user: null as User | null,
     ready: false,
+    lastUndoable: null as ActionRecord | null,
+    rollbackMessage: null as string | null,
+    rollingBack: false,
 
     get currentOrg(): Organization | null {
       return this.user?.organizations?.[0] || null;
@@ -77,6 +90,53 @@ function dashboardPage() {
       }
 
       this.ready = true;
+      await this.loadLastUndoable();
+
+      // Ctrl+Z keyboard shortcut for rollback
+      document.addEventListener('keydown', (e: KeyboardEvent) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z' && this.lastUndoable) {
+          e.preventDefault();
+          this.rollbackLast();
+        }
+      });
+    },
+
+    async loadLastUndoable() {
+      try {
+        const res = await fetch('/api/admin/action-history/last-undoable', {
+          credentials: 'include',
+        });
+        if (res.ok) {
+          const data = await res.json();
+          this.lastUndoable = data.action || null;
+        }
+      } catch {
+        // silently fail
+      }
+    },
+
+    async rollbackLast() {
+      if (!this.lastUndoable || this.rollingBack) return;
+      this.rollingBack = true;
+      this.rollbackMessage = null;
+
+      try {
+        const res = await fetch('/api/admin/action-history/rollback-last', {
+          method: 'POST',
+          credentials: 'include',
+        });
+        if (res.ok) {
+          const data = await res.json();
+          this.rollbackMessage = data.message;
+          // Refresh all sections
+          window.dispatchEvent(new CustomEvent('action-rolled-back'));
+          await this.loadLastUndoable();
+        }
+      } catch {
+        // silently fail
+      } finally {
+        this.rollingBack = false;
+      }
     },
 
     async signOut() {
@@ -170,7 +230,6 @@ function inviteSection() {
     },
 
     async removeMember(userId: string) {
-      if (!confirm('Remove this member?')) return;
       const tid = (this as unknown as AlpineScope).$data.tenantId as string;
       try {
         const res = await fetch(
@@ -249,6 +308,9 @@ function domainsSection() {
           this.newDomain = '';
           this.domainNotes = '';
           await this.loadDomains();
+          // Refresh rollback state
+          const page = (this as unknown as AlpineScope).$data as ReturnType<typeof dashboardPage>;
+          if (page.loadLastUndoable) await page.loadLastUndoable();
         } else {
           this.domainError = data.message || 'Failed to add domain.';
         }
@@ -260,7 +322,6 @@ function domainsSection() {
     },
 
     async deleteDomain(domain: string) {
-      if (!confirm('Remove domain "' + domain + '"?')) return;
       try {
         const res = await fetch(
           '/api/admin/allowed-domains/' + encodeURIComponent(domain),
@@ -268,6 +329,9 @@ function domainsSection() {
         );
         if (res.ok) {
           await this.loadDomains();
+          // Refresh rollback state
+          const page = (this as unknown as AlpineScope).$data as ReturnType<typeof dashboardPage>;
+          if (page.loadLastUndoable) await page.loadLastUndoable();
         }
       } catch {
         // silently fail

@@ -491,6 +491,50 @@ footer {
     background-color: #ff9999;
 }
 
+/* Rollback bar */
+.rollback-bar {
+    background-color: #ffffcc;
+    border: 2px solid #cc9900;
+    padding: 8px 15px;
+    margin-bottom: 15px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.rollback-bar span:first-child {
+    flex: 1;
+    font-size: 13px;
+    color: #333333;
+}
+
+.btn-rollback {
+    background-color: #ffcc00;
+    border: 2px outset #ffffff;
+    border-left-color: #ffffff;
+    border-top-color: #ffffff;
+    border-right-color: #999999;
+    border-bottom-color: #999999;
+    color: #000000;
+    font-size: 12px;
+    font-weight: bold;
+    padding: 4px 12px;
+    cursor: pointer;
+    font-family: Arial, sans-serif;
+}
+
+.btn-rollback:active {
+    border-style: inset;
+    border-left-color: #999999;
+    border-top-color: #999999;
+    border-right-color: #ffffff;
+    border-bottom-color: #ffffff;
+}
+
+.btn-rollback:hover {
+    background-color: #ffdd33;
+}
+
 /* ============================================================
    Onboarding Page
    ============================================================ */

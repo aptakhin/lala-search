@@ -17,6 +17,8 @@ pub struct AddDomainResponse {
     pub success: bool,
     pub message: String,
     pub domain: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action_id: Option<String>,
 }
 
 /// Response for listing allowed domains
@@ -44,4 +46,6 @@ pub struct DeleteDomainResponse {
     pub success: bool,
     pub message: String,
     pub domain: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action_id: Option<String>,
 }

@@ -30,8 +30,24 @@
             <button @click="signOut()" data-testid="signout-button">SIGN OUT</button>
         </div>
 
+        <!-- Rollback Bar -->
+        <div x-show="lastUndoable" class="rollback-bar" data-testid="rollback-bar">
+            <span x-text="lastUndoable?.description"></span>
+            <button
+                @click="rollbackLast()"
+                :disabled="rollingBack"
+                class="btn-rollback"
+                data-testid="rollback-button"
+            >
+                <span x-show="!rollingBack">UNDO</span>
+                <span x-show="rollingBack"><span class="spinner"></span></span>
+            </button>
+            <small style="color: #666;">(Ctrl+Z)</small>
+        </div>
+        <div x-show="rollbackMessage" class="msg-success" @click="rollbackMessage = null" style="cursor: pointer;" data-testid="rollback-message" x-text="rollbackMessage"></div>
+
         <!-- Invite Users Section (owners/admins only) -->
-        <div x-show="canManage" x-data="inviteSection()" x-init="loadMembers()" class="dashboard-section">
+        <div x-show="canManage" x-data="inviteSection()" x-init="loadMembers()" @action-rolled-back.window="loadMembers()" class="dashboard-section">
             <h3>Invite Users</h3>
 
             <div class="inline-form">
@@ -92,7 +108,7 @@
         </div>
 
         <!-- Allowed Domains Section (owners/admins only) -->
-        <div x-show="canManage" x-data="domainsSection()" x-init="loadDomains()" class="dashboard-section">
+        <div x-show="canManage" x-data="domainsSection()" x-init="loadDomains()" @action-rolled-back.window="loadDomains()" class="dashboard-section">
             <h3>Allowed Domains</h3>
 
             <div class="inline-form">

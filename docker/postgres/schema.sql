@@ -219,6 +219,26 @@ CREATE TABLE IF NOT EXISTS settings (
     PRIMARY KEY (tenant_id, setting_key)
 );
 
+-- Action history for undo/rollback (tenant-scoped, RLS-protected)
+-- Stores before/after snapshots for every reversible mutation.
+-- Rollback replays from snapshots; rollback-of-rollback is a new forward action.
+CREATE TABLE IF NOT EXISTS action_history (
+    -- 8-byte aligned
+    action_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id      UUID NOT NULL REFERENCES tenants(tenant_id),
+    performed_by   UUID REFERENCES users(user_id),
+    performed_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    rolled_back_at TIMESTAMPTZ,
+    rollback_of    UUID REFERENCES action_history(action_id),
+    -- Variable-length
+    entity_type    TEXT NOT NULL,
+    action_type    TEXT NOT NULL,
+    entity_id      TEXT NOT NULL,
+    before_state   JSONB,
+    after_state    JSONB,
+    description    TEXT NOT NULL
+);
+
 -- ============================================================================
 -- Indexes
 -- ============================================================================
@@ -236,6 +256,15 @@ CREATE INDEX IF NOT EXISTS idx_crawl_queue_poll
 -- crawl_errors: recent errors lookup
 CREATE INDEX IF NOT EXISTS idx_crawl_errors_tenant_time
     ON crawl_errors (tenant_id, occurred_at DESC);
+
+-- action_history: most recent actions per tenant
+CREATE INDEX IF NOT EXISTS idx_action_history_tenant_time
+    ON action_history (tenant_id, performed_at DESC);
+
+-- action_history: fast lookup for last undoable action
+CREATE INDEX IF NOT EXISTS idx_action_history_undoable
+    ON action_history (tenant_id, performed_at DESC)
+    WHERE rolled_back_at IS NULL;
 
 -- ============================================================================
 -- Row-Level Security (RLS) for tenant tables
@@ -270,5 +299,10 @@ CREATE POLICY tenant_isolation ON crawl_errors
 
 ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON settings
+    FOR ALL USING (tenant_id = current_setting('app.current_tenant')::uuid)
+    WITH CHECK (tenant_id = current_setting('app.current_tenant')::uuid);
+
+ALTER TABLE action_history ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON action_history
     FOR ALL USING (tenant_id = current_setting('app.current_tenant')::uuid)
     WITH CHECK (tenant_id = current_setting('app.current_tenant')::uuid);
