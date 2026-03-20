@@ -8,7 +8,7 @@
 //! without starting the full binary.
 
 use crate::models::action_history::{
-    ActionType, EntityType, LastUndoableResponse, RollbackResponse,
+    ActionType, EntityType, RollbackResponse, UndoRedoStateResponse,
 };
 use crate::models::db::CrawlQueueEntry;
 use crate::models::deployment::DeploymentMode;
@@ -533,51 +533,27 @@ pub async fn recent_crawled_pages_handler(
 // Action History Handlers
 // ---------------------------------------------------------------------------
 
-pub async fn last_undoable_action_handler(
+pub async fn undo_redo_state_handler(
     TenantDb(db): TenantDb,
-) -> Result<Json<LastUndoableResponse>, (StatusCode, String)> {
-    let action = db.get_last_undoable_action().await.map_err(|e| {
+) -> Result<Json<UndoRedoStateResponse>, (StatusCode, String)> {
+    let undoable = db.get_last_undoable_action().await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Database error: {e}"),
         )
     })?;
 
-    Ok(Json(LastUndoableResponse { action }))
-}
-
-pub async fn rollback_action_handler(
-    TenantDb(db): TenantDb,
-    Path(action_id): Path<String>,
-) -> Result<Json<RollbackResponse>, (StatusCode, String)> {
-    let action_uuid = Uuid::parse_str(&action_id)
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid action ID".to_string()))?;
-
-    let actions = db.list_action_history(100, 0).await.map_err(|e| {
+    let redoable = db.get_last_redoable_action().await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Database error: {e}"),
         )
     })?;
 
-    let action = actions
-        .into_iter()
-        .find(|a| a.action_id == action_uuid)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "Action not found".to_string()))?;
-
-    let rolled_back = db
-        .rollback_action(&action, None)
-        .await
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Rollback failed: {e}")))?;
-
-    Ok(Json(RollbackResponse {
-        success: true,
-        message: format!("Rolled back: {}", action.description),
-        rolled_back_action: rolled_back,
-    }))
+    Ok(Json(UndoRedoStateResponse { undoable, redoable }))
 }
 
-pub async fn rollback_last_handler(
+pub async fn undo_last_handler(
     TenantDb(db): TenantDb,
 ) -> Result<Json<RollbackResponse>, (StatusCode, String)> {
     let action = db
@@ -589,16 +565,42 @@ pub async fn rollback_last_handler(
                 format!("Database error: {e}"),
             )
         })?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "No undoable actions".to_string()))?;
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Nothing to undo".to_string()))?;
 
     let rolled_back = db
         .rollback_action(&action, None)
         .await
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Rollback failed: {e}")))?;
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Undo failed: {e}")))?;
 
     Ok(Json(RollbackResponse {
         success: true,
-        message: format!("Rolled back: {}", action.description),
+        message: rolled_back.description.clone(),
+        rolled_back_action: rolled_back,
+    }))
+}
+
+pub async fn redo_last_handler(
+    TenantDb(db): TenantDb,
+) -> Result<Json<RollbackResponse>, (StatusCode, String)> {
+    let action = db
+        .get_last_redoable_action()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Database error: {e}"),
+            )
+        })?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Nothing to redo".to_string()))?;
+
+    let rolled_back = db
+        .rollback_action(&action, None)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Redo failed: {e}")))?;
+
+    Ok(Json(RollbackResponse {
+        success: true,
+        message: rolled_back.description.clone(),
         rolled_back_action: rolled_back,
     }))
 }
@@ -636,18 +638,9 @@ pub fn create_router(state: AppState) -> Router {
             "/admin/settings/crawling-enabled",
             put(set_crawling_enabled_handler),
         )
-        .route(
-            "/admin/action-history/last-undoable",
-            get(last_undoable_action_handler),
-        )
-        .route(
-            "/admin/action-history/{action_id}/rollback",
-            post(rollback_action_handler),
-        )
-        .route(
-            "/admin/action-history/rollback-last",
-            post(rollback_last_handler),
-        )
+        .route("/admin/action-history/state", get(undo_redo_state_handler))
+        .route("/admin/action-history/undo", post(undo_last_handler))
+        .route("/admin/action-history/redo", post(redo_last_handler))
         .with_state(state);
 
     if let Some(auth) = auth_state {

@@ -542,14 +542,14 @@ impl DbClient {
         Ok(row_to_action_record(&row))
     }
 
-    /// Get the most recent action that has not been rolled back.
+    /// Get the most recent non-rollback action that has not been rolled back (for Undo).
     pub async fn get_last_undoable_action(&self) -> Result<Option<ActionRecord>> {
         let row = sqlx::query(
             "SELECT action_id, tenant_id, performed_by, performed_at, rolled_back_at,
                     rollback_of, entity_type, action_type, entity_id,
                     before_state, after_state, description
              FROM action_history
-             WHERE tenant_id = $1 AND rolled_back_at IS NULL
+             WHERE tenant_id = $1 AND rolled_back_at IS NULL AND action_type != 'rollback'
              ORDER BY performed_at DESC
              LIMIT 1",
         )
@@ -557,6 +557,25 @@ impl DbClient {
         .fetch_optional(&self.pool)
         .await
         .context("Failed to get last undoable action")?;
+
+        Ok(row.as_ref().map(row_to_action_record))
+    }
+
+    /// Get the most recent rollback action that has not been rolled back (for Redo).
+    pub async fn get_last_redoable_action(&self) -> Result<Option<ActionRecord>> {
+        let row = sqlx::query(
+            "SELECT action_id, tenant_id, performed_by, performed_at, rolled_back_at,
+                    rollback_of, entity_type, action_type, entity_id,
+                    before_state, after_state, description
+             FROM action_history
+             WHERE tenant_id = $1 AND rolled_back_at IS NULL AND action_type = 'rollback'
+             ORDER BY performed_at DESC
+             LIMIT 1",
+        )
+        .bind(self.tenant_id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to get last redoable action")?;
 
         Ok(row.as_ref().map(row_to_action_record))
     }
@@ -638,7 +657,18 @@ impl DbClient {
             }
         };
 
-        let description = format!("Rolled back: {}", action.description);
+        // Clean description: strip any existing prefix so undo/redo cycles don't nest
+        let base_desc = action
+            .description
+            .strip_prefix("Rolled back: ")
+            .or_else(|| action.description.strip_prefix("Redone: "))
+            .unwrap_or(&action.description);
+
+        let description = if original_action_type == ActionType::Rollback {
+            format!("Redone: {base_desc}")
+        } else {
+            format!("Rolled back: {base_desc}")
+        };
 
         // Mark the original action as rolled back
         self.mark_action_rolled_back(action.action_id).await?;
@@ -1550,5 +1580,191 @@ mod tests {
             .ok();
         client.hard_delete_action(rollback.action_id).await.ok();
         client.hard_delete_action(action.action_id).await.ok();
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_get_last_undoable_skips_rollback_actions() {
+        let client = create_test_client().await;
+
+        let test_domain = format!(
+            "test-undo-skip-{}.example.invalid",
+            chrono::Utc::now().timestamp_millis()
+        );
+
+        // Create domain and record the action
+        client
+            .insert_allowed_domain(&test_domain, "test", None)
+            .await
+            .expect("insert");
+
+        let after_state =
+            serde_json::json!({"domain": test_domain, "added_by": "test", "notes": null});
+
+        let create_action = client
+            .record_action(
+                EntityType::AllowedDomain,
+                ActionType::Create,
+                &test_domain,
+                None,
+                None,
+                Some(&after_state),
+                &format!("Added domain {test_domain}"),
+                None,
+            )
+            .await
+            .expect("record create");
+
+        // Undo the create (this creates a rollback action)
+        let rollback = client
+            .rollback_action(&create_action, None)
+            .await
+            .expect("rollback");
+
+        // last_undoable should NOT return the rollback action
+        // (rollback actions are for redo, not undo)
+        let last_undoable = client.get_last_undoable_action().await.expect("get");
+        assert!(
+            last_undoable.is_none(),
+            "Should not return rollback action as undoable"
+        );
+
+        // Cleanup
+        client.hard_delete_allowed_domain(&test_domain).await.ok();
+        client.hard_delete_action(rollback.action_id).await.ok();
+        client
+            .hard_delete_action(create_action.action_id)
+            .await
+            .ok();
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_get_last_redoable_returns_most_recent_rollback() {
+        let client = create_test_client().await;
+
+        let test_domain = format!(
+            "test-redo-{}.example.invalid",
+            chrono::Utc::now().timestamp_millis()
+        );
+
+        // Create domain and record the action
+        client
+            .insert_allowed_domain(&test_domain, "test", None)
+            .await
+            .expect("insert");
+
+        let after_state =
+            serde_json::json!({"domain": test_domain, "added_by": "test", "notes": null});
+
+        let create_action = client
+            .record_action(
+                EntityType::AllowedDomain,
+                ActionType::Create,
+                &test_domain,
+                None,
+                None,
+                Some(&after_state),
+                &format!("Added domain {test_domain}"),
+                None,
+            )
+            .await
+            .expect("record create");
+
+        // Undo the create
+        let rollback = client
+            .rollback_action(&create_action, None)
+            .await
+            .expect("rollback");
+
+        // last_redoable should return the rollback action
+        let last_redoable = client.get_last_redoable_action().await.expect("get");
+        assert!(last_redoable.is_some(), "Should have a redoable action");
+        assert_eq!(last_redoable.unwrap().action_id, rollback.action_id);
+
+        // Cleanup
+        client.hard_delete_allowed_domain(&test_domain).await.ok();
+        client.hard_delete_action(rollback.action_id).await.ok();
+        client
+            .hard_delete_action(create_action.action_id)
+            .await
+            .ok();
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_undo_redo_cycle_clean_descriptions() {
+        let client = create_test_client().await;
+
+        let test_domain = format!(
+            "test-undo-redo-{}.example.invalid",
+            chrono::Utc::now().timestamp_millis()
+        );
+
+        // Create domain
+        client
+            .insert_allowed_domain(&test_domain, "test", None)
+            .await
+            .expect("insert");
+
+        let after_state =
+            serde_json::json!({"domain": test_domain, "added_by": "test", "notes": null});
+
+        let create_action = client
+            .record_action(
+                EntityType::AllowedDomain,
+                ActionType::Create,
+                &test_domain,
+                None,
+                None,
+                Some(&after_state),
+                &format!("Added domain {test_domain}"),
+                None,
+            )
+            .await
+            .expect("record create");
+
+        // Undo
+        let undo = client
+            .rollback_action(&create_action, None)
+            .await
+            .expect("undo");
+
+        // Description should reference original, not nest
+        assert!(
+            !undo.description.contains("Rolled back: Rolled back:"),
+            "Description should not nest: {}",
+            undo.description
+        );
+
+        // Redo (rollback the undo)
+        let redo = client.rollback_action(&undo, None).await.expect("redo");
+
+        // Description should still be clean
+        assert!(
+            !redo.description.contains("Rolled back: Rolled back:"),
+            "Redo description should not nest: {}",
+            redo.description
+        );
+
+        // Undo again
+        let undo2 = client.rollback_action(&redo, None).await.expect("undo2");
+
+        // Still no nesting
+        assert!(
+            !undo2.description.contains("Rolled back: Rolled back:"),
+            "Second undo description should not nest: {}",
+            undo2.description
+        );
+
+        // Cleanup
+        client.hard_delete_allowed_domain(&test_domain).await.ok();
+        client.hard_delete_action(undo2.action_id).await.ok();
+        client.hard_delete_action(redo.action_id).await.ok();
+        client.hard_delete_action(undo.action_id).await.ok();
+        client
+            .hard_delete_action(create_action.action_id)
+            .await
+            .ok();
     }
 }

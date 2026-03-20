@@ -30,21 +30,23 @@
             <button @click="signOut()" data-testid="signout-button">SIGN OUT</button>
         </div>
 
-        <!-- Rollback Bar -->
-        <div x-show="lastUndoable" class="rollback-bar" data-testid="rollback-bar">
-            <span x-text="lastUndoable?.description"></span>
+        <!-- Undo / Redo Bar -->
+        <div x-show="undoable || redoable" class="undo-redo-bar" data-testid="undo-redo-bar">
             <button
-                @click="rollbackLast()"
-                :disabled="rollingBack"
-                class="btn-rollback"
-                data-testid="rollback-button"
-            >
-                <span x-show="!rollingBack">UNDO</span>
-                <span x-show="rollingBack"><span class="spinner"></span></span>
-            </button>
-            <small style="color: #666;">(Ctrl+Z)</small>
+                @click="undo()"
+                :disabled="!undoable || undoing"
+                class="btn-undo"
+                data-testid="undo-button"
+            >UNDO</button>
+            <button
+                @click="redo()"
+                :disabled="!redoable || redoing"
+                class="btn-redo"
+                data-testid="redo-button"
+            >REDO</button>
+            <span class="undo-redo-desc" x-text="undoable?.description || redoable?.description || ''"></span>
         </div>
-        <div x-show="rollbackMessage" class="msg-success" @click="rollbackMessage = null" style="cursor: pointer;" data-testid="rollback-message" x-text="rollbackMessage"></div>
+        <div x-show="actionMessage" class="msg-success" @click="actionMessage = null" style="cursor: pointer;" data-testid="action-message" x-text="actionMessage"></div>
 
         <!-- Invite Users Section (owners/admins only) -->
         <div x-show="canManage" x-data="inviteSection()" x-init="loadMembers()" @action-rolled-back.window="loadMembers()" class="dashboard-section">

@@ -86,10 +86,11 @@ pub struct ActionRecord {
     pub description: String,
 }
 
-/// API response: last undoable action (for Ctrl+Z).
+/// API response: last undoable/redoable actions.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct LastUndoableResponse {
-    pub action: Option<ActionRecord>,
+pub struct UndoRedoStateResponse {
+    pub undoable: Option<ActionRecord>,
+    pub redoable: Option<ActionRecord>,
 }
 
 /// API response after a rollback.

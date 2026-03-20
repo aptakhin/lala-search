@@ -42,9 +42,11 @@ function dashboardPage() {
   return {
     user: null as User | null,
     ready: false,
-    lastUndoable: null as ActionRecord | null,
-    rollbackMessage: null as string | null,
-    rollingBack: false,
+    undoable: null as ActionRecord | null,
+    redoable: null as ActionRecord | null,
+    actionMessage: null as string | null,
+    undoing: false,
+    redoing: false,
 
     get currentOrg(): Organization | null {
       return this.user?.organizations?.[0] || null;
@@ -90,52 +92,81 @@ function dashboardPage() {
       }
 
       this.ready = true;
-      await this.loadLastUndoable();
+      await this.loadUndoRedoState();
 
-      // Ctrl+Z keyboard shortcut for rollback
       document.addEventListener('keydown', (e: KeyboardEvent) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'z' && this.lastUndoable) {
+        if (!(e.ctrlKey || e.metaKey)) return;
+        if (e.key === 'z' && !e.shiftKey && this.undoable) {
           e.preventDefault();
-          this.rollbackLast();
+          this.undo();
+        } else if (
+          (e.key === 'y' || (e.key === 'z' && e.shiftKey)) &&
+          this.redoable
+        ) {
+          e.preventDefault();
+          this.redo();
         }
       });
     },
 
-    async loadLastUndoable() {
+    async loadUndoRedoState() {
       try {
-        const res = await fetch('/api/admin/action-history/last-undoable', {
+        const res = await fetch('/api/admin/action-history/state', {
           credentials: 'include',
         });
         if (res.ok) {
           const data = await res.json();
-          this.lastUndoable = data.action || null;
+          this.undoable = data.undoable || null;
+          this.redoable = data.redoable || null;
         }
       } catch {
         // silently fail
       }
     },
 
-    async rollbackLast() {
-      if (!this.lastUndoable || this.rollingBack) return;
-      this.rollingBack = true;
-      this.rollbackMessage = null;
+    async undo() {
+      if (!this.undoable || this.undoing) return;
+      this.undoing = true;
+      this.actionMessage = null;
 
       try {
-        const res = await fetch('/api/admin/action-history/rollback-last', {
+        const res = await fetch('/api/admin/action-history/undo', {
           method: 'POST',
           credentials: 'include',
         });
         if (res.ok) {
           const data = await res.json();
-          this.rollbackMessage = data.message;
-          // Refresh all sections
+          this.actionMessage = data.message;
           window.dispatchEvent(new CustomEvent('action-rolled-back'));
-          await this.loadLastUndoable();
+          await this.loadUndoRedoState();
         }
       } catch {
         // silently fail
       } finally {
-        this.rollingBack = false;
+        this.undoing = false;
+      }
+    },
+
+    async redo() {
+      if (!this.redoable || this.redoing) return;
+      this.redoing = true;
+      this.actionMessage = null;
+
+      try {
+        const res = await fetch('/api/admin/action-history/redo', {
+          method: 'POST',
+          credentials: 'include',
+        });
+        if (res.ok) {
+          const data = await res.json();
+          this.actionMessage = data.message;
+          window.dispatchEvent(new CustomEvent('action-rolled-back'));
+          await this.loadUndoRedoState();
+        }
+      } catch {
+        // silently fail
+      } finally {
+        this.redoing = false;
       }
     },
 
@@ -308,9 +339,8 @@ function domainsSection() {
           this.newDomain = '';
           this.domainNotes = '';
           await this.loadDomains();
-          // Refresh rollback state
           const page = (this as unknown as AlpineScope).$data as ReturnType<typeof dashboardPage>;
-          if (page.loadLastUndoable) await page.loadLastUndoable();
+          if (page.loadUndoRedoState) await page.loadUndoRedoState();
         } else {
           this.domainError = data.message || 'Failed to add domain.';
         }
@@ -329,9 +359,8 @@ function domainsSection() {
         );
         if (res.ok) {
           await this.loadDomains();
-          // Refresh rollback state
           const page = (this as unknown as AlpineScope).$data as ReturnType<typeof dashboardPage>;
-          if (page.loadLastUndoable) await page.loadLastUndoable();
+          if (page.loadUndoRedoState) await page.loadUndoRedoState();
         }
       } catch {
         // silently fail

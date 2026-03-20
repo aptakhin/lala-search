@@ -491,24 +491,24 @@ footer {
     background-color: #ff9999;
 }
 
-/* Rollback bar */
-.rollback-bar {
+/* Undo / Redo bar */
+.undo-redo-bar {
     background-color: #ffffcc;
     border: 2px solid #cc9900;
-    padding: 8px 15px;
+    padding: 6px 12px;
     margin-bottom: 15px;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
 }
 
-.rollback-bar span:first-child {
+.undo-redo-desc {
     flex: 1;
     font-size: 13px;
     color: #333333;
 }
 
-.btn-rollback {
+.btn-undo, .btn-redo {
     background-color: #ffcc00;
     border: 2px outset #ffffff;
     border-left-color: #ffffff;
@@ -523,7 +523,14 @@ footer {
     font-family: Arial, sans-serif;
 }
 
-.btn-rollback:active {
+.btn-undo:disabled, .btn-redo:disabled {
+    background-color: #dddddd;
+    color: #999999;
+    cursor: default;
+    border-color: #cccccc;
+}
+
+.btn-undo:not(:disabled):active, .btn-redo:not(:disabled):active {
     border-style: inset;
     border-left-color: #999999;
     border-top-color: #999999;
@@ -531,7 +538,7 @@ footer {
     border-bottom-color: #ffffff;
 }
 
-.btn-rollback:hover {
+.btn-undo:not(:disabled):hover, .btn-redo:not(:disabled):hover {
     background-color: #ffdd33;
 }
 
