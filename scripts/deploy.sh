@@ -107,13 +107,12 @@ ssh_cmd bash -s -- "$DEPLOY_DIR" "$REPO_RAW" <<'REMOTE_DOWNLOAD'
 DEPLOY_DIR="$1"
 REPO_RAW="$2"
 
-sudo mkdir -p "${DEPLOY_DIR}/docker/postgres" "${DEPLOY_DIR}/docker/seaweedfs"
+sudo mkdir -p "${DEPLOY_DIR}/docker/seaweedfs"
 sudo chown -R "$USER:$USER" "$DEPLOY_DIR"
 
 cd "$DEPLOY_DIR"
 
 curl -fsSL "$REPO_RAW/docker-compose.prod.yml"        -o docker-compose.prod.yml
-curl -fsSL "$REPO_RAW/docker/postgres/schema.sql"     -o docker/postgres/schema.sql
 curl -fsSL "$REPO_RAW/docker/seaweedfs/s3.json"       -o docker/seaweedfs/s3.json
 
 echo "Deployment files downloaded."

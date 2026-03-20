@@ -97,7 +97,7 @@ curl http://localhost:3000/version
 - Survives container restarts
 
 **Schema Initialization:**
-- `docker/postgres/schema.sql` is mounted into `/docker-entrypoint-initdb.d/` and runs automatically on first start
+- The `lala-agent` binary runs migrations automatically on startup via `lala-agent migrate`
 
 ## Database Schema
 

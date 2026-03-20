@@ -27,14 +27,13 @@ docker compose version
 ### 1. Download deployment files
 
 ```bash
-mkdir -p lalasearch/docker/postgres lalasearch/docker/seaweedfs
+mkdir -p lalasearch/docker/seaweedfs
 cd lalasearch
 
 # Download from the latest release
 REPO="https://raw.githubusercontent.com/aptakhin/lala-search/main"
 curl -fsSLO "$REPO/docker-compose.prod.yml"
 curl -fsSLO "$REPO/.env.prod.example"
-curl -fsSL "$REPO/docker/postgres/schema.sql" -o docker/postgres/schema.sql
 curl -fsSL "$REPO/docker/seaweedfs/s3.json" -o docker/seaweedfs/s3.json
 ```
 

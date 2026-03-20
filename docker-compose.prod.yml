@@ -7,7 +7,7 @@
 # Prerequisites:
 #   1. Copy .env.prod.example to .env.prod
 #   2. Update ALL passwords and secrets in .env.prod
-#   3. Place docker/postgres/schema.sql and docker/seaweedfs/s3.json
+#   3. Place docker/seaweedfs/s3.json
 
 services:
   # PostgreSQL - Relational database (internal only, not exposed to host)
@@ -16,7 +16,6 @@ services:
     container_name: lalasearch-postgres
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./docker/postgres/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     environment:
       - POSTGRES_DB=lalasearch
       - POSTGRES_USER=${POSTGRES_USER:-lalasearch}

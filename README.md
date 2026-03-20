@@ -65,8 +65,6 @@ lalasearch/
 │   ├── Cargo.toml                 # Rust dependencies
 │   └── build.rs                   # Build-time version extraction
 ├── docker/                        # Docker configuration
-│   └── postgres/
-│       └── schema.sql             # PostgreSQL schema (all tables, RLS policies)
 ├── .github/workflows/
 │   ├── ci.yml                    # Build & Test pipeline (fmt, clippy, unit, storage, integration)
 │   ├── e2e.yml                   # E2E Test pipeline (Docker Compose + Playwright)
@@ -111,11 +109,10 @@ Deploy LalaSearch on a Linux VM (Debian/Ubuntu) using pre-built Docker images:
 
 ```bash
 # Download deployment files
-mkdir -p lalasearch/docker/postgres lalasearch/docker/seaweedfs && cd lalasearch
+mkdir -p lalasearch/docker/seaweedfs && cd lalasearch
 REPO="https://raw.githubusercontent.com/aptakhin/lala-search/main"
 curl -fsSLO "$REPO/docker-compose.prod.yml"
 curl -fsSLO "$REPO/.env.prod.example"
-curl -fsSL "$REPO/docker/postgres/schema.sql" -o docker/postgres/schema.sql
 curl -fsSL "$REPO/docker/seaweedfs/s3.json" -o docker/seaweedfs/s3.json
 
 # Configure (change all CHANGE_ME values!)
