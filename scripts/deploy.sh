@@ -89,6 +89,7 @@ echo "    Image tag: ${IMAGE_TAG}"
 echo "==> Checking Docker installation..."
 
 ssh_cmd bash -s <<'REMOTE_DOCKER'
+set -euo pipefail
 if command -v docker &>/dev/null && docker compose version &>/dev/null; then
     echo "Docker and Compose plugin already installed."
 else
@@ -104,6 +105,7 @@ REMOTE_DOCKER
 echo "==> Downloading deployment files..."
 
 ssh_cmd bash -s -- "$DEPLOY_DIR" "$REPO_RAW" <<'REMOTE_DOWNLOAD'
+set -euo pipefail
 DEPLOY_DIR="$1"
 REPO_RAW="$2"
 
@@ -112,8 +114,25 @@ sudo chown -R "$USER:$USER" "$DEPLOY_DIR"
 
 cd "$DEPLOY_DIR"
 
-curl -fsSL "$REPO_RAW/docker-compose.prod.yml"        -o docker-compose.prod.yml
-curl -fsSL "$REPO_RAW/docker/seaweedfs/s3.json"       -o docker/seaweedfs/s3.json
+echo "Downloading docker-compose.prod.yml..."
+curl -fsSL "$REPO_RAW/docker-compose.prod.yml" -o docker-compose.prod.yml
+
+echo "Downloading docker/seaweedfs/s3.json..."
+curl -fsSL "$REPO_RAW/docker/seaweedfs/s3.json" -o docker/seaweedfs/s3.json
+
+# Verify all required files exist and are non-empty
+failed=()
+for f in docker-compose.prod.yml docker/seaweedfs/s3.json; do
+    if [[ ! -s "$f" ]]; then
+        failed+=("$f")
+    fi
+done
+
+if [[ ${#failed[@]} -gt 0 ]]; then
+    echo "Error: failed to download deployment files: ${failed[*]}" >&2
+    echo "Check that the repository URL is correct: $REPO_RAW" >&2
+    exit 1
+fi
 
 echo "Deployment files downloaded."
 REMOTE_DOWNLOAD
@@ -179,6 +198,7 @@ echo "$ENV_CONTENT" | ssh_cmd "cat > ${DEPLOY_DIR}/.env.prod"
 if [[ "$IMAGE_TAG" != "latest" ]]; then
     echo "==> Pinning images to tag: ${IMAGE_TAG}"
     ssh_cmd bash -s -- "$DEPLOY_DIR" "$IMAGE_TAG" <<'REMOTE_PIN'
+set -euo pipefail
 DEPLOY_DIR="$1"
 TAG="$2"
 cd "$DEPLOY_DIR"
@@ -192,6 +212,7 @@ fi
 echo "==> Pulling images and starting the stack..."
 
 ssh_cmd bash -s -- "$DEPLOY_DIR" <<'REMOTE_UP'
+set -euo pipefail
 DEPLOY_DIR="$1"
 cd "$DEPLOY_DIR"
 
@@ -204,6 +225,7 @@ REMOTE_UP
 echo "==> Waiting for services to become healthy..."
 
 ssh_cmd bash -s -- "$DEPLOY_DIR" <<'REMOTE_VERIFY'
+set -euo pipefail
 DEPLOY_DIR="$1"
 cd "$DEPLOY_DIR"
 
