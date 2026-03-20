@@ -216,8 +216,8 @@ set -euo pipefail
 DEPLOY_DIR="$1"
 cd "$DEPLOY_DIR"
 
-docker compose -f docker-compose.prod.yml pull
-docker compose -f docker-compose.prod.yml up -d
+docker compose --env-file .env.prod -f docker-compose.prod.yml pull
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
 REMOTE_UP
 
 # ── Step 6: Wait for health and verify ───────────────────────────────────────
@@ -238,8 +238,8 @@ for i in $(seq 1 24); do
     fi
     if [[ $i -eq 24 ]]; then
         echo "Error: lala-agent did not become healthy within 120s" >&2
-        docker compose -f docker-compose.prod.yml ps
-        docker compose -f docker-compose.prod.yml logs --tail=30 lala-agent
+        docker compose --env-file .env.prod -f docker-compose.prod.yml ps
+        docker compose --env-file .env.prod -f docker-compose.prod.yml logs --tail=30 lala-agent
         exit 1
     fi
     echo "  Waiting... ($status) [${i}/24]"
@@ -248,7 +248,7 @@ done
 
 echo ""
 echo "Service status:"
-docker compose -f docker-compose.prod.yml ps
+docker compose --env-file .env.prod -f docker-compose.prod.yml ps
 
 echo ""
 echo "Version:"
