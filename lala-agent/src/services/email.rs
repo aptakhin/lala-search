@@ -99,9 +99,7 @@ pub struct EmailService {
 impl EmailService {
     /// Create a new email service with the given configuration.
     pub fn new(config: EmailConfig) -> Result<Self> {
-        // Build transport based on TLS and authentication settings
         let transport = match (&config.smtp_username, &config.smtp_password) {
-            // With credentials (external SMTP services)
             (Some(username), Some(password)) => {
                 let creds = Credentials::new(username.clone(), password.clone());
                 if config.smtp_tls {
@@ -117,7 +115,6 @@ impl EmailService {
                         .build()
                 }
             }
-            // Without credentials (local Postfix)
             _ => {
                 if config.smtp_tls {
                     AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.smtp_host)

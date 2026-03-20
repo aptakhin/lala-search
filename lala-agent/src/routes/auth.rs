@@ -236,12 +236,9 @@ async fn verify_link_handler(
         .await
     {
         Ok((session_token, _user, _tenant_id)) => {
-            // Set session cookie
             let cookie =
                 create_session_cookie(&session_token, state.auth_config.session_max_age_days);
             cookies.add(cookie);
-
-            // Redirect to dashboard
             Redirect::to("/dashboard").into_response()
         }
         Err(e) => {
@@ -279,12 +276,9 @@ async fn accept_invitation_handler(
         .await
     {
         Ok((session_token, _user, _tenant_id)) => {
-            // Set session cookie
             let cookie =
                 create_session_cookie(&session_token, state.auth_config.session_max_age_days);
             cookies.add(cookie);
-
-            // Redirect to dashboard
             Redirect::to("/dashboard").into_response()
         }
         Err(e) => {
@@ -321,7 +315,6 @@ async fn me_handler(
 ) -> Result<Json<MeResponse>, (StatusCode, Json<MessageResponse>)> {
     let auth_user = get_auth_user(&state, &cookies).await?;
 
-    // Get user's organizations
     let orgs = state
         .auth_service
         .get_user_organizations(auth_user.user_id)
@@ -373,7 +366,6 @@ async fn signout_handler(
         let _ = state.auth_service.sign_out(&session_token).await;
     }
 
-    // Clear the cookie regardless
     cookies.remove(clear_session_cookie());
 
     Ok(Json(MessageResponse {
@@ -477,7 +469,6 @@ async fn list_members_handler(
             )
         })?;
 
-    // Batch fetch all user emails in a single query
     let user_ids: Vec<Uuid> = members.iter().map(|m| m.user_id).collect();
     let users = state
         .auth_service
@@ -493,11 +484,9 @@ async fn list_members_handler(
             )
         })?;
 
-    // Create a map of user_id -> email for fast lookup
     let email_map: std::collections::HashMap<Uuid, String> =
         users.into_iter().map(|u| (u.user_id, u.email)).collect();
 
-    // Build member info with emails
     let member_infos: Vec<MemberInfo> = members
         .into_iter()
         .map(|m| MemberInfo {

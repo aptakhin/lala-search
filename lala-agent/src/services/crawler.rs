@@ -6,7 +6,6 @@ use texting_robots::{get_robots_url, Robot};
 
 /// Crawl a URL, respecting robots.txt rules
 pub async fn crawl_url(request: CrawlRequest) -> Result<CrawlResult, Box<dyn std::error::Error>> {
-    // Validate the URL
     if let Err(e) = url::Url::parse(&request.url) {
         return Ok(CrawlResult {
             url: request.url,
@@ -17,10 +16,8 @@ pub async fn crawl_url(request: CrawlRequest) -> Result<CrawlResult, Box<dyn std
         });
     }
 
-    // Get robots.txt URL
     let robots_url = get_robots_url(&request.url)?;
 
-    // Fetch and parse robots.txt
     let client = reqwest::Client::new();
     let robots_txt = match client.get(&robots_url).send().await {
         Ok(response) => response.text().await.unwrap_or_default(),
@@ -30,10 +27,8 @@ pub async fn crawl_url(request: CrawlRequest) -> Result<CrawlResult, Box<dyn std
         }
     };
 
-    // Parse robots.txt
     let robot = Robot::new(&request.user_agent, robots_txt.as_bytes())?;
 
-    // Check if crawling is allowed
     let allowed = robot.allowed(&request.url);
 
     if !allowed {
@@ -46,7 +41,6 @@ pub async fn crawl_url(request: CrawlRequest) -> Result<CrawlResult, Box<dyn std
         });
     }
 
-    // Fetch the content
     let response = client
         .get(&request.url)
         .header("User-Agent", &request.user_agent)

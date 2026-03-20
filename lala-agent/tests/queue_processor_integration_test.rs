@@ -5,7 +5,7 @@ use axum::{routing::get, Router};
 use chrono::Utc;
 use lala_agent::models::db::{CrawlQueueEntry, CrawledPage};
 use lala_agent::services::db::DbClient;
-use lala_agent::services::queue_processor::QueueProcessor;
+use lala_agent::services::queue_processor::{QueueConfig, QueueProcessor};
 use lala_agent::services::storage::{S3Config, StorageClient};
 use sqlx::postgres::PgPool;
 use std::sync::Arc;
@@ -505,9 +505,11 @@ async fn test_crawl_pipeline_end_to_end() {
     let processor = QueueProcessor::with_storage(
         db_client.clone(),
         Arc::new(storage_client),
-        "LalaSearchBot/0.1 (Integration Test)".to_string(),
-        Duration::from_secs(1),
-        None, // No tenant_id in integration tests (single-tenant mode)
+        QueueConfig {
+            user_agent: "LalaSearchBot/0.1 (Integration Test)".to_string(),
+            poll_interval: Duration::from_secs(1),
+            tenant_id: None, // No tenant_id in integration tests (single-tenant mode)
+        },
     );
 
     let processed = processor

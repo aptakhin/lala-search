@@ -19,6 +19,14 @@ use uuid::Uuid;
 /// Maximum number of retry attempts before giving up on a URL
 const MAX_RETRY_ATTEMPTS: i32 = 5;
 
+/// Common configuration shared across all QueueProcessor constructors
+pub struct QueueConfig {
+    pub user_agent: String,
+    pub poll_interval: Duration,
+    /// Tenant ID for multi-tenant search isolation (None in single-tenant mode)
+    pub tenant_id: Option<String>,
+}
+
 /// Queue processor that continuously processes crawl queue entries
 pub struct QueueProcessor {
     db_client: Arc<DbClient>,
@@ -26,25 +34,19 @@ pub struct QueueProcessor {
     storage_client: Option<Arc<StorageClient>>,
     user_agent: String,
     poll_interval: Duration,
-    /// Tenant ID for multi-tenant search isolation (None in single-tenant mode)
     tenant_id: Option<String>,
 }
 
 impl QueueProcessor {
     /// Create a new queue processor
-    pub fn new(
-        db_client: Arc<DbClient>,
-        user_agent: String,
-        poll_interval: Duration,
-        tenant_id: Option<String>,
-    ) -> Self {
+    pub fn new(db_client: Arc<DbClient>, config: QueueConfig) -> Self {
         Self {
             db_client,
             search_client: None,
             storage_client: None,
-            user_agent,
-            poll_interval,
-            tenant_id,
+            user_agent: config.user_agent,
+            poll_interval: config.poll_interval,
+            tenant_id: config.tenant_id,
         }
     }
 
@@ -52,17 +54,15 @@ impl QueueProcessor {
     pub fn with_search(
         db_client: Arc<DbClient>,
         search_client: Arc<SearchClient>,
-        user_agent: String,
-        poll_interval: Duration,
-        tenant_id: Option<String>,
+        config: QueueConfig,
     ) -> Self {
         Self {
             db_client,
             search_client: Some(search_client),
             storage_client: None,
-            user_agent,
-            poll_interval,
-            tenant_id,
+            user_agent: config.user_agent,
+            poll_interval: config.poll_interval,
+            tenant_id: config.tenant_id,
         }
     }
 
@@ -70,17 +70,15 @@ impl QueueProcessor {
     pub fn with_storage(
         db_client: Arc<DbClient>,
         storage_client: Arc<StorageClient>,
-        user_agent: String,
-        poll_interval: Duration,
-        tenant_id: Option<String>,
+        config: QueueConfig,
     ) -> Self {
         Self {
             db_client,
             search_client: None,
             storage_client: Some(storage_client),
-            user_agent,
-            poll_interval,
-            tenant_id,
+            user_agent: config.user_agent,
+            poll_interval: config.poll_interval,
+            tenant_id: config.tenant_id,
         }
     }
 
@@ -89,17 +87,15 @@ impl QueueProcessor {
         db_client: Arc<DbClient>,
         search_client: Arc<SearchClient>,
         storage_client: Arc<StorageClient>,
-        user_agent: String,
-        poll_interval: Duration,
-        tenant_id: Option<String>,
+        config: QueueConfig,
     ) -> Self {
         Self {
             db_client,
             search_client: Some(search_client),
             storage_client: Some(storage_client),
-            user_agent,
-            poll_interval,
-            tenant_id,
+            user_agent: config.user_agent,
+            poll_interval: config.poll_interval,
+            tenant_id: config.tenant_id,
         }
     }
 
@@ -126,12 +122,10 @@ impl QueueProcessor {
     /// Process a single entry from the queue
     /// Returns true if an entry was processed, false if queue was empty or crawling is disabled
     pub async fn process_next_entry(&self) -> Result<bool> {
-        // Check if crawling is enabled before processing
         if !self.db_client.is_crawling_enabled().await? {
             return Ok(false);
         }
 
-        // Get the next entry from the queue (uses FOR UPDATE SKIP LOCKED)
         let entry = match self.db_client.get_next_queue_entry().await? {
             Some(entry) => entry,
             None => return Ok(false),
@@ -139,10 +133,8 @@ impl QueueProcessor {
 
         println!("Processing URL: {}", entry.url);
 
-        // Delete the entry from the queue after locking it
         self.db_client.delete_queue_entry(&entry).await?;
 
-        // Process the entry and handle any failures with retry logic
         match self.process_crawl_entry(&entry).await {
             Ok(()) => {
                 println!("Successfully processed URL: {}", entry.url);
@@ -166,7 +158,6 @@ impl QueueProcessor {
         &self,
         entry: &CrawlQueueEntry,
     ) -> std::result::Result<(), (CrawlErrorType, String)> {
-        // Stage 1: Crawl the URL
         let request = CrawlRequest {
             url: entry.url.clone(),
             user_agent: self.user_agent.clone(),
@@ -179,7 +170,6 @@ impl QueueProcessor {
             )
         })?;
 
-        // Check if robots.txt disallowed
         if !result.allowed_by_robots {
             return Err((
                 CrawlErrorType::RobotsDisallowed,
@@ -187,7 +177,6 @@ impl QueueProcessor {
             ));
         }
 
-        // Ensure we have content
         let content = result.content.as_ref().ok_or_else(|| {
             (
                 CrawlErrorType::FetchError,
@@ -198,13 +187,11 @@ impl QueueProcessor {
             )
         })?;
 
-        // Stage 2: Upload to S3 storage (MANDATORY)
         let (storage_id, compression_type) = self
             .upload_to_storage_required(&result, &entry.url)
             .await
             .map_err(|e| (CrawlErrorType::StorageError, e))?;
 
-        // Stage 3: Create and store crawled page in database
         let crawled_page = self
             .create_crawled_page(entry, &result, Some(storage_id), compression_type)
             .await
@@ -225,7 +212,6 @@ impl QueueProcessor {
                 )
             })?;
 
-        // Process indexing and link extraction based on robots directives
         let robots_directives = get_robots_directives(content, result.x_robots_tag.as_deref());
         self.process_post_crawl(entry, &crawled_page, content, robots_directives)
             .await
@@ -240,7 +226,6 @@ impl QueueProcessor {
         content: &str,
         robots_directives: RobotsMetaDirectives,
     ) -> std::result::Result<(), (CrawlErrorType, String)> {
-        // Stage 4: Index in search engine (skip if noindex directive is present)
         if robots_directives.noindex {
             println!(
                 "Skipping indexing for {} due to noindex directive",
@@ -257,7 +242,6 @@ impl QueueProcessor {
                 })?;
         }
 
-        // Stage 5: Extract and enqueue links (skip if nofollow directive is present)
         if robots_directives.nofollow {
             println!(
                 "Skipping link extraction for {} due to nofollow directive",
@@ -282,7 +266,6 @@ impl QueueProcessor {
             .map(|u| extract_domain(&u))
             .unwrap_or_else(|_| entry.domain.clone());
 
-        // Log the error to crawl_errors table
         let crawl_error = CrawlError {
             error_id: Uuid::now_v7(),
             tenant_id: self.db_client.tenant_id,
@@ -300,7 +283,6 @@ impl QueueProcessor {
             eprintln!("Failed to log crawl error to database: {}", e);
         }
 
-        // Re-queue for retry if under max attempts (except for permanent failures)
         let should_retry = match error_type {
             CrawlErrorType::RobotsDisallowed | CrawlErrorType::InvalidUrl => false,
             _ => entry.attempt_count < MAX_RETRY_ATTEMPTS,
@@ -334,20 +316,16 @@ impl QueueProcessor {
         crawled_page: &CrawledPage,
         content: &str,
     ) -> Result<()> {
-        // Extract title from HTML content (simple extraction)
         let title = extract_title(content);
-
-        // Remove HTML tags from content for indexing
         let clean_content = remove_html_tags(content);
 
-        // Create excerpt from clean content (first 500 chars)
         let excerpt = if clean_content.len() > 500 {
             format!("{}...", &clean_content[..500])
         } else {
             clean_content.clone()
         };
 
-        // Create document ID from URL hash (include tenant_id to prevent cross-tenant collisions)
+        // Include tenant_id to prevent cross-tenant collisions
         let doc_id = match &self.tenant_id {
             Some(tid) => format!("{:x}", md5::compute(format!("{}{}", tid, entry.url))),
             None => format!("{:x}", md5::compute(entry.url.as_bytes())),
@@ -384,7 +362,6 @@ impl QueueProcessor {
 
     /// Enqueue a single link if it hasn't been crawled yet
     async fn enqueue_link(&self, link: &str, parent_entry: &CrawlQueueEntry) {
-        // Parse URL - early return on error
         let parsed = match url::Url::parse(link) {
             Ok(p) => p,
             Err(e) => {
@@ -393,7 +370,6 @@ impl QueueProcessor {
             }
         };
 
-        // Validate domain - early return if empty
         let domain = extract_domain(&parsed);
         if domain.is_empty() {
             return;
@@ -401,7 +377,6 @@ impl QueueProcessor {
 
         let url_path = parsed.path().to_string();
 
-        // Check allowlist - early return on error or not allowed
         let is_allowed = match self.db_client.is_domain_allowed(&domain).await {
             Ok(allowed) => allowed,
             Err(e) => {
@@ -413,7 +388,6 @@ impl QueueProcessor {
             return;
         }
 
-        // Check if already crawled - early return on error or exists
         let exists = match self.db_client.crawled_page_exists(&domain, &url_path).await {
             Ok(e) => e,
             Err(e) => {
@@ -425,7 +399,6 @@ impl QueueProcessor {
             return;
         }
 
-        // Success path - create and insert queue entry
         let now = Utc::now();
         let new_entry = CrawlQueueEntry {
             queue_id: Uuid::now_v7(),
@@ -488,7 +461,6 @@ impl QueueProcessor {
         let crawl_frequency_hours = 24; // Default: recrawl once per day
         let next_crawl_at = now + chrono::Duration::hours(crawl_frequency_hours as i64);
 
-        // Calculate content hash if content exists
         let (content_hash, content_length) = if let Some(ref content) = result.content {
             let hash = format!("{:x}", md5::compute(content));
             (hash, content.len() as i32)
@@ -496,7 +468,6 @@ impl QueueProcessor {
             ("".to_string(), 0)
         };
 
-        // Determine HTTP status
         let http_status = if result.allowed_by_robots {
             if result.content.is_some() {
                 200 // Assume success if we got content
@@ -507,7 +478,6 @@ impl QueueProcessor {
             403 // Forbidden by robots.txt
         };
 
-        // Check if this page was crawled before to increment crawl_count
         let existing_page = self
             .db_client
             .get_crawled_page(&domain, &url_path)
@@ -564,7 +534,6 @@ fn extract_domain(url: &url::Url) -> String {
 fn remove_html_tags(html: &str) -> String {
     let document = Html::parse_document(html);
 
-    // Collect all text nodes from the document
     let mut text = String::new();
     for node in document.root_element().descendants() {
         if node.value().as_text().is_some() {
@@ -576,7 +545,6 @@ fn remove_html_tags(html: &str) -> String {
         }
     }
 
-    // Clean up whitespace
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
@@ -584,7 +552,6 @@ fn remove_html_tags(html: &str) -> String {
 fn extract_title(html: &str) -> Option<String> {
     let html_lower = html.to_lowercase();
 
-    // Try to extract from <title> tag first
     if let Some(start) = html_lower.find("<title") {
         if let Some(tag_end) = html[start..].find('>') {
             let content_start = start + tag_end + 1;
@@ -597,7 +564,6 @@ fn extract_title(html: &str) -> Option<String> {
         }
     }
 
-    // Try to extract from first <h1> tag
     if let Some(start) = html_lower.find("<h1") {
         if let Some(tag_end) = html[start..].find('>') {
             let content_start = start + tag_end + 1;
@@ -620,16 +586,13 @@ fn extract_title(html: &str) -> Option<String> {
 fn extract_links(html: &str, base_url: &str) -> Vec<String> {
     let mut links = Vec::new();
 
-    // Parse HTML safely
     let document = Html::parse_document(html);
 
-    // Select all <a> tags with href attribute
     let Ok(selector) = scraper::Selector::parse("a[href]") else {
         return links;
     };
 
     for element in document.select(&selector) {
-        // Skip links with nofollow in rel attribute
         if let Some(rel) = element.value().attr("rel") {
             let rel_lower = rel.to_lowercase();
             if rel_lower.contains("nofollow") {
@@ -646,7 +609,6 @@ fn extract_links(html: &str, base_url: &str) -> Vec<String> {
         }
     }
 
-    // Deduplicate
     links.sort();
     links.dedup();
     links

@@ -1343,7 +1343,6 @@ mod tests {
 
         assert_eq!(users.len(), 2);
 
-        // Empty list returns empty results
         let empty = client
             .get_users_by_ids(vec![])
             .await
@@ -1376,7 +1375,6 @@ mod tests {
 
         let expires_at = Utc::now() + chrono::Duration::days(1);
 
-        // Create two sessions for the same user
         let hash_1 = format!("test-session-{}", Uuid::now_v7());
         let hash_2 = format!("test-session-{}", Uuid::now_v7());
 
@@ -1394,13 +1392,11 @@ mod tests {
                 .expect("Failed to create session");
         }
 
-        // Delete all sessions for user (single query, no N+1)
         client
             .delete_user_sessions(user_id)
             .await
             .expect("Failed to delete user sessions");
 
-        // Both sessions should be gone
         assert!(client.get_session(&hash_1).await.unwrap().is_none());
         assert!(client.get_session(&hash_2).await.unwrap().is_none());
 

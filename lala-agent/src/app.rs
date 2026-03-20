@@ -88,7 +88,6 @@ impl FromRequestParts<AppState> for TenantDb {
         }
 
         if state.deployment_mode == DeploymentMode::SingleTenant {
-            // Validate session but return the default db_client
             validate_session(parts, state).await?;
             return Ok(TenantDb(state.db_client.clone()));
         }
@@ -351,7 +350,6 @@ pub async fn delete_domain_handler(
     TenantDb(db): TenantDb,
     Path(domain): Path<String>,
 ) -> Result<Json<DeleteDomainResponse>, (StatusCode, String)> {
-    // Snapshot before delete for rollback
     let before_state = db.get_allowed_domain_snapshot(&domain).await.ok().flatten();
 
     db.delete_allowed_domain(&domain).await.map_err(|e| {
@@ -404,7 +402,6 @@ pub async fn set_crawling_enabled_handler(
     TenantDb(db): TenantDb,
     Json(payload): Json<SetCrawlingEnabledRequest>,
 ) -> Result<Json<CrawlingEnabledResponse>, (StatusCode, String)> {
-    // Snapshot before change
     let old_enabled = db.is_crawling_enabled().await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -469,7 +466,6 @@ pub async fn recent_crawled_pages_handler(
 
     let limit = params.limit.unwrap_or(10).min(50) as i64;
 
-    // Query the database for recently crawled pages
     let db_pages = db
         .get_recent_crawled_pages(&params.domain, limit)
         .await
@@ -496,31 +492,29 @@ pub async fn recent_crawled_pages_handler(
         )
         .collect();
 
-    // Optionally enrich with titles/excerpts from Meilisearch
-    if params.enrich.unwrap_or(false) {
-        if let Some(search_client) = state.search_client.as_ref() {
-            let tenant_id_str = db.tenant_id.to_string();
-            let tenant_filter = if state.deployment_mode == DeploymentMode::MultiTenant {
-                Some(tenant_id_str.as_str())
-            } else {
-                None
-            };
+    if let (true, Some(search_client)) =
+        (params.enrich.unwrap_or(false), state.search_client.as_ref())
+    {
+        let tenant_id_str = db.tenant_id.to_string();
+        let tenant_filter = if state.deployment_mode == DeploymentMode::MultiTenant {
+            Some(tenant_id_str.as_str())
+        } else {
+            None
+        };
 
-            if let Ok(docs) = search_client
-                .list_by_domain(&params.domain, tenant_filter, limit as usize)
-                .await
-            {
-                // Build URL → (title, excerpt) map for O(1) lookup
-                let enrichment: std::collections::HashMap<String, (Option<String>, String)> = docs
-                    .into_iter()
-                    .map(|doc| (doc.url.clone(), (doc.title, doc.excerpt)))
-                    .collect();
+        if let Ok(docs) = search_client
+            .list_by_domain(&params.domain, tenant_filter, limit as usize)
+            .await
+        {
+            let enrichment: std::collections::HashMap<String, (Option<String>, String)> = docs
+                .into_iter()
+                .map(|doc| (doc.url.clone(), (doc.title, doc.excerpt)))
+                .collect();
 
-                for page in &mut pages {
-                    if let Some((title, excerpt)) = enrichment.get(&page.url) {
-                        page.title.clone_from(title);
-                        page.excerpt = Some(excerpt.clone());
-                    }
+            for page in &mut pages {
+                if let Some((title, excerpt)) = enrichment.get(&page.url) {
+                    page.title.clone_from(title);
+                    page.excerpt = Some(excerpt.clone());
                 }
             }
         }

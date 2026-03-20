@@ -10,7 +10,7 @@ use lala_agent::services::auth::AuthConfig;
 use lala_agent::services::auth_db::AuthDbClient;
 use lala_agent::services::db::DbClient;
 use lala_agent::services::email::{EmailConfig, EmailService};
-use lala_agent::services::queue_processor::QueueProcessor;
+use lala_agent::services::queue_processor::{QueueConfig, QueueProcessor};
 use lala_agent::services::search::SearchClient;
 use lala_agent::services::storage::{S3Config, StorageClient};
 use sqlx::postgres::PgPool;
@@ -90,13 +90,11 @@ async fn run_serve() {
     let meilisearch_index =
         env::var("MEILISEARCH_INDEX").unwrap_or_else(|_| "documents".to_string());
 
-    // Initialize database, search, and storage clients
     let pool = init_db_pool(&database_url).await;
     let db_client = Arc::new(DbClient::new(pool.clone(), default_tenant_id));
     let search_client = init_search_client(&meilisearch_host, &meilisearch_index).await;
     let storage_client = init_storage_client().await;
 
-    // Ensure the default tenant row exists
     if let Err(e) = db_client
         .ensure_default_tenant(default_tenant_id, "default")
         .await
@@ -136,7 +134,6 @@ async fn run_serve() {
         );
     }
 
-    // Initialize auth state and build the HTTP app
     let auth_state = init_auth_state(pool, default_tenant_id).await;
     let state = AppState {
         db_client,
@@ -207,30 +204,18 @@ fn spawn_queue_processor(
     poll_interval: Duration,
     tenant_id: Option<String>,
 ) {
+    let config = QueueConfig {
+        user_agent,
+        poll_interval,
+        tenant_id,
+    };
     let processor = match (&search_client, &storage_client) {
-        (Some(search), Some(storage)) => QueueProcessor::with_all(
-            db_client,
-            search.clone(),
-            storage.clone(),
-            user_agent,
-            poll_interval,
-            tenant_id,
-        ),
-        (Some(search), None) => QueueProcessor::with_search(
-            db_client,
-            search.clone(),
-            user_agent,
-            poll_interval,
-            tenant_id,
-        ),
-        (None, Some(storage)) => QueueProcessor::with_storage(
-            db_client,
-            storage.clone(),
-            user_agent,
-            poll_interval,
-            tenant_id,
-        ),
-        (None, None) => QueueProcessor::new(db_client, user_agent, poll_interval, tenant_id),
+        (Some(search), Some(storage)) => {
+            QueueProcessor::with_all(db_client, search.clone(), storage.clone(), config)
+        }
+        (Some(search), None) => QueueProcessor::with_search(db_client, search.clone(), config),
+        (None, Some(storage)) => QueueProcessor::with_storage(db_client, storage.clone(), config),
+        (None, None) => QueueProcessor::new(db_client, config),
     };
 
     tokio::spawn(async move {

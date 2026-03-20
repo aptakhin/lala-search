@@ -15,7 +15,6 @@ pub struct SearchClient {
 impl SearchClient {
     /// Create a new Meilisearch client
     pub async fn new(host: &str, index_name: String) -> Result<Self> {
-        // Construct the full URL if only host:port is provided
         let url = if host.starts_with("http://") || host.starts_with("https://") {
             host.to_string()
         } else {
@@ -31,18 +30,14 @@ impl SearchClient {
 
     /// Initialize the documents index with proper settings
     pub async fn init_index(&self) -> Result<()> {
-        // Create or get the documents index
         let index = self.client.index(&self.index_name);
 
-        // Set searchable and filterable attributes
         let searchable_attrs = vec!["title", "content", "domain", "url"];
         let _ = index.set_searchable_attributes(searchable_attrs).await;
 
-        // Set filterable attributes for faceted search
         let filterable_attrs = vec!["domain", "crawled_at", "tenant_id"];
         let _ = index.set_filterable_attributes(filterable_attrs).await;
 
-        // Set sortable attributes
         let sortable_attrs = vec!["crawled_at"];
         let _ = index.set_sortable_attributes(sortable_attrs).await;
 
@@ -55,10 +50,8 @@ impl SearchClient {
     pub async fn index_document(&self, doc: &IndexedDocument) -> Result<()> {
         let index = self.client.index(&self.index_name);
 
-        // Convert document to JSON for indexing
         let doc_json = serde_json::to_value(doc)?;
 
-        // Add or update the document in the index
         index
             .add_documents(&[doc_json], Some("id"))
             .await
@@ -75,7 +68,6 @@ impl SearchClient {
 
         let index = self.client.index(&self.index_name);
 
-        // Convert documents to JSON
         let doc_jsons: Vec<_> = docs
             .iter()
             .filter_map(|doc| serde_json::to_value(doc).ok())
@@ -104,10 +96,8 @@ impl SearchClient {
         let limit = request.limit.unwrap_or(20).min(1000) as usize;
         let offset = request.offset.unwrap_or(0) as usize;
 
-        // Build tenant filter for multi-tenant isolation
         let tenant_filter = tenant_id.map(|tid| format!("tenant_id = '{}'", tid));
 
-        // Perform the search with cropping and highlighting for snippets
         let mut query = index.search();
         query
             .with_query(&request.query)
@@ -130,12 +120,10 @@ impl SearchClient {
 
         let total = search_result.estimated_total_hits.unwrap_or(0) as u32;
 
-        // Convert results, extracting snippet from formatted_result
         let results: Vec<SearchResult> = search_result
             .hits
             .into_iter()
             .map(|hit| {
-                // Extract the highlighted/cropped content from formatted_result
                 let snippet = hit
                     .formatted_result
                     .as_ref()

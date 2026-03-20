@@ -128,7 +128,6 @@ impl AuthService {
     ) -> Result<(String, User, Uuid)> {
         let token_hash = Self::hash_token(token);
 
-        // Get and validate token
         let magic_token = self
             .db
             .get_magic_link_token(&token_hash)
@@ -150,15 +149,12 @@ impl AuthService {
             .await
             .context("Failed to mark token as used")?;
 
-        // Get or create user
         let user = self
             .get_or_create_user(&magic_token.email, default_tenant_id)
             .await?;
 
-        // Determine tenant to use for session
         let tenant_id = magic_token.tenant_id.unwrap_or(default_tenant_id);
 
-        // Create session
         let session_token = self
             .create_user_session(user.user_id, tenant_id, user_agent, ip_address)
             .await?;
@@ -294,7 +290,6 @@ impl AuthService {
             return Ok(None);
         }
 
-        // Get user
         let user = self
             .db
             .get_user_by_id(session.user_id)
@@ -302,7 +297,6 @@ impl AuthService {
             .context("Failed to get user")?
             .ok_or_else(|| anyhow!("User not found"))?;
 
-        // Get user's role in the session's tenant
         let membership = self
             .db
             .get_org_membership(session.tenant_id, session.user_id)
@@ -310,7 +304,6 @@ impl AuthService {
             .context("Failed to get org membership")?
             .ok_or_else(|| anyhow!("User not a member of tenant"))?;
 
-        // Update last active time (fire and forget)
         let _ = self.db.touch_session(&session_hash).await;
 
         Ok(Some(AuthUser {
@@ -396,7 +389,6 @@ impl AuthService {
     ) -> Result<(String, User, Uuid)> {
         let token_hash = Self::hash_token(token);
 
-        // Get and validate invitation
         let invitation = self
             .db
             .get_invitation(&token_hash)
@@ -412,16 +404,13 @@ impl AuthService {
             return Err(anyhow!("Invitation is expired or already accepted"));
         }
 
-        // Mark invitation as accepted
         self.db
             .mark_invitation_accepted(&token_hash)
             .await
             .context("Failed to mark invitation as accepted")?;
 
-        // Get or create user
         let user = self.get_or_create_invited_user(&invitation.email).await?;
 
-        // Add user to organization
         self.db
             .add_org_membership(
                 invitation.tenant_id,
@@ -444,7 +433,6 @@ impl AuthService {
                 .unwrap_or_default()
         );
 
-        // Create session
         let session_token = self
             .create_user_session(user.user_id, invitation.tenant_id, user_agent, ip_address)
             .await?;
@@ -548,12 +536,10 @@ impl AuthService {
             return Err(anyhow!("You don't have permission to remove members"));
         }
 
-        // Can't remove yourself
         if requester.user_id == user_id {
             return Err(anyhow!("You can't remove yourself"));
         }
 
-        // Get target's role
         let target_membership = self
             .db
             .get_org_membership(tenant_id, user_id)
@@ -561,12 +547,10 @@ impl AuthService {
             .context("Failed to get target membership")?
             .ok_or_else(|| anyhow!("User is not a member"))?;
 
-        // Only owner can remove admins
         if target_membership.role == UserRole::Admin && requester.role != UserRole::Owner {
             return Err(anyhow!("Only owners can remove admins"));
         }
 
-        // Can't remove owners
         if target_membership.role == UserRole::Owner {
             return Err(anyhow!("Owners can't be removed"));
         }

@@ -628,36 +628,28 @@ impl DbClient {
         let original_action_type = ActionType::parse(&action.action_type);
         let entity_type = EntityType::parse(&action.entity_type);
 
-        // Determine what the rollback does based on the original action
         let (rollback_before, rollback_after) = match original_action_type {
             ActionType::Create => {
-                // Undo create → soft-delete the entity
                 self.apply_rollback_delete(&entity_type, &action.entity_id)
                     .await?;
                 (action.after_state.clone(), None)
             }
             ActionType::Delete => {
-                // Undo delete → restore from before_state
                 self.apply_rollback_restore(&entity_type, action).await?;
                 (None, action.before_state.clone())
             }
             ActionType::Edit => {
-                // Undo edit → restore before_state
                 self.apply_rollback_edit(&entity_type, action).await?;
                 (action.after_state.clone(), action.before_state.clone())
             }
             ActionType::Rollback => {
-                // Undo a rollback → re-apply the original action's effect
-                // A rollback's before_state is what existed before the rollback ran,
-                // and after_state is what existed after. Undoing it means going back
-                // to before_state.
                 self.apply_rollback_undo_rollback(&entity_type, action)
                     .await?;
                 (action.after_state.clone(), action.before_state.clone())
             }
         };
 
-        // Clean description: strip any existing prefix so undo/redo cycles don't nest
+        // Strip existing prefix so undo/redo cycles don't nest descriptions
         let base_desc = action
             .description
             .strip_prefix("Rolled back: ")
@@ -670,10 +662,8 @@ impl DbClient {
             format!("Rolled back: {base_desc}")
         };
 
-        // Mark the original action as rolled back
         self.mark_action_rolled_back(action.action_id).await?;
 
-        // Record the rollback as its own action
         self.record_action(
             entity_type,
             ActionType::Rollback,
@@ -694,7 +684,6 @@ impl DbClient {
                 self.delete_allowed_domain(entity_id).await?;
             }
             EntityType::Setting => {
-                // Deleting a setting = removing the key
                 sqlx::query("DELETE FROM settings WHERE tenant_id = $1 AND setting_key = $2")
                     .bind(self.tenant_id)
                     .bind(entity_id)
@@ -703,7 +692,6 @@ impl DbClient {
                     .context("Failed to delete setting during rollback")?;
             }
             EntityType::OrgMembership => {
-                // Parse "tenant_id:user_id" from entity_id
                 let (tenant_id, user_id) = parse_membership_entity_id(entity_id)?;
                 sqlx::query(
                     "UPDATE org_memberships SET deleted_at = now()
@@ -772,7 +760,6 @@ impl DbClient {
         entity_type: &EntityType,
         action: &ActionRecord,
     ) -> Result<()> {
-        // Edit rollback uses the same logic as restore
         self.apply_rollback_restore(entity_type, action).await
     }
 
@@ -865,7 +852,6 @@ mod tests {
         let tenant_id = Uuid::now_v7();
         let client = DbClient::new(pool, tenant_id);
 
-        // Ensure the test tenant exists
         client
             .ensure_default_tenant(tenant_id, "Test Tenant")
             .await
@@ -878,7 +864,6 @@ mod tests {
     #[ignore]
     async fn test_postgres_connection() {
         let _client = create_test_client().await;
-        // If we got here, connection succeeded
     }
 
     #[tokio::test]
@@ -914,13 +899,11 @@ mod tests {
             chrono::Utc::now().timestamp_millis()
         );
 
-        // Setup: Insert the test domain
         client
             .insert_allowed_domain(&test_domain, "test", Some("Test domain"))
             .await
             .expect("Failed to insert test domain");
 
-        // Test: Check if domain is allowed
         let result = client.is_domain_allowed(&test_domain).await;
         assert!(result.is_ok());
         assert!(result.unwrap(), "Domain should be allowed");
@@ -939,7 +922,6 @@ mod tests {
 
         let test_key = format!("test_setting_{}", chrono::Utc::now().timestamp_millis());
 
-        // Test: Initially no setting exists
         let result = client.get_setting(&test_key).await;
         assert!(result.is_ok());
         assert!(
@@ -947,13 +929,11 @@ mod tests {
             "Setting should not exist initially"
         );
 
-        // Test: Set a setting value
         client
             .set_setting(&test_key, "test_value")
             .await
             .expect("Failed to set setting");
 
-        // Test: Retrieve the setting
         let result = client.get_setting(&test_key).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Some("test_value".to_string()));
@@ -1001,7 +981,6 @@ mod tests {
             chrono::Utc::now().timestamp_millis()
         );
 
-        // Insert two crawled pages with different timestamps
         let now = Utc::now();
         let older_page = CrawledPage {
             page_id: Uuid::now_v7(),
@@ -1046,7 +1025,6 @@ mod tests {
             .await
             .expect("Failed to insert newer page");
 
-        // Query recent pages
         let result = client
             .get_recent_crawled_pages(&test_domain, 10)
             .await
@@ -1244,7 +1222,6 @@ mod tests {
             chrono::Utc::now().timestamp_millis()
         );
 
-        // Create the domain
         client
             .insert_allowed_domain(&test_domain, "test", None)
             .await
@@ -1299,7 +1276,6 @@ mod tests {
             chrono::Utc::now().timestamp_millis()
         );
 
-        // Create, then delete
         client
             .insert_allowed_domain(&test_domain, "test", Some("test notes"))
             .await
@@ -1361,7 +1337,6 @@ mod tests {
             chrono::Utc::now().timestamp_millis()
         );
 
-        // Create domain
         client
             .insert_allowed_domain(&test_domain, "test", None)
             .await
@@ -1370,7 +1345,6 @@ mod tests {
         let after_state =
             serde_json::json!({"domain": test_domain, "added_by": "test", "notes": null});
 
-        // Record create action
         let create_action = client
             .record_action(
                 EntityType::AllowedDomain,

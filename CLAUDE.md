@@ -42,6 +42,7 @@ All dependencies must be open source. Avoid: ScyllaDB (proprietary since Dec 202
 - **Enums over magic strings** for config values and states
 - **No hardcoded defaults** — use env vars with `.expect()`, maintain `.env.example`
 - **No hardcoded values in comments** — reference the config source instead
+- **No trivial comments** — don't restate what the code does (e.g., `// Get user` before `get_user_by_id()`). Only comment to explain *why*, document non-obvious behavior, or clarify complex logic.
 - **Cross-platform**: use env vars, no platform-specific paths
 
 ## Error Handling
