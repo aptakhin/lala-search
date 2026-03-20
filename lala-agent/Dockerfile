@@ -3,7 +3,7 @@
 
 # Single-stage Rust development image
 # Using latest Rust stable for full feature support
-FROM rust:bookworm
+FROM rust:1.94.0-bookworm
 
 # Create app directory
 WORKDIR /app
