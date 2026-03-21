@@ -39,10 +39,13 @@ impl DbClient {
         }
     }
 
-    /// Ensure the default tenant row exists. Uses ON CONFLICT DO NOTHING for idempotency.
+    /// Ensure the default tenant row exists.
+    /// Creates the tenant if missing, or updates the name if it was the placeholder "default".
     pub async fn ensure_default_tenant(&self, tenant_id: Uuid, name: &str) -> Result<()> {
         sqlx::query(
-            "INSERT INTO tenants (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id) DO NOTHING",
+            "INSERT INTO tenants (tenant_id, name) VALUES ($1, $2) \
+             ON CONFLICT (tenant_id) DO UPDATE SET name = EXCLUDED.name \
+             WHERE tenants.name = 'default'",
         )
         .bind(tenant_id)
         .bind(name)
@@ -50,6 +53,28 @@ impl DbClient {
         .await
         .context("Failed to ensure default tenant")?;
         Ok(())
+    }
+
+    /// Update the display name of the current tenant.
+    pub async fn update_tenant_name(&self, name: &str) -> Result<()> {
+        sqlx::query("UPDATE tenants SET name = $1 WHERE tenant_id = $2 AND deleted_at IS NULL")
+            .bind(name)
+            .bind(self.tenant_id)
+            .execute(&self.pool)
+            .await
+            .context("Failed to update tenant name")?;
+        Ok(())
+    }
+
+    /// Get the display name of the current tenant.
+    pub async fn get_tenant_name(&self) -> Result<String> {
+        let row: (String,) =
+            sqlx::query_as("SELECT name FROM tenants WHERE tenant_id = $1 AND deleted_at IS NULL")
+                .bind(self.tenant_id)
+                .fetch_one(&self.pool)
+                .await
+                .context("Failed to get tenant name")?;
+        Ok(row.0)
     }
 
     /// List all active tenant IDs from the tenants table.

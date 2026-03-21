@@ -11,6 +11,7 @@ interface User {
 
 interface Organization {
   tenant_id: string;
+  name?: string;
   role: string;
 }
 
@@ -39,6 +40,8 @@ interface ActionRecord {
 }
 
 function dashboardPage() {
+  let tenantNameTimer: ReturnType<typeof setTimeout> | null = null;
+
   return {
     user: null as User | null,
     ready: false,
@@ -48,12 +51,21 @@ function dashboardPage() {
     undoing: false,
     redoing: false,
 
+    // Tenant name
+    tenantNameValue: '',
+    tenantNameSaving: false,
+    tenantNameSaved: false,
+
     get currentOrg(): Organization | null {
       return this.user?.organizations?.[0] || null;
     },
 
     get tenantId(): string {
       return this.currentOrg?.tenant_id || '';
+    },
+
+    get isOwner(): boolean {
+      return this.currentOrg?.role === 'owner';
     },
 
     get canManage(): boolean {
@@ -93,6 +105,7 @@ function dashboardPage() {
 
       this.ready = true;
       await this.loadUndoRedoState();
+      await this.loadTenantName();
 
       document.addEventListener('keydown', (e: KeyboardEvent) => {
         if (!(e.ctrlKey || e.metaKey)) return;
@@ -107,6 +120,53 @@ function dashboardPage() {
           this.redo();
         }
       });
+    },
+
+    async loadTenantName() {
+      try {
+        const res = await fetch('/api/admin/settings/tenant-name', {
+          credentials: 'include',
+        });
+        if (res.ok) {
+          const data = await res.json();
+          this.tenantNameValue = data.name || '';
+        }
+      } catch {
+        // Non-critical
+      }
+    },
+
+    onTenantNameInput() {
+      this.tenantNameSaved = false;
+      if (tenantNameTimer) clearTimeout(tenantNameTimer);
+      tenantNameTimer = setTimeout(() => this.saveTenantName(), 600);
+    },
+
+    async saveTenantName() {
+      const name = this.tenantNameValue.trim();
+      if (!name) return;
+
+      this.tenantNameSaving = true;
+      this.tenantNameSaved = false;
+
+      try {
+        const res = await fetch('/api/admin/settings/tenant-name', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ name }),
+        });
+        if (res.ok) {
+          this.tenantNameSaved = true;
+          setTimeout(() => {
+            this.tenantNameSaved = false;
+          }, 2000);
+        }
+      } catch {
+        // silently fail
+      } finally {
+        this.tenantNameSaving = false;
+      }
     },
 
     async loadUndoRedoState() {

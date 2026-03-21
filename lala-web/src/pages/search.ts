@@ -34,7 +34,7 @@ function pageApp() {
       if (user.status === 'fulfilled' && user.value) {
         this.user = user.value as unknown as User;
         const org = this.user.organizations?.[0];
-        if (org?.name) {
+        if (org?.name && org.name !== 'default') {
           this.orgName = org.name;
         }
       }

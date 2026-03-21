@@ -452,6 +452,43 @@ pub async fn set_crawling_enabled_handler(
     }))
 }
 
+pub async fn get_tenant_name_handler(
+    TenantDb(db): TenantDb,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let name = db.get_tenant_name().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {e}"),
+        )
+    })?;
+    Ok(Json(serde_json::json!({ "name": name })))
+}
+
+pub async fn set_tenant_name_handler(
+    TenantDb(db): TenantDb,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let name = payload["name"]
+        .as_str()
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "name is required".to_string()))?;
+
+    if name.is_empty() || name.len() > 200 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "name must be between 1 and 200 characters".to_string(),
+        ));
+    }
+
+    db.update_tenant_name(name).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {e}"),
+        )
+    })?;
+
+    Ok(Json(serde_json::json!({ "success": true, "name": name })))
+}
+
 pub async fn recent_crawled_pages_handler(
     TenantDb(db): TenantDb,
     State(state): State<AppState>,
@@ -632,6 +669,8 @@ pub fn create_router(state: AppState) -> Router {
             "/admin/settings/crawling-enabled",
             put(set_crawling_enabled_handler),
         )
+        .route("/admin/settings/tenant-name", get(get_tenant_name_handler))
+        .route("/admin/settings/tenant-name", put(set_tenant_name_handler))
         .route("/admin/action-history/state", get(undo_redo_state_handler))
         .route("/admin/action-history/undo", post(undo_last_handler))
         .route("/admin/action-history/redo", post(redo_last_handler))

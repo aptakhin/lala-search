@@ -24,6 +24,27 @@
             <p>Let's index your first domain to get started.</p>
         </div>
 
+        <!-- Organization Name (owner only) -->
+        <div x-show="isOwner" class="dashboard-section" data-testid="onboarding-tenant-name-section">
+            <h3>Name Your Organization</h3>
+            <div class="inline-form">
+                <input
+                    type="text"
+                    x-model="orgName"
+                    @input="onTenantNameInput()"
+                    placeholder="Enter your organization name..."
+                    data-testid="onboarding-tenant-name-input"
+                    style="flex: 1;"
+                >
+                <span x-show="tenantNameSaving" style="color: #666666; font-size: 12px;">
+                    <span class="spinner" style="width: 14px; height: 14px; border-width: 2px;"></span>
+                </span>
+                <span x-show="tenantNameSaved && !tenantNameSaving" style="color: #006600; font-size: 14px; font-weight: bold;" x-cloak>
+                    &#10003;
+                </span>
+            </div>
+        </div>
+
         <!-- Step 1: Domain Selection (before adding) -->
         <div x-show="!domainAdded" class="dashboard-section">
             <h3>Step 1: Choose a Domain to Index</h3>
@@ -95,9 +116,12 @@
                  x-text="addError"></div>
         </div>
 
-        <!-- Step 2: Crawl Progress Console -->
-        <div x-show="domainAdded" class="dashboard-section">
-            <h3>Indexing: <span x-text="selectedDomain"></span></h3>
+        <!-- Indexed Pages Console -->
+        <div x-show="domainAdded || hasExistingDocs" class="dashboard-section">
+            <h3>
+                <span x-show="polling">Indexing: <span x-text="selectedDomain"></span></span>
+                <span x-show="!polling">Indexed Pages<span x-show="orgName" x-cloak> — <span x-text="orgName"></span></span></span>
+            </h3>
 
             <div class="onboarding-console" data-testid="onboarding-console">
                 <div class="console-header">
@@ -106,7 +130,7 @@
                         Crawling in progress...
                     </span>
                     <span x-show="!polling && recentPages.length > 0">
-                        Crawling started. Pages will continue to appear as they are indexed.
+                        Latest indexed pages from <strong x-text="existingDomain || selectedDomain"></strong>
                     </span>
                     <span x-show="!polling && recentPages.length === 0">
                         Waiting for pages to be crawled... This may take a moment.
@@ -131,37 +155,14 @@
                     </div>
                 </div>
                 <div class="console-footer">
-                    <span x-text="totalCrawled"></span> <span x-text="totalCrawled === 1 ? 'page' : 'pages'"></span> indexed for <span x-text="selectedDomain"></span>
+                    <span x-text="totalCrawled"></span> <span x-text="totalCrawled === 1 ? 'page' : 'pages'"></span> indexed for <span x-text="existingDomain || selectedDomain"></span>
                 </div>
             </div>
 
-        </div>
-
-        <!-- Search Trial Section -->
-        <div x-show="hasExistingDocs || (domainAdded && suggestedKeywords.length > 0)" class="dashboard-section" data-testid="onboarding-search-section">
-            <h3>
-                <span>Try Searching Your Content</span><span x-show="orgName" x-cloak> — <span x-text="orgName"></span></span>
-            </h3>
-
-            <!-- Index History -->
-            <div x-show="indexHistory.length > 0 && !domainAdded" style="margin-bottom: 15px;">
-                <p style="font-size: 12px; color: #666666; margin-bottom: 8px;">
-                    Latest indexed pages from <strong x-text="existingDomain"></strong>:
-                </p>
-                <div class="onboarding-index-history">
-                    <template x-for="page in indexHistory" :key="page.url">
-                        <div class="index-history-item">
-                            <span class="index-history-title" x-text="page.title || page.url"></span>
-                            <span class="index-history-size" x-text="formatBytes(page.content_length)"></span>
-                        </div>
-                    </template>
-                </div>
-            </div>
-
-            <!-- Keyword Suggestions -->
-            <div x-show="suggestedKeywords.length > 0" style="margin-bottom: 12px;">
-                <p style="font-size: 12px; color: #666666; margin-bottom: 6px;">Try one of these:</p>
-                <div class="onboarding-suggestions">
+            <!-- Search Trial -->
+            <div x-show="suggestedKeywords.length > 0" style="margin-top: 15px;" data-testid="onboarding-search-section">
+                <p style="font-size: 12px; color: #666666; margin-bottom: 6px;">Try searching your content:</p>
+                <div class="onboarding-suggestions" style="margin-bottom: 10px;">
                     <template x-for="kw in suggestedKeywords" :key="kw">
                         <button
                             class="suggestion-pill"
@@ -171,24 +172,22 @@
                         ></button>
                     </template>
                 </div>
-            </div>
-
-            <!-- Search Input -->
-            <div class="inline-form">
-                <input
-                    type="text"
-                    x-model="searchQuery"
-                    @keydown.enter="goToSearch()"
-                    placeholder="Type a search query..."
-                    data-testid="onboarding-search-input"
-                >
-                <button
-                    @click="goToSearch()"
-                    :disabled="!searchQuery.trim()"
-                    data-testid="onboarding-search-button"
-                >
-                    SEARCH
-                </button>
+                <div class="inline-form">
+                    <input
+                        type="text"
+                        x-model="searchQuery"
+                        @keydown.enter="goToSearch()"
+                        placeholder="Type a search query..."
+                        data-testid="onboarding-search-input"
+                    >
+                    <button
+                        @click="goToSearch()"
+                        :disabled="!searchQuery.trim()"
+                        data-testid="onboarding-search-button"
+                    >
+                        SEARCH
+                    </button>
+                </div>
             </div>
         </div>
 

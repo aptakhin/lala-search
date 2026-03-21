@@ -139,7 +139,7 @@ function extractKeywords(text: string, maxKeywords = 5): string[] {
     .split(/\s+/);
   const freq: Record<string, number> = {};
   for (const word of words) {
-    if (word.length < 3 || STOPWORDS.has(word)) continue;
+    if (word.length < 3 || STOPWORDS.has(word) || /^\d+$/.test(word)) continue;
     freq[word] = (freq[word] || 0) + 1;
   }
   return Object.entries(freq)
@@ -172,6 +172,8 @@ interface RecentPage {
 }
 
 function onboardingPage() {
+  let tenantNameTimer: ReturnType<typeof setTimeout> | null = null;
+
   return {
     user: null as User | null,
     ready: false,
@@ -203,6 +205,10 @@ function onboardingPage() {
     searchQuery: '',
     orgName: '',
 
+    // Tenant name editing
+    tenantNameSaving: false,
+    tenantNameSaved: false,
+
     async init() {
       // Check authentication
       try {
@@ -213,7 +219,7 @@ function onboardingPage() {
         }
         this.user = await res.json();
         const org = this.user?.organizations?.[0];
-        if (org?.name) {
+        if (org?.name && org.name !== 'default') {
           this.orgName = org.name;
         }
       } catch {
@@ -239,6 +245,13 @@ function onboardingPage() {
 
         this.existingDomain = domains[0].domain;
         await this.fetchIndexHistory();
+
+        // If the suggested domain is already indexed, skip to console view
+        if (this.hasExistingDocs && this.existingDomain === this.selectedDomain) {
+          this.domainAdded = true;
+          this.recentPages = this.indexHistory;
+          this.totalCrawled = this.indexHistory.length;
+        }
       } catch {
         // Non-critical
       }
@@ -279,6 +292,43 @@ function onboardingPage() {
           .map(([word]) => word);
       } catch {
         // Non-critical
+      }
+    },
+
+    get isOwner(): boolean {
+      return this.user?.organizations?.[0]?.role === 'owner';
+    },
+
+    onTenantNameInput() {
+      this.tenantNameSaved = false;
+      if (tenantNameTimer) clearTimeout(tenantNameTimer);
+      tenantNameTimer = setTimeout(() => this.saveTenantName(), 600);
+    },
+
+    async saveTenantName() {
+      const name = this.orgName.trim();
+      if (!name) return;
+
+      this.tenantNameSaving = true;
+      this.tenantNameSaved = false;
+
+      try {
+        const res = await fetch('/api/admin/settings/tenant-name', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ name }),
+        });
+        if (res.ok) {
+          this.tenantNameSaved = true;
+          setTimeout(() => {
+            this.tenantNameSaved = false;
+          }, 2000);
+        }
+      } catch {
+        // Non-critical
+      } finally {
+        this.tenantNameSaving = false;
       }
     },
 

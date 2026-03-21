@@ -84,8 +84,9 @@ async fn run_serve() {
     let search_client = init_search_client(&meilisearch_host, &meilisearch_index).await;
     let storage_client = init_storage_client().await;
 
+    let tenant_name = env::var("TENANT_NAME").unwrap_or_else(|_| "My Organization".to_string());
     if let Err(e) = db_client
-        .ensure_default_tenant(default_tenant_id, "default")
+        .ensure_default_tenant(default_tenant_id, &tenant_name)
         .await
     {
         eprintln!("Failed to ensure default tenant: {}", e);
