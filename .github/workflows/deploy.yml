@@ -21,6 +21,7 @@
 #   SMTP_PASSWORD        - SMTP password
 #   SMTP_TLS             - true/false
 #   SMTP_FROM_EMAIL      - Sender email
+#   LALA_ROOT_ADMIN_EMAIL - Root admin email (required when SMTP is configured)
 #   APP_BASE_URL         - Public URL (default: http://DEPLOY_HOST)
 
 name: Deploy
@@ -91,6 +92,7 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_TLS: ${{ secrets.SMTP_TLS }}
           SMTP_FROM_EMAIL: ${{ secrets.SMTP_FROM_EMAIL }}
+          LALA_ROOT_ADMIN_EMAIL: ${{ secrets.LALA_ROOT_ADMIN_EMAIL }}
           APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
           IMAGE_TAG: ${{ steps.tag.outputs.tag }}
         run: |

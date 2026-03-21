@@ -33,6 +33,7 @@
 #   SMTP_TLS             - SMTP TLS enabled (default: false)
 #   SMTP_FROM_EMAIL      - Sender email (default: noreply@$DEPLOY_HOST)
 #   SMTP_FROM_NAME       - Sender name (default: LalaSearch)
+#   LALA_ROOT_ADMIN_EMAIL - Root admin email (required when SMTP is configured)
 #   DEPLOYMENT_MODE      - Deployment mode (default: single_tenant)
 #   IMAGE_TAG            - Shared Docker image tag for agent/web (default: latest)
 #   AGENT_IMAGE_TAG      - Docker image tag for lala-agent (default: IMAGE_TAG or latest)
@@ -68,6 +69,7 @@ SMTP_PASSWORD="${SMTP_PASSWORD:-}"
 SMTP_TLS="${SMTP_TLS:-false}"
 SMTP_FROM_EMAIL="${SMTP_FROM_EMAIL:-noreply@${DEPLOY_HOST}}"
 SMTP_FROM_NAME="${SMTP_FROM_NAME:-LalaSearch}"
+LALA_ROOT_ADMIN_EMAIL="${LALA_ROOT_ADMIN_EMAIL:-}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 AGENT_IMAGE_TAG="${AGENT_IMAGE_TAG:-$IMAGE_TAG}"
 WEB_IMAGE_TAG="${WEB_IMAGE_TAG:-$IMAGE_TAG}"
@@ -251,6 +253,8 @@ SMTP_PASSWORD=${SMTP_PASSWORD}
 SMTP_TLS=${SMTP_TLS}
 SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL}
 SMTP_FROM_NAME=${SMTP_FROM_NAME}
+
+LALA_ROOT_ADMIN_EMAIL=${LALA_ROOT_ADMIN_EMAIL}
 
 APP_BASE_URL=${APP_BASE_URL}
 SESSION_MAX_AGE_DAYS=365
