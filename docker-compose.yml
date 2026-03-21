@@ -77,7 +77,7 @@ services:
         condition: service_completed_successfully
     # Recompile from volume-mounted source on startup (picks up local changes).
     # The Dockerfile pre-builds dependencies so only app code is compiled here.
-    command: ["sh", "-c", "cargo build --release && ./target/release/lala-agent migrate && ./target/release/lala-agent serve"]
+    command: ["sh", "-c", "cargo run --release -- migrate && cargo run --release -- serve"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/version"]
       interval: 10s

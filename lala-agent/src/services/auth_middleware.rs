@@ -6,11 +6,9 @@
 //! Provides helper functions and types for authentication:
 //! - `SESSION_COOKIE_NAME`: The cookie name for sessions
 //! - `extract_session_token`: Get the session token from cookies
-//! - `get_tenant_from_header`: Get tenant ID from X-Tenant-Id header
 //! - `AuthError`: Error type for auth failures
 
-use crate::models::auth::AuthUser;
-use axum::http::{header::HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use tower_cookies::{Cookie, Cookies};
 
@@ -48,16 +46,6 @@ pub fn extract_session_token(cookies: &Cookies) -> Option<String> {
     cookies
         .get(SESSION_COOKIE_NAME)
         .map(|c| c.value().to_string())
-}
-
-/// Get the tenant ID from the X-Tenant-Id header.
-/// Falls back to the session's tenant if not provided.
-pub fn get_tenant_from_header(headers: &HeaderMap, auth_user: &AuthUser) -> String {
-    headers
-        .get("X-Tenant-Id")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| auth_user.tenant_id.to_string())
 }
 
 /// Create a session cookie with the given token.
