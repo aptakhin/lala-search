@@ -193,6 +193,15 @@ function onboardingPage() {
     totalCrawled: 0,
     enriched: false,
 
+    // Existing index state
+    hasExistingDocs: false,
+    existingDomain: '',
+    indexHistory: [] as RecentPage[],
+    suggestedKeywords: [] as string[],
+
+    // Search trial state
+    searchQuery: '',
+
     async init() {
       // Check authentication
       try {
@@ -208,7 +217,73 @@ function onboardingPage() {
       }
 
       this.suggestDomain();
+      await this.checkExistingDocs();
       this.ready = true;
+    },
+
+    async checkExistingDocs() {
+      try {
+        const res = await fetch('/api/admin/allowed-domains', {
+          credentials: 'include',
+        });
+        if (!res.ok) return;
+
+        const data = await res.json();
+        const domains: Array<{ domain: string }> = data.domains || data || [];
+        if (domains.length === 0) return;
+
+        this.existingDomain = domains[0].domain;
+        await this.fetchIndexHistory();
+      } catch {
+        // Non-critical
+      }
+    },
+
+    async fetchIndexHistory() {
+      try {
+        const res = await fetch(
+          '/api/admin/crawled-pages/recent?domain=' +
+            encodeURIComponent(this.existingDomain) +
+            '&limit=5&enrich=true',
+          { credentials: 'include' },
+        );
+        if (!res.ok) return;
+
+        const data = await res.json();
+        if (!data.pages || data.pages.length === 0) return;
+
+        this.hasExistingDocs = true;
+        this.indexHistory = data.pages.map((page: RecentPage) => ({
+          ...page,
+          keywords: extractKeywords(
+            (page.title || '') + ' ' + (page.excerpt || ''),
+            5,
+          ),
+        }));
+
+        // Collect top keywords across all pages for search suggestions
+        const allKeywords: Record<string, number> = {};
+        for (const page of this.indexHistory) {
+          for (const kw of page.keywords || []) {
+            allKeywords[kw] = (allKeywords[kw] || 0) + 1;
+          }
+        }
+        this.suggestedKeywords = Object.entries(allKeywords)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 6)
+          .map(([word]) => word);
+      } catch {
+        // Non-critical
+      }
+    },
+
+    fillSuggestion(keyword: string) {
+      this.searchQuery = keyword;
+    },
+
+    goToSearch() {
+      if (!this.searchQuery.trim()) return;
+      window.location.href = '/?q=' + encodeURIComponent(this.searchQuery.trim());
     },
 
     suggestDomain() {
@@ -357,6 +432,18 @@ function onboardingPage() {
             5,
           ),
         }));
+
+        // Build search suggestions from crawled pages
+        const allKeywords: Record<string, number> = {};
+        for (const page of this.recentPages) {
+          for (const kw of page.keywords || []) {
+            allKeywords[kw] = (allKeywords[kw] || 0) + 1;
+          }
+        }
+        this.suggestedKeywords = Object.entries(allKeywords)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 6)
+          .map(([word]) => word);
       } catch {
         // Enrichment failure is non-critical
       }

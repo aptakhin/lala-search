@@ -711,3 +711,70 @@ footer {
     padding: 2px 8px;
     color: #666666;
 }
+
+/* Index history on onboarding */
+.onboarding-index-history {
+    background-color: #ffffff;
+    border: 1px solid #cccccc;
+    font-size: 12px;
+}
+
+.index-history-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 5px 10px;
+    border-bottom: 1px solid #eeeeee;
+}
+
+.index-history-item:last-child {
+    border-bottom: none;
+}
+
+.index-history-title {
+    color: #0066cc;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    margin-right: 10px;
+}
+
+.index-history-size {
+    color: #999999;
+    white-space: nowrap;
+}
+
+/* Keyword suggestion pills */
+.onboarding-suggestions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.suggestion-pill {
+    padding: 4px 12px;
+    font-size: 12px;
+    background-color: #e6e6ff;
+    border: 2px outset #ffffff;
+    border-left-color: #ffffff;
+    border-top-color: #ffffff;
+    border-right-color: #9999cc;
+    border-bottom-color: #9999cc;
+    color: #000066;
+    cursor: pointer;
+    font-family: Arial, sans-serif;
+    font-weight: bold;
+}
+
+.suggestion-pill:hover {
+    background-color: #ccccff;
+}
+
+.suggestion-pill.pill-selected {
+    background-color: #ffcc00;
+    border-style: inset;
+    border-left-color: #999999;
+    border-top-color: #999999;
+    border-right-color: #ffffff;
+    border-bottom-color: #ffffff;
+}

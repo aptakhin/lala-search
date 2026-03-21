@@ -79,6 +79,11 @@ function searchApp() {
       this.currentOffset = 0;
       this.hasSearched = true;
 
+      // Sync query to URL
+      const url = new URL(window.location.href);
+      url.searchParams.set('q', this.query);
+      window.history.replaceState({}, '', url.toString());
+
       try {
         const response = await fetch('/api/search', {
           method: 'POST',
