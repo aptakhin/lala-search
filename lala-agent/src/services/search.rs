@@ -33,13 +33,31 @@ impl SearchClient {
         let index = self.client.index(&self.index_name);
 
         let searchable_attrs = vec!["title", "content", "domain", "url"];
-        let _ = index.set_searchable_attributes(searchable_attrs).await;
+        let task = index
+            .set_searchable_attributes(searchable_attrs)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to set searchable attributes: {e}"))?;
+        task.wait_for_completion(&self.client, None, None)
+            .await
+            .map_err(|e| anyhow::anyhow!("Searchable attributes task failed: {e}"))?;
 
         let filterable_attrs = vec!["domain", "crawled_at", "tenant_id"];
-        let _ = index.set_filterable_attributes(filterable_attrs).await;
+        let task = index
+            .set_filterable_attributes(filterable_attrs)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to set filterable attributes: {e}"))?;
+        task.wait_for_completion(&self.client, None, None)
+            .await
+            .map_err(|e| anyhow::anyhow!("Filterable attributes task failed: {e}"))?;
 
         let sortable_attrs = vec!["crawled_at"];
-        let _ = index.set_sortable_attributes(sortable_attrs).await;
+        let task = index
+            .set_sortable_attributes(sortable_attrs)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to set sortable attributes: {e}"))?;
+        task.wait_for_completion(&self.client, None, None)
+            .await
+            .map_err(|e| anyhow::anyhow!("Sortable attributes task failed: {e}"))?;
 
         println!("Initialized Meilisearch index: {}", self.index_name);
 
@@ -267,13 +285,19 @@ mod tests {
                 http_status: 200,
             },
         ];
-        client
-            .index_documents(&docs)
+        // Index documents and wait for Meilisearch to process
+        let index = client.client.index(&client.index_name);
+        let doc_jsons: Vec<_> = docs
+            .iter()
+            .map(|doc| serde_json::to_value(doc).unwrap())
+            .collect();
+        let task = index
+            .add_documents(&doc_jsons, Some("id"))
             .await
             .expect("Failed to index");
-
-        // Wait for Meilisearch to process
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        task.wait_for_completion(&client.client, None, None)
+            .await
+            .expect("Indexing task failed");
 
         let results = client
             .list_by_domain("example.com", None, 10)

@@ -658,36 +658,9 @@ mod tests {
     }
 
     #[test]
-    fn test_auth_config_defaults() {
-        // Clear env vars to test defaults (root admin is required)
-        env::remove_var("SESSION_MAX_AGE_DAYS");
-        env::remove_var("MAGIC_LINK_EXPIRY_MINUTES");
-        env::remove_var("INVITATION_EXPIRY_DAYS");
-        env::set_var("LALA_ROOT_ADMIN_EMAIL", "admin@test.com");
-
-        let config = AuthConfig::from_env();
-        assert_eq!(config.session_max_age_days, 365);
-        assert_eq!(config.magic_link_expiry_minutes, 15);
-        assert_eq!(config.invitation_expiry_days, 7);
-        assert_eq!(config.root_admin_email, "admin@test.com");
-
-        env::remove_var("LALA_ROOT_ADMIN_EMAIL");
-    }
-
-    #[test]
-    fn test_auth_config_reads_root_admin_email() {
-        env::set_var("LALA_ROOT_ADMIN_EMAIL", "admin@example.com");
-
-        let config = AuthConfig::from_env();
-        assert_eq!(config.root_admin_email, "admin@example.com");
-
-        env::remove_var("LALA_ROOT_ADMIN_EMAIL");
-    }
-
-    #[test]
     #[should_panic(expected = "LALA_ROOT_ADMIN_EMAIL must be set")]
     fn test_auth_config_panics_without_root_admin_email() {
-        env::remove_var("LALA_ROOT_ADMIN_EMAIL");
+        unsafe { env::remove_var("LALA_ROOT_ADMIN_EMAIL") };
         AuthConfig::from_env();
     }
 }

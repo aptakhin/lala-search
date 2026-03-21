@@ -271,7 +271,7 @@ function dashboardPage() {
         // Sign out locally regardless
       }
       this.user = null;
-      window.location.href = '/signin';
+      window.location.href = '/';
     },
 
     formatDate,

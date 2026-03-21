@@ -369,6 +369,13 @@ footer {
     text-align: center;
 }
 
+.signin-perks {
+    text-align: center;
+    font-size: 13px;
+    color: #336633;
+    margin-bottom: 20px;
+}
+
 .signin-input-group {
     display: flex;
     gap: 10px;
