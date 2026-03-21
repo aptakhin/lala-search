@@ -78,6 +78,7 @@ if [ "$USE_DOCKER" = true ]; then
         cargo clippy -- -D warnings && \
         echo "✓ Clippy check passed" && \
         echo "3/3 Running all tests (unit + storage-dependent)..." && \
+        cargo run --release -- migrate && \
         cargo test --lib -- --include-ignored && \
         echo "✓ All tests passed"
     '
