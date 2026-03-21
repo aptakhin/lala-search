@@ -184,7 +184,7 @@ impl AuthService {
 
         let is_new_user = existing_user.is_none();
 
-        let tenant_id = if is_new_user && !is_root_admin && self.config.multi_tenant {
+        let user = if is_new_user && !is_root_admin && self.config.multi_tenant {
             // Multi-tenant open signup: create a new tenant for the user
             let new_tenant_id = Uuid::now_v7();
             let tenant_name = magic_token
@@ -196,30 +196,43 @@ impl AuthService {
                 .create_tenant(new_tenant_id, tenant_name)
                 .await
                 .context("Failed to create tenant for new user")?;
-            new_tenant_id
-        } else {
-            magic_token.tenant_id.unwrap_or(default_tenant_id)
-        };
 
-        let user = self
-            .get_or_create_user(&magic_token.email, tenant_id)
-            .await?;
+            let user = self
+                .get_or_create_user(&magic_token.email, new_tenant_id)
+                .await?;
 
-        // Ensure root admin is always Owner of the default tenant.
-        if is_root_admin {
             self.db
-                .add_org_membership(default_tenant_id, user.user_id, UserRole::Owner, None)
-                .await
-                .context("Failed to assign root admin to default tenant")?;
-        }
-
-        // In multi-tenant open signup, new non-root users become Owner of their tenant.
-        if is_new_user && !is_root_admin && self.config.multi_tenant {
-            self.db
-                .add_org_membership(tenant_id, user.user_id, UserRole::Owner, None)
+                .add_org_membership(new_tenant_id, user.user_id, UserRole::Owner, None)
                 .await
                 .context("Failed to assign owner role to new tenant")?;
-        }
+
+            user
+        } else {
+            let tenant_id = magic_token.tenant_id.unwrap_or(default_tenant_id);
+            let user = self
+                .get_or_create_user(&magic_token.email, tenant_id)
+                .await?;
+
+            if is_root_admin {
+                self.db
+                    .add_org_membership(default_tenant_id, user.user_id, UserRole::Owner, None)
+                    .await
+                    .context("Failed to assign root admin to default tenant")?;
+            }
+
+            user
+        };
+
+        // Resolve session tenant: use the user's first org membership
+        let orgs = self
+            .db
+            .get_user_orgs(user.user_id)
+            .await
+            .context("Failed to get user organizations")?;
+        let tenant_id = orgs
+            .first()
+            .map(|m| m.tenant_id)
+            .unwrap_or(default_tenant_id);
 
         let session_token = self
             .create_user_session(user.user_id, tenant_id, user_agent, ip_address)
