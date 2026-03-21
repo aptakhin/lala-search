@@ -30,6 +30,72 @@
             <button @click="signOut()" data-testid="signout-button">SIGN OUT</button>
         </div>
 
+        <!-- Org Switcher (only when user belongs to multiple organizations) -->
+        <div x-show="hasMultipleOrgs" class="dashboard-section" style="padding: 8px 12px;" data-testid="org-switcher">
+            <label style="font-weight: bold; margin-right: 8px;">Organization:</label>
+            <select
+                @change="switchOrg(user.organizations[$event.target.selectedIndex])"
+                data-testid="org-switcher-select"
+                style="min-width: 200px;"
+            >
+                <template x-for="org in user?.organizations" :key="org.tenant_id">
+                    <option :value="org.tenant_id" :selected="org.tenant_id === tenantId" x-text="org.name || org.tenant_id"></option>
+                </template>
+            </select>
+        </div>
+
+        <!-- Tenant-Scoped Search -->
+        <div x-data="dashboardSearch()" @org-switched.window="clearSearch()" class="dashboard-section" data-testid="dashboard-search">
+            <h3>Search</h3>
+            <div class="inline-form">
+                <input
+                    type="text"
+                    x-model="query"
+                    @keydown.enter="search()"
+                    placeholder="Search within this organization..."
+                    data-testid="dashboard-search-input"
+                    style="flex: 1;"
+                >
+                <button @click="search()" :disabled="isLoading" data-testid="dashboard-search-button">
+                    <span x-show="!isLoading">SEARCH</span>
+                    <span x-show="isLoading"><span class="spinner"></span></span>
+                </button>
+                <button x-show="hasSearched" @click="clearSearch()" data-testid="dashboard-search-clear">CLEAR</button>
+            </div>
+
+            <div x-show="error" class="msg-error" @click="error = null" style="cursor: pointer;" x-text="error"></div>
+
+            <div x-show="hasSearched && !isLoading">
+                <div x-show="totalResults > 0" style="margin-top: 10px; font-size: 12px; color: #666;">
+                    Found <span x-text="totalResults"></span>
+                    <span x-show="totalResults === 1">result</span>
+                    <span x-show="totalResults !== 1">results</span>
+                </div>
+                <div x-show="totalResults === 0" style="margin-top: 10px;">
+                    <strong>No results found.</strong>
+                </div>
+            </div>
+
+            <template x-for="(result, index) in results" :key="index">
+                <div class="search-result" style="margin-top: 10px; padding: 8px; border: 1px solid #cccccc; background: #ffffff;">
+                    <div style="font-weight: bold; cursor: pointer; color: #000066;" @click="openUrl(result.document.url)">
+                        <span x-show="result.document.title" x-text="result.document.title"></span>
+                        <span x-show="!result.document.title">[No Title]</span>
+                    </div>
+                    <div style="font-size: 11px; color: #006600;" x-text="result.document.url"></div>
+                    <div style="font-size: 12px; margin-top: 4px;" x-html="result.snippet || result.document.excerpt"></div>
+                </div>
+            </template>
+
+            <div x-show="!isLoading && totalResults > limit" style="margin-top: 10px; text-align: center;">
+                <button @click="previousPage()" :disabled="currentOffset === 0">PREVIOUS</button>
+                <span style="margin: 0 10px; font-weight: bold;">
+                    Page <span x-text="Math.floor(currentOffset / limit) + 1"></span> of <span x-text="Math.ceil(totalResults / limit)"></span>
+                </span>
+                <button @click="nextPage()" :disabled="currentOffset + limit >= totalResults">NEXT</button>
+            </div>
+        </div>
+
         <!-- Organization Name (owner only) -->
         <div x-show="isOwner" class="dashboard-section" data-testid="tenant-name-section">
             <h3>Organization Name</h3>
@@ -70,7 +136,7 @@
         <div x-show="actionMessage" class="msg-success" @click="actionMessage = null" style="cursor: pointer;" data-testid="action-message" x-text="actionMessage"></div>
 
         <!-- Invite Users Section (owners/admins only) -->
-        <div x-show="canManage" x-data="inviteSection()" x-init="loadMembers()" @action-rolled-back.window="loadMembers()" class="dashboard-section">
+        <div x-show="canManage" x-data="inviteSection()" x-init="loadMembers()" @action-rolled-back.window="loadMembers()" @org-switched.window="loadMembers()" class="dashboard-section">
             <h3>Invite Users</h3>
 
             <div class="inline-form">
@@ -131,7 +197,7 @@
         </div>
 
         <!-- Allowed Domains Section (owners/admins only) -->
-        <div x-show="canManage" x-data="domainsSection()" x-init="loadDomains()" @action-rolled-back.window="loadDomains()" class="dashboard-section">
+        <div x-show="canManage" x-data="domainsSection()" x-init="loadDomains()" @action-rolled-back.window="loadDomains()" @org-switched.window="loadDomains()" class="dashboard-section">
             <h3>Allowed Domains</h3>
 
             <div class="inline-form">

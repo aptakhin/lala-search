@@ -1,10 +1,5 @@
 import { fetchCurrentUser, fetchDeploymentMode } from '../lib/api';
 
-interface User {
-  email: string;
-  organizations?: Array<{ tenant_id: string; name?: string; role: string }>;
-}
-
 interface SearchResult {
   document: {
     url: string;
@@ -16,9 +11,8 @@ interface SearchResult {
 
 function pageApp() {
   return {
-    user: null as User | null,
+    user: null as (object | null),
     deploymentMode: null as string | null,
-    orgName: '',
     ready: false,
 
     async init() {
@@ -32,23 +26,10 @@ function pageApp() {
       }
 
       if (user.status === 'fulfilled' && user.value) {
-        this.user = user.value as unknown as User;
-        const org = this.user.organizations?.[0];
-        if (org?.name && org.name !== 'default') {
-          this.orgName = org.name;
-        }
+        this.user = user.value;
       }
 
       this.ready = true;
-
-      // Single-tenant: redirect away from search page
-      if (this.deploymentMode === 'single_tenant') {
-        if (this.user) {
-          window.location.href = '/dashboard';
-        } else {
-          window.location.href = '/signin';
-        }
-      }
     },
   };
 }
@@ -93,7 +74,7 @@ function searchApp() {
         const response = await fetch('/api/search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
+          credentials: 'omit',
           body: JSON.stringify({
             query: this.query,
             limit: this.limit,
@@ -147,7 +128,7 @@ function searchApp() {
         const response = await fetch('/api/search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
+          credentials: 'omit',
           body: JSON.stringify({
             query: this.query,
             limit: this.limit,

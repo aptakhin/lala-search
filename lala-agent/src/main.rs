@@ -4,6 +4,7 @@
 use clap::{Parser, Subcommand};
 use lala_agent::app::{create_router, AppState};
 use lala_agent::models::agent::AgentMode;
+use lala_agent::models::auth::UserRole;
 use lala_agent::models::deployment::DeploymentMode;
 use lala_agent::routes::AuthState;
 use lala_agent::services::auth::AuthConfig;
@@ -62,6 +63,50 @@ async fn run_migrate() {
         .unwrap_or_else(|e| panic!("Migration failed: {:#}", e));
 
     println!("[MIGRATE] All migrations applied successfully.");
+
+    // Ensure default tenant exists before assigning root admin.
+    let default_tenant_id: Uuid = env::var("DEFAULT_TENANT_ID")
+        .unwrap_or_else(|_| "00000000-0000-0000-0000-000000000001".to_string())
+        .parse()
+        .expect("DEFAULT_TENANT_ID must be a valid UUID");
+
+    let tenant_name = env::var("TENANT_NAME").unwrap_or_else(|_| "My Organization".to_string());
+    let db_client = DbClient::new(pool.clone(), default_tenant_id);
+    if let Err(e) = db_client
+        .ensure_default_tenant(default_tenant_id, &tenant_name)
+        .await
+    {
+        eprintln!("[MIGRATE] Failed to ensure default tenant: {e}");
+    }
+
+    // If LALA_ROOT_ADMIN_EMAIL is set and the user already exists, ensure
+    // they are the owner of the default tenant.
+    if let Ok(root_email) = env::var("LALA_ROOT_ADMIN_EMAIL") {
+        let auth_db = AuthDbClient::new(pool);
+        match auth_db.get_user_by_email(&root_email).await {
+            Ok(Some(user)) => {
+                if let Err(e) = auth_db
+                    .add_org_membership(default_tenant_id, user.user_id, UserRole::Owner, None)
+                    .await
+                {
+                    eprintln!("[MIGRATE] Failed to assign root admin: {e:#}");
+                } else {
+                    println!(
+                        "[MIGRATE] Root admin assigned: user_id={}, tenant={}",
+                        user.user_id, default_tenant_id
+                    );
+                }
+            }
+            Ok(None) => {
+                println!(
+                    "[MIGRATE] Root admin user not found yet (will be assigned on first login)"
+                );
+            }
+            Err(e) => {
+                eprintln!("[MIGRATE] Failed to look up root admin user: {e:#}");
+            }
+        }
+    }
 }
 
 /// Start the HTTP server.
@@ -902,5 +947,84 @@ mod tests {
             .unwrap();
         let response_data: CrawlingEnabledResponse = serde_json::from_slice(&body).unwrap();
         assert!(response_data.enabled);
+    }
+
+    // -----------------------------------------------------------------------
+    // Multi-tenant search tests
+    // -----------------------------------------------------------------------
+
+    async fn create_multi_tenant_test_app() -> axum::Router {
+        use lala_agent::routes::AuthState;
+        use lala_agent::services::auth::AuthConfig;
+        use lala_agent::services::auth_db::AuthDbClient;
+        use lala_agent::services::email::{EmailConfig, EmailService};
+
+        let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://lalasearch:lalasearch@127.0.0.1:5432/lalasearch".to_string()
+        });
+
+        let pool = PgPool::connect(&database_url)
+            .await
+            .expect("Failed to connect to PostgreSQL");
+
+        let default_tenant_id: Uuid = "00000000-0000-0000-0000-000000000001".parse().unwrap();
+
+        let db_client = Arc::new(DbClient::new(pool.clone(), default_tenant_id));
+
+        let email_config = EmailConfig {
+            smtp_host: "localhost".to_string(),
+            smtp_port: 25,
+            smtp_username: None,
+            smtp_password: None,
+            smtp_tls: false,
+            from_email: "test@localhost".to_string(),
+            from_name: "Test".to_string(),
+            app_base_url: "http://localhost:8081".to_string(),
+            magic_link_expiry_minutes: 15,
+            invitation_expiry_days: 7,
+        };
+        let email_service =
+            EmailService::new(email_config).expect("Failed to create test email service");
+        let auth_db = AuthDbClient::new(pool);
+        env::set_var("LALA_ROOT_ADMIN_EMAIL", "test-root@localhost");
+        let auth_config = AuthConfig::from_env();
+        let auth_state = AuthState::new(auth_db, email_service, auth_config, default_tenant_id);
+
+        let state = AppState {
+            db_client,
+            search_client: None,
+            deployment_mode: DeploymentMode::MultiTenant,
+            auth_state: Some(auth_state),
+        };
+        create_router(state)
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires PostgreSQL
+    async fn test_search_without_auth_returns_503_not_401_in_multi_tenant() {
+        let app = create_multi_tenant_test_app().await;
+
+        // POST /search without any session cookie — should NOT get 401.
+        // We expect 503 (search service unavailable) because search_client is None,
+        // but critically it must NOT be 401 (Unauthorized).
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"test"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_ne!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "Public search must not require authentication"
+        );
+        // With no search client configured, we expect 503
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }

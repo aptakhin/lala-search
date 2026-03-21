@@ -338,7 +338,7 @@ function onboardingPage() {
 
     goToSearch() {
       if (!this.searchQuery.trim()) return;
-      window.location.href = '/?q=' + encodeURIComponent(this.searchQuery.trim());
+      window.location.href = '/dashboard';
     },
 
     suggestDomain() {

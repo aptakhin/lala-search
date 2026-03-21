@@ -25,6 +25,9 @@ pub struct AuthConfig {
     pub magic_link_expiry_minutes: u64,
     /// Invitation expiry in days
     pub invitation_expiry_days: u64,
+    /// Email of the root/platform admin who owns the default tenant.
+    /// Only this email can self-register; all other users must be invited.
+    pub root_admin_email: String,
 }
 
 impl AuthConfig {
@@ -43,6 +46,8 @@ impl AuthConfig {
                 .unwrap_or_else(|_| "7".to_string())
                 .parse()
                 .unwrap_or(7),
+            root_admin_email: env::var("LALA_ROOT_ADMIN_EMAIL")
+                .expect("LALA_ROOT_ADMIN_EMAIL must be set when authentication is enabled"),
         }
     }
 }
@@ -149,9 +154,39 @@ impl AuthService {
             .await
             .context("Failed to mark token as used")?;
 
+        let is_root_admin = self
+            .config
+            .root_admin_email
+            .eq_ignore_ascii_case(&magic_token.email);
+
+        // Only the root admin can self-register; everyone else needs an invite.
+        let existing_user = self
+            .db
+            .get_user_by_email(&magic_token.email)
+            .await
+            .context("Failed to look up user")?;
+
+        if existing_user.is_none() && !is_root_admin {
+            eprintln!(
+                "[AUTH] Self-registration blocked for {}: user must be invited",
+                anonymize_email(&magic_token.email)
+            );
+            return Err(anyhow!(
+                "Self-registration is restricted. Please ask an administrator to invite you."
+            ));
+        }
+
         let user = self
             .get_or_create_user(&magic_token.email, default_tenant_id)
             .await?;
+
+        // Ensure root admin is always Owner of the default tenant.
+        if is_root_admin {
+            self.db
+                .add_org_membership(default_tenant_id, user.user_id, UserRole::Owner, None)
+                .await
+                .context("Failed to assign root admin to default tenant")?;
+        }
 
         let tenant_id = magic_token.tenant_id.unwrap_or(default_tenant_id);
 
@@ -206,7 +241,10 @@ impl AuthService {
             .ok_or_else(|| anyhow!("User disappeared"))
     }
 
-    /// Create a new user and add them to the default tenant.
+    /// Create a new user and add them to the default tenant as Member.
+    ///
+    /// The root admin check in `verify_magic_link()` upgrades to Owner
+    /// separately if the email matches `LALA_ROOT_ADMIN_EMAIL`.
     async fn create_new_user(&self, email: &str, default_tenant_id: Uuid) -> Result<User> {
         let user_id = self
             .db
@@ -220,12 +258,12 @@ impl AuthService {
             .context("Failed to verify email")?;
 
         self.db
-            .add_org_membership(default_tenant_id, user_id, UserRole::Owner, None)
+            .add_org_membership(default_tenant_id, user_id, UserRole::Member, None)
             .await
             .context("Failed to add org membership")?;
 
         println!(
-            "[AUTH] New user created: user_id={}, email={}, tenant={}, role=Owner",
+            "[AUTH] New user created: user_id={}, email={}, tenant={}, role=Member",
             user_id,
             anonymize_email(email),
             default_tenant_id
@@ -312,6 +350,18 @@ impl AuthService {
             tenant_id: session.tenant_id,
             role: membership.role,
         }))
+    }
+
+    /// Check if a user is a member of a given tenant.
+    pub async fn check_membership(
+        &self,
+        tenant_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Option<OrgMembership>> {
+        self.db
+            .get_org_membership(tenant_id, user_id)
+            .await
+            .context("Failed to check org membership")
     }
 
     /// Sign out - invalidate session.
@@ -609,14 +659,35 @@ mod tests {
 
     #[test]
     fn test_auth_config_defaults() {
-        // Clear env vars to test defaults
+        // Clear env vars to test defaults (root admin is required)
         env::remove_var("SESSION_MAX_AGE_DAYS");
         env::remove_var("MAGIC_LINK_EXPIRY_MINUTES");
         env::remove_var("INVITATION_EXPIRY_DAYS");
+        env::set_var("LALA_ROOT_ADMIN_EMAIL", "admin@test.com");
 
         let config = AuthConfig::from_env();
         assert_eq!(config.session_max_age_days, 365);
         assert_eq!(config.magic_link_expiry_minutes, 15);
         assert_eq!(config.invitation_expiry_days, 7);
+        assert_eq!(config.root_admin_email, "admin@test.com");
+
+        env::remove_var("LALA_ROOT_ADMIN_EMAIL");
+    }
+
+    #[test]
+    fn test_auth_config_reads_root_admin_email() {
+        env::set_var("LALA_ROOT_ADMIN_EMAIL", "admin@example.com");
+
+        let config = AuthConfig::from_env();
+        assert_eq!(config.root_admin_email, "admin@example.com");
+
+        env::remove_var("LALA_ROOT_ADMIN_EMAIL");
+    }
+
+    #[test]
+    #[should_panic(expected = "LALA_ROOT_ADMIN_EMAIL must be set")]
+    fn test_auth_config_panics_without_root_admin_email() {
+        env::remove_var("LALA_ROOT_ADMIN_EMAIL");
+        AuthConfig::from_env();
     }
 }

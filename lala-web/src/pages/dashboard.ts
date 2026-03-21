@@ -1,4 +1,4 @@
-import { fetchCurrentUser, formatDate } from '../lib/api';
+import { fetchCurrentUser, fetchDeploymentMode, formatDate } from '../lib/api';
 
 interface User {
   user_id: string;
@@ -39,11 +39,24 @@ interface ActionRecord {
   rolled_back_at: string | null;
 }
 
+function adminFetch(
+  tenantId: string,
+  url: string,
+  options: RequestInit = {},
+): Promise<Response> {
+  if (tenantId) {
+    const sep = url.includes('?') ? '&' : '?';
+    url = url + sep + 'tenant_id=' + encodeURIComponent(tenantId);
+  }
+  return fetch(url, { ...options, credentials: 'include' });
+}
+
 function dashboardPage() {
   let tenantNameTimer: ReturnType<typeof setTimeout> | null = null;
 
   return {
     user: null as User | null,
+    deploymentMode: null as string | null,
     ready: false,
     undoable: null as ActionRecord | null,
     redoable: null as ActionRecord | null,
@@ -56,8 +69,11 @@ function dashboardPage() {
     tenantNameSaving: false,
     tenantNameSaved: false,
 
+    // Org switcher
+    selectedOrg: null as Organization | null,
+
     get currentOrg(): Organization | null {
-      return this.user?.organizations?.[0] || null;
+      return this.selectedOrg || this.user?.organizations?.[0] || null;
     },
 
     get tenantId(): string {
@@ -73,25 +89,47 @@ function dashboardPage() {
       return role === 'owner' || role === 'admin';
     },
 
+    get hasMultipleOrgs(): boolean {
+      return (this.user?.organizations?.length || 0) > 1;
+    },
+
+    adminFetch(url: string, options: RequestInit = {}): Promise<Response> {
+      return adminFetch(this.tenantId, url, options);
+    },
+
+    async switchOrg(org: Organization) {
+      this.selectedOrg = org;
+      this.ready = false;
+      await this.reloadDashboard();
+      this.ready = true;
+    },
+
+    async reloadDashboard() {
+      await this.loadUndoRedoState();
+      await this.loadTenantName();
+      window.dispatchEvent(new CustomEvent('org-switched'));
+    },
+
     async init() {
-      try {
-        const res = await fetch('/api/auth/me', { credentials: 'include' });
-        if (res.ok) {
-          this.user = await res.json();
-        } else {
-          window.location.href = '/signin';
-          return;
-        }
-      } catch {
+      const [, deploymentMode] = await Promise.all([
+        fetch('/api/auth/me', { credentials: 'include' }).then(async (res) => {
+          if (res.ok) {
+            this.user = await res.json();
+          }
+        }),
+        fetchDeploymentMode(),
+      ]);
+
+      this.deploymentMode = deploymentMode;
+
+      if (!this.user) {
         window.location.href = '/signin';
         return;
       }
 
       // Redirect to onboarding if no domains are configured yet
       try {
-        const domainsRes = await fetch('/api/admin/allowed-domains', {
-          credentials: 'include',
-        });
+        const domainsRes = await this.adminFetch('/api/admin/allowed-domains');
         if (domainsRes.ok) {
           const data = await domainsRes.json();
           if (!data.domains || data.domains.length === 0) {
@@ -124,9 +162,7 @@ function dashboardPage() {
 
     async loadTenantName() {
       try {
-        const res = await fetch('/api/admin/settings/tenant-name', {
-          credentials: 'include',
-        });
+        const res = await this.adminFetch('/api/admin/settings/tenant-name');
         if (res.ok) {
           const data = await res.json();
           this.tenantNameValue = data.name || '';
@@ -150,10 +186,9 @@ function dashboardPage() {
       this.tenantNameSaved = false;
 
       try {
-        const res = await fetch('/api/admin/settings/tenant-name', {
+        const res = await this.adminFetch('/api/admin/settings/tenant-name', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
           body: JSON.stringify({ name }),
         });
         if (res.ok) {
@@ -171,9 +206,7 @@ function dashboardPage() {
 
     async loadUndoRedoState() {
       try {
-        const res = await fetch('/api/admin/action-history/state', {
-          credentials: 'include',
-        });
+        const res = await this.adminFetch('/api/admin/action-history/state');
         if (res.ok) {
           const data = await res.json();
           this.undoable = data.undoable || null;
@@ -190,9 +223,8 @@ function dashboardPage() {
       this.actionMessage = null;
 
       try {
-        const res = await fetch('/api/admin/action-history/undo', {
+        const res = await this.adminFetch('/api/admin/action-history/undo', {
           method: 'POST',
-          credentials: 'include',
         });
         if (res.ok) {
           const data = await res.json();
@@ -213,9 +245,8 @@ function dashboardPage() {
       this.actionMessage = null;
 
       try {
-        const res = await fetch('/api/admin/action-history/redo', {
+        const res = await this.adminFetch('/api/admin/action-history/redo', {
           method: 'POST',
-          credentials: 'include',
         });
         if (res.ok) {
           const data = await res.json();
@@ -262,11 +293,11 @@ function inviteSection() {
       if (!tid) return;
       this.membersLoading = true;
       try {
-        const res = await fetch(
+        const res = await adminFetch(
+          tid,
           '/api/auth/organizations/' +
             encodeURIComponent(tid) +
             '/members',
-          { credentials: 'include' },
         );
         if (res.ok) {
           const data = await res.json();
@@ -291,14 +322,14 @@ function inviteSection() {
       const tid = (this as unknown as AlpineScope).$data.tenantId as string;
 
       try {
-        const res = await fetch(
+        const res = await adminFetch(
+          tid,
           '/api/auth/organizations/' +
             encodeURIComponent(tid) +
             '/invite',
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({
               email: this.inviteEmail,
               role: this.inviteRole,
@@ -323,12 +354,13 @@ function inviteSection() {
     async removeMember(userId: string) {
       const tid = (this as unknown as AlpineScope).$data.tenantId as string;
       try {
-        const res = await fetch(
+        const res = await adminFetch(
+          tid,
           '/api/auth/organizations/' +
             encodeURIComponent(tid) +
             '/members/' +
             encodeURIComponent(userId),
-          { method: 'DELETE', credentials: 'include' },
+          { method: 'DELETE' },
         );
         if (res.ok) {
           await this.loadMembers();
@@ -352,12 +384,14 @@ function domainsSection() {
     domains: [] as Domain[],
     domainsLoading: false,
 
+    getTenantId(): string {
+      return (this as unknown as AlpineScope).$data.tenantId as string;
+    },
+
     async loadDomains() {
       this.domainsLoading = true;
       try {
-        const res = await fetch('/api/admin/allowed-domains', {
-          credentials: 'include',
-        });
+        const res = await adminFetch(this.getTenantId(), '/api/admin/allowed-domains');
         if (res.ok) {
           const data = await res.json();
           this.domains = data.domains || [];
@@ -387,10 +421,9 @@ function domainsSection() {
           body.notes = this.domainNotes;
         }
 
-        const res = await fetch('/api/admin/allowed-domains', {
+        const res = await adminFetch(this.getTenantId(), '/api/admin/allowed-domains', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
           body: JSON.stringify(body),
         });
         const data = await res.json();
@@ -413,9 +446,10 @@ function domainsSection() {
 
     async deleteDomain(domain: string) {
       try {
-        const res = await fetch(
+        const res = await adminFetch(
+          this.getTenantId(),
           '/api/admin/allowed-domains/' + encodeURIComponent(domain),
-          { method: 'DELETE', credentials: 'include' },
+          { method: 'DELETE' },
         );
         if (res.ok) {
           await this.loadDomains();
@@ -431,6 +465,127 @@ function domainsSection() {
   };
 }
 
+interface SearchResult {
+  document: {
+    url: string;
+    title?: string;
+    excerpt?: string;
+  };
+  snippet?: string;
+}
+
+function dashboardSearch() {
+  return {
+    query: '',
+    results: [] as SearchResult[],
+    totalResults: 0,
+    isLoading: false,
+    hasSearched: false,
+    error: null as string | null,
+    currentOffset: 0,
+    limit: 10,
+
+    getTenantId(): string {
+      return (this as unknown as AlpineScope).$data.tenantId as string;
+    },
+
+    async search() {
+      if (!this.query.trim()) {
+        this.error = 'Please enter a search query.';
+        return;
+      }
+
+      this.isLoading = true;
+      this.error = null;
+      this.currentOffset = 0;
+      this.hasSearched = true;
+
+      try {
+        const res = await adminFetch(this.getTenantId(), '/api/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: this.query,
+            limit: this.limit,
+            offset: this.currentOffset,
+          }),
+        });
+
+        if (!res.ok) {
+          throw new Error('Server error: ' + res.status);
+        }
+
+        const data = await res.json();
+        this.results = data.results || [];
+        this.totalResults = data.total || 0;
+      } catch (err: unknown) {
+        this.error =
+          (err instanceof Error ? err.message : null) ||
+          'Failed to fetch results.';
+        this.results = [];
+        this.totalResults = 0;
+      } finally {
+        this.isLoading = false;
+      }
+    },
+
+    clearSearch() {
+      this.query = '';
+      this.results = [];
+      this.totalResults = 0;
+      this.hasSearched = false;
+      this.error = null;
+      this.currentOffset = 0;
+    },
+
+    nextPage() {
+      this.currentOffset += this.limit;
+      this.performPaginatedSearch();
+    },
+
+    previousPage() {
+      this.currentOffset = Math.max(0, this.currentOffset - this.limit);
+      this.performPaginatedSearch();
+    },
+
+    async performPaginatedSearch() {
+      this.isLoading = true;
+      this.error = null;
+
+      try {
+        const res = await adminFetch(this.getTenantId(), '/api/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: this.query,
+            limit: this.limit,
+            offset: this.currentOffset,
+          }),
+        });
+
+        if (!res.ok) {
+          throw new Error('Server error: ' + res.status);
+        }
+
+        const data = await res.json();
+        this.results = data.results || [];
+      } catch (err: unknown) {
+        this.error =
+          (err instanceof Error ? err.message : null) ||
+          'Failed to fetch results.';
+        this.results = [];
+      } finally {
+        this.isLoading = false;
+      }
+    },
+
+    openUrl(url: string) {
+      window.open(url, '_blank');
+    },
+  };
+}
+
 window.dashboardPage = dashboardPage;
 window.inviteSection = inviteSection;
 window.domainsSection = domainsSection;
+window.dashboardSearch = dashboardSearch;

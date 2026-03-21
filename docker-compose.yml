@@ -75,16 +75,17 @@ services:
         condition: service_healthy
       seaweedfs-init:
         condition: service_completed_successfully
+    # Recompile from volume-mounted source on startup (picks up local changes).
+    # The Dockerfile pre-builds dependencies so only app code is compiled here.
+    command: ["sh", "-c", "cargo build --release && ./target/release/lala-agent migrate && ./target/release/lala-agent serve"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/version"]
       interval: 10s
       timeout: 3s
       retries: 3
-      start_period: 10s
+      start_period: 60s
     networks:
       - lalasearch-network
-    # For development, you can override to run in debug mode:
-    # command: cargo run
 
   # LalaSearch Web Frontend - Retro 1990s-style UI
   lala-web:

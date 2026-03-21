@@ -10,6 +10,7 @@
 use crate::models::action_history::{
     ActionType, EntityType, RollbackResponse, UndoRedoStateResponse,
 };
+use crate::models::auth::AuthUser;
 use crate::models::db::CrawlQueueEntry;
 use crate::models::deployment::DeploymentMode;
 use crate::models::domain::{
@@ -97,14 +98,14 @@ impl FromRequestParts<AppState> for TenantDb {
     }
 }
 
-/// Validate the session cookie and return the authenticated user's tenant ID.
+/// Validate the session cookie and return the authenticated user.
 ///
 /// Requires `auth_state` to be configured; returns 401 if the session cookie
 /// is missing or invalid.
 async fn validate_session(
     parts: &mut Parts,
     state: &AppState,
-) -> Result<Uuid, (StatusCode, String)> {
+) -> Result<AuthUser, (StatusCode, String)> {
     let auth_state = state.auth_state.as_ref().ok_or_else(|| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -131,7 +132,7 @@ async fn validate_session(
             )
         })?;
 
-    let auth_user = auth_state
+    auth_state
         .auth_service
         .validate_session(&session_token)
         .await
@@ -146,9 +147,7 @@ async fn validate_session(
                 StatusCode::UNAUTHORIZED,
                 "Invalid or expired session".to_string(),
             )
-        })?;
-
-    Ok(auth_user.tenant_id)
+        })
 }
 
 /// Resolve the tenant-scoped DB client for a multi-tenant request.
@@ -156,8 +155,68 @@ async fn resolve_multi_tenant_db(
     parts: &mut Parts,
     state: &AppState,
 ) -> Result<Arc<DbClient>, (StatusCode, String)> {
-    let tenant_id = validate_session(parts, state).await?;
+    let auth_user = validate_session(parts, state).await?;
+
+    let tenant_id = resolve_tenant_override(parts, &auth_user, state).await?;
     Ok(Arc::new(state.db_client.with_tenant(tenant_id)))
+}
+
+/// If a `tenant_id` query parameter is present, validate the user is a member
+/// of that tenant and return it.  Otherwise fall back to the session's tenant.
+async fn resolve_tenant_override(
+    parts: &Parts,
+    auth_user: &AuthUser,
+    state: &AppState,
+) -> Result<Uuid, (StatusCode, String)> {
+    let query = parts.uri.query().unwrap_or("");
+    let requested_str = query
+        .split('&')
+        .filter_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            (key == "tenant_id").then_some(value)
+        })
+        .next();
+
+    let raw = match requested_str {
+        Some(v) => v,
+        None => return Ok(auth_user.tenant_id),
+    };
+
+    let requested_id: Uuid = raw.parse().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            "tenant_id must be a valid UUID".to_string(),
+        )
+    })?;
+
+    // Same tenant as session — no extra check needed.
+    if requested_id == auth_user.tenant_id {
+        return Ok(requested_id);
+    }
+
+    let auth_service = &state
+        .auth_state
+        .as_ref()
+        .expect("auth_state must be set in multi-tenant mode")
+        .auth_service;
+
+    auth_service
+        .check_membership(requested_id, auth_user.user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Membership check error: {e}"),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::FORBIDDEN,
+                "You are not a member of this organization".to_string(),
+            )
+        })?;
+
+    Ok(requested_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -227,7 +286,12 @@ pub async fn add_to_queue_handler(
 }
 
 /// Extractor that resolves the tenant_id for search filtering.
-/// Returns `Some(tenant_id)` in multi-tenant mode with auth, `None` otherwise.
+///
+/// In multi-tenant mode with auth configured:
+/// - Authenticated users get results filtered to their tenant.
+/// - Unauthenticated users get unfiltered results (public search).
+///
+/// In single-tenant mode or without auth: always returns `None` (no filter).
 pub struct SearchTenantId(pub Option<String>);
 
 impl FromRequestParts<AppState> for SearchTenantId {
@@ -237,11 +301,17 @@ impl FromRequestParts<AppState> for SearchTenantId {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        if state.deployment_mode == DeploymentMode::MultiTenant && state.auth_state.is_some() {
-            let tenant_id = validate_session(parts, state).await?;
-            Ok(SearchTenantId(Some(tenant_id.to_string())))
-        } else {
-            Ok(SearchTenantId(None))
+        if state.deployment_mode != DeploymentMode::MultiTenant || state.auth_state.is_none() {
+            return Ok(SearchTenantId(None));
+        }
+
+        // Try to authenticate; fall back to public (unfiltered) search on failure.
+        match validate_session(parts, state).await {
+            Ok(auth_user) => {
+                let tenant_id = resolve_tenant_override(parts, &auth_user, state).await?;
+                Ok(SearchTenantId(Some(tenant_id.to_string())))
+            }
+            Err(_) => Ok(SearchTenantId(None)),
         }
     }
 }
