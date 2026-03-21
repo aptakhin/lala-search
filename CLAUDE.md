@@ -43,6 +43,7 @@ All dependencies must be open source. Avoid: ScyllaDB (proprietary since Dec 202
 - **No hardcoded values in comments** — reference the config source instead
 - **No trivial comments** — don't restate what the code does (e.g., `// Get user` before `get_user_by_id()`). Only comment to explain *why*, document non-obvious behavior, or clarify complex logic.
 - **Cross-platform**: use env vars, no platform-specific paths
+- **Natural pluralization in web UI** — use proper English plurals, not parenthetical hacks. Write "10 pages", "0 pages", "1 page" — never "10 page(s)"
 
 ## Error Handling
 
