@@ -25,6 +25,7 @@
 #   DEPLOY_PORT          - SSH port (default: 22)
 #   DEPLOY_DIR           - Remote install directory (default: /opt/lalasearch)
 #   APP_BASE_URL         - Public URL (default: http://$DEPLOY_HOST)
+#   LETSENCRYPT_EMAIL    - Email for Let's Encrypt notifications (default: derived from SMTP_FROM_EMAIL)
 #   SMTP_HOST            - SMTP server
 #   SMTP_PORT            - SMTP port
 #   SMTP_USERNAME        - SMTP username (default: empty)
@@ -34,6 +35,7 @@
 #   SMTP_FROM_NAME       - Sender name (default: LalaSearch)
 #   DEPLOYMENT_MODE      - Deployment mode (default: single_tenant)
 #   IMAGE_TAG            - Docker image tag (default: latest)
+#   SKIP_DNS_CHECK       - Set to "true" to skip DNS verification (default: false)
 
 set -euo pipefail
 
@@ -56,7 +58,7 @@ fi
 
 DEPLOY_PORT="${DEPLOY_PORT:-22}"
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/lalasearch}"
-APP_BASE_URL="${APP_BASE_URL:-http://${DEPLOY_HOST}}"
+APP_BASE_URL="${APP_BASE_URL:-https://${DEPLOY_HOST}}"
 SMTP_HOST="${SMTP_HOST:-}"
 SMTP_PORT="${SMTP_PORT:-}"
 SMTP_USERNAME="${SMTP_USERNAME:-}"
@@ -67,6 +69,44 @@ SMTP_FROM_NAME="${SMTP_FROM_NAME:-LalaSearch}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 DEPLOYMENT_MODE="${DEPLOYMENT_MODE:-single_tenant}"
 REPO_RAW="https://raw.githubusercontent.com/aptakhin/lala-search/main"
+
+# Parse domain from APP_BASE_URL (strip protocol and trailing slash/path)
+DEPLOY_DOMAIN="$(echo "$APP_BASE_URL" | sed -E 's|^https?://||; s|[:/].*||')"
+LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-${SMTP_FROM_EMAIL:-admin@${DEPLOY_DOMAIN}}}"
+
+# Detect if HTTPS is requested
+if [[ "$APP_BASE_URL" == https://* ]]; then
+    ENABLE_TLS=true
+else
+    ENABLE_TLS=false
+fi
+
+# ── Verify DNS (if TLS enabled) ───────────────────────────────────────────────
+
+SKIP_DNS_CHECK="${SKIP_DNS_CHECK:-false}"
+
+if [[ "$ENABLE_TLS" == "true" && "$SKIP_DNS_CHECK" != "true" ]]; then
+    echo "==> Verifying DNS for ${DEPLOY_DOMAIN}..."
+
+    resolved_ip="$(dig +short "$DEPLOY_DOMAIN" A 2>/dev/null | tail -1)"
+    if [[ -z "$resolved_ip" ]]; then
+        echo "Error: DNS lookup for ${DEPLOY_DOMAIN} returned no A record." >&2
+        echo "Let's Encrypt requires the domain to resolve to your server." >&2
+        echo "Create an A record pointing ${DEPLOY_DOMAIN} to ${DEPLOY_HOST}." >&2
+        echo "To skip this check: export SKIP_DNS_CHECK=true" >&2
+        exit 1
+    fi
+
+    if [[ "$resolved_ip" != "$DEPLOY_HOST" ]]; then
+        echo "Warning: ${DEPLOY_DOMAIN} resolves to ${resolved_ip}, but DEPLOY_HOST is ${DEPLOY_HOST}." >&2
+        echo "Let's Encrypt will connect to ${resolved_ip} for the ACME challenge." >&2
+        echo "If this is expected (e.g. behind a load balancer), set SKIP_DNS_CHECK=true." >&2
+        echo "Otherwise, update your DNS A record to point to ${DEPLOY_HOST}." >&2
+        exit 1
+    fi
+
+    echo "    ${DEPLOY_DOMAIN} -> ${resolved_ip} (matches DEPLOY_HOST)"
+fi
 
 # ── Set up SSH ───────────────────────────────────────────────────────────────
 
@@ -85,6 +125,8 @@ ssh_cmd() {
 echo "==> Deploying LalaSearch to ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PORT}"
 echo "    Remote directory: ${DEPLOY_DIR}"
 echo "    Image tag: ${IMAGE_TAG}"
+echo "    Domain: ${DEPLOY_DOMAIN}"
+echo "    TLS: ${ENABLE_TLS}"
 
 # ── Step 1: Ensure Docker is installed ───────────────────────────────────────
 
@@ -111,7 +153,7 @@ set -euo pipefail
 DEPLOY_DIR="$1"
 REPO_RAW="$2"
 
-sudo mkdir -p "${DEPLOY_DIR}/docker/seaweedfs"
+sudo mkdir -p "${DEPLOY_DIR}/docker/seaweedfs" "${DEPLOY_DIR}/nginx" "${DEPLOY_DIR}/scripts"
 sudo chown -R "$USER:$USER" "$DEPLOY_DIR"
 
 cd "$DEPLOY_DIR"
@@ -122,9 +164,16 @@ curl -fsSL "$REPO_RAW/docker-compose.prod.yml" -o docker-compose.prod.yml
 echo "Downloading docker/seaweedfs/s3.json..."
 curl -fsSL "$REPO_RAW/docker/seaweedfs/s3.json" -o docker/seaweedfs/s3.json
 
+echo "Downloading nginx/prod.conf..."
+curl -fsSL "$REPO_RAW/nginx/prod.conf" -o nginx/prod.conf
+
+echo "Downloading scripts/init-letsencrypt.sh..."
+curl -fsSL "$REPO_RAW/scripts/init-letsencrypt.sh" -o scripts/init-letsencrypt.sh
+chmod +x scripts/init-letsencrypt.sh
+
 # Verify all required files exist and are non-empty
 failed=()
-for f in docker-compose.prod.yml docker/seaweedfs/s3.json; do
+for f in docker-compose.prod.yml docker/seaweedfs/s3.json nginx/prod.conf scripts/init-letsencrypt.sh; do
     if [[ ! -s "$f" ]]; then
         failed+=("$f")
     fi
@@ -209,9 +258,28 @@ sed -i "s|ghcr.io/aptakhin/lala-search/lala-web:latest|ghcr.io/aptakhin/lala-sea
 REMOTE_PIN
 fi
 
-# ── Step 5: Pull images and start the stack ──────────────────────────────────
+# ── Step 5: Initialize Let's Encrypt certificate (if HTTPS) ──────────────────
 
-echo "==> Pulling images and starting the stack..."
+if [[ "$ENABLE_TLS" == "true" ]]; then
+    echo "==> Initializing Let's Encrypt for ${DEPLOY_DOMAIN}..."
+
+    ssh_cmd bash -s -- "$DEPLOY_DIR" "$DEPLOY_DOMAIN" "$LETSENCRYPT_EMAIL" <<'REMOTE_TLS'
+set -euo pipefail
+DEPLOY_DIR="$1"
+DOMAIN="$2"
+EMAIL="$3"
+cd "$DEPLOY_DIR"
+
+# Pull images first so init-letsencrypt can start containers
+docker compose --env-file .env.prod -f docker-compose.prod.yml pull
+
+./scripts/init-letsencrypt.sh "$DOMAIN" "$EMAIL" "$DEPLOY_DIR"
+REMOTE_TLS
+fi
+
+# ── Step 6: Start the full stack ─────────────────────────────────────────────
+
+echo "==> Starting the stack..."
 
 ssh_cmd bash -s -- "$DEPLOY_DIR" <<'REMOTE_UP'
 set -euo pipefail
@@ -222,7 +290,7 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml pull
 docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
 REMOTE_UP
 
-# ── Step 6: Wait for health and verify ───────────────────────────────────────
+# ── Step 7: Wait for health and verify ───────────────────────────────────────
 
 echo "==> Waiting for services to become healthy..."
 
@@ -256,6 +324,20 @@ echo ""
 echo "Version:"
 curl -sf http://localhost:3000/version || echo "(agent API not reachable on localhost)"
 REMOTE_VERIFY
+
+# ── Step 8: Set up cron to reload nginx after cert renewal (if TLS) ──────────
+
+if [[ "$ENABLE_TLS" == "true" ]]; then
+    echo "==> Setting up nginx reload cron for cert renewal..."
+
+    ssh_cmd bash -s <<'REMOTE_CRON'
+set -euo pipefail
+CRON_CMD="0 */12 * * * docker exec lalasearch-web nginx -s reload > /dev/null 2>&1"
+# Add cron job if not already present
+(crontab -l 2>/dev/null | grep -v "lalasearch-web nginx" || true; echo "$CRON_CMD") | crontab -
+echo "Cron job installed: nginx reload every 12 hours."
+REMOTE_CRON
+fi
 
 echo ""
 echo "==> Deployment complete!"

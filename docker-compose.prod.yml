@@ -78,12 +78,17 @@ services:
     networks:
       - lalasearch-network
 
-  # LalaSearch Web Frontend
+  # LalaSearch Web Frontend (nginx with Let's Encrypt TLS)
   lala-web:
     image: ghcr.io/aptakhin/lala-search/lala-web:latest
     container_name: lalasearch-web
     ports:
       - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/prod.conf:/etc/nginx/conf.d/default.conf:ro
+      - certbot-webroot:/var/www/certbot:ro
+      - certbot-certs:/etc/letsencrypt:ro
     depends_on:
       lala-agent:
         condition: service_healthy
@@ -93,6 +98,26 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5s
+    restart: unless-stopped
+    networks:
+      - lalasearch-network
+
+  # Certbot — automatic TLS certificate renewal
+  # Checks every 12h (standard certbot guidance). Certs renew ~every 60 days.
+  # After successful renewal, nginx is reloaded via --deploy-hook.
+  certbot:
+    image: certbot/certbot
+    container_name: lalasearch-certbot
+    volumes:
+      - certbot-webroot:/var/www/certbot
+      - certbot-certs:/etc/letsencrypt
+    entrypoint: >-
+      /bin/sh -c 'trap exit TERM; while :; do
+        certbot renew --quiet;
+        sleep 12h & wait $${!};
+      done'
+    depends_on:
+      - lala-web
     restart: unless-stopped
     networks:
       - lalasearch-network
@@ -142,6 +167,10 @@ volumes:
   meilisearch-data:
     driver: local
   seaweedfs-data:
+    driver: local
+  certbot-webroot:
+    driver: local
+  certbot-certs:
     driver: local
 
 networks:

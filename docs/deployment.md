@@ -93,63 +93,64 @@ curl -I http://localhost:80
 
 See [.env.prod.example](../.env.prod.example) for the full list with descriptions.
 
-## HTTPS with a Reverse Proxy
+## HTTPS with Let's Encrypt
 
-The frontend listens on port 80. For production, put a reverse proxy in front for TLS termination.
+TLS is built into the production stack. When `APP_BASE_URL` starts with `https://`, the deploy script automatically obtains and renews Let's Encrypt certificates — no external reverse proxy needed.
 
-### Option A: Caddy (recommended — automatic HTTPS)
+### Prerequisites: DNS
 
-Install Caddy:
-```bash
-sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
-curl -1sLf 'https://dl.cloudpkg.dev/caddy-stability/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl -1sLf 'https://dl.cloudpkg.dev/caddy-stability/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-sudo apt update && sudo apt install caddy
-```
+Before deploying with HTTPS, create a DNS A record pointing your domain to the server:
 
-Create `/etc/caddy/Caddyfile`:
-```
-search.yourdomain.com {
-    reverse_proxy localhost:80
-}
-```
+| Record type | Name | Value |
+|-------------|------|-------|
+| A | `search.example.com` | `203.0.113.10` (your server IP) |
 
-```bash
-sudo systemctl reload caddy
-```
+The deploy script verifies that the domain resolves to `DEPLOY_HOST` before requesting a certificate. Let's Encrypt connects to your server on port 80 to validate the ACME challenge, so the A record **must** be in place first.
 
-Caddy automatically obtains and renews Let's Encrypt certificates.
+> **Note:** DNS propagation can take minutes to hours depending on your registrar and TTL settings. Verify with: `dig +short search.example.com`
 
-Change `lala-web` port in `docker-compose.prod.yml` to `127.0.0.1:80:80` so it's only reachable via Caddy.
+### How it works
 
-### Option B: nginx with certbot
+1. `deploy.sh` parses the domain from `APP_BASE_URL` (e.g., `https://search.example.com` → `search.example.com`)
+2. On first deploy, `scripts/init-letsencrypt.sh` bootstraps a dummy self-signed cert, starts nginx, then replaces it with a real Let's Encrypt cert via the ACME HTTP-01 challenge
+3. A `certbot` container checks for renewal every 12 hours (certs renew ~every 60 days)
+4. A host cron job reloads nginx every 12 hours to pick up renewed certs
+
+### Configuration
+
+Set `APP_BASE_URL` to your HTTPS URL. That's it — everything else is automatic.
 
 ```bash
-sudo apt install -y nginx certbot python3-certbot-nginx
+export APP_BASE_URL=https://search.example.com
 ```
 
-Create `/etc/nginx/sites-available/lalasearch`:
-```nginx
-server {
-    server_name search.yourdomain.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:80;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
+Optional: override the email used for Let's Encrypt expiry notifications (defaults to `SMTP_FROM_EMAIL`, then `admin@<domain>`):
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/lalasearch /etc/nginx/sites-enabled/
-sudo certbot --nginx -d search.yourdomain.com
-sudo systemctl reload nginx
+export LETSENCRYPT_EMAIL=admin@example.com
 ```
 
-Change `lala-web` port to `127.0.0.1:8081:80` to avoid conflict with host nginx on port 80.
+### Skipping the DNS check
+
+If your domain is behind a load balancer, CDN, or the A record doesn't point directly to `DEPLOY_HOST`, the DNS check will fail. Suppress it with:
+
+```bash
+export SKIP_DNS_CHECK=true
+```
+
+### Deploying without HTTPS
+
+To deploy with plain HTTP (e.g., internal/development servers), set `APP_BASE_URL` with `http://`:
+
+```bash
+export APP_BASE_URL=http://203.0.113.10
+```
+
+The certbot service and TLS configuration are skipped entirely.
+
+### Manual certificate management
+
+If you prefer to manage certificates outside of Docker (e.g., with Caddy or a host-level certbot), set `APP_BASE_URL=http://...` to disable the built-in TLS, then put your reverse proxy in front of port 80.
 
 ## Automated Deployment via CI/CD
 
@@ -169,7 +170,9 @@ export S3_ACCESS_KEY="$(openssl rand -base64 16)"
 export S3_SECRET_KEY="$(openssl rand -base64 32)"
 
 # Optional
-export APP_BASE_URL=https://search.example.com
+export APP_BASE_URL=https://search.example.com  # HTTPS triggers automatic Let's Encrypt
+export LETSENCRYPT_EMAIL=admin@example.com       # defaults to SMTP_FROM_EMAIL
+export SKIP_DNS_CHECK=false                      # set to "true" behind a load balancer
 export SMTP_HOST=smtp.mailgun.org
 export SMTP_PORT=587
 export SMTP_USERNAME=postmaster@example.com
@@ -196,7 +199,7 @@ Runs automatically after the Publish Docker Images workflow completes, or manual
 | `S3_ACCESS_KEY` | SeaweedFS S3 access key |
 | `S3_SECRET_KEY` | SeaweedFS S3 secret key |
 
-**Optional GitHub Secrets:** `DEPLOY_PORT`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_TLS`, `SMTP_FROM_EMAIL`, `APP_BASE_URL`
+**Optional GitHub Secrets:** `DEPLOY_PORT`, `APP_BASE_URL`, `LETSENCRYPT_EMAIL`, `SKIP_DNS_CHECK`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_TLS`, `SMTP_FROM_EMAIL`
 
 To trigger manually with a specific version:
 
