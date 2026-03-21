@@ -25,8 +25,8 @@
 #   DEPLOY_PORT          - SSH port (default: 22)
 #   DEPLOY_DIR           - Remote install directory (default: /opt/lalasearch)
 #   APP_BASE_URL         - Public URL (default: http://$DEPLOY_HOST)
-#   SMTP_HOST            - SMTP server (default: postfix)
-#   SMTP_PORT            - SMTP port (default: 25)
+#   SMTP_HOST            - SMTP server
+#   SMTP_PORT            - SMTP port
 #   SMTP_USERNAME        - SMTP username (default: empty)
 #   SMTP_PASSWORD        - SMTP password (default: empty)
 #   SMTP_TLS             - SMTP TLS enabled (default: false)
@@ -57,8 +57,8 @@ fi
 DEPLOY_PORT="${DEPLOY_PORT:-22}"
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/lalasearch}"
 APP_BASE_URL="${APP_BASE_URL:-http://${DEPLOY_HOST}}"
-SMTP_HOST="${SMTP_HOST:-postfix}"
-SMTP_PORT="${SMTP_PORT:-25}"
+SMTP_HOST="${SMTP_HOST:-}"
+SMTP_PORT="${SMTP_PORT:-}"
 SMTP_USERNAME="${SMTP_USERNAME:-}"
 SMTP_PASSWORD="${SMTP_PASSWORD:-}"
 SMTP_TLS="${SMTP_TLS:-false}"
