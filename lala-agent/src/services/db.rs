@@ -40,12 +40,12 @@ impl DbClient {
     }
 
     /// Ensure the default tenant row exists.
-    /// Creates the tenant if missing, or updates the name if it was the placeholder "default".
+    /// Creates the tenant with the given name if missing; never overwrites an existing name
+    /// (use `PUT /admin/settings/tenant-name` to rename).
     pub async fn ensure_default_tenant(&self, tenant_id: Uuid, name: &str) -> Result<()> {
         sqlx::query(
             "INSERT INTO tenants (tenant_id, name) VALUES ($1, $2) \
-             ON CONFLICT (tenant_id) DO UPDATE SET name = EXCLUDED.name \
-             WHERE tenants.name = 'default'",
+             ON CONFLICT (tenant_id) DO NOTHING",
         )
         .bind(tenant_id)
         .bind(name)
