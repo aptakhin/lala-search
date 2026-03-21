@@ -210,6 +210,7 @@ echo ""
 # Step 7: Phase 2 — Multi-tenant tests (required)
 # ---------------------------------------------------------------------------
 MISSING_VARS=""
+[ -z "${MAILTRAP_SMTP_HOST:-}" ] && MISSING_VARS="$MISSING_VARS MAILTRAP_SMTP_HOST"
 [ -z "${MAILTRAP_API_TOKEN:-}" ] && MISSING_VARS="$MISSING_VARS MAILTRAP_API_TOKEN"
 [ -z "${MAILTRAP_ACCOUNT_ID:-}" ] && MISSING_VARS="$MISSING_VARS MAILTRAP_ACCOUNT_ID"
 [ -z "${MAILTRAP_INBOX_ID:-}" ] && MISSING_VARS="$MISSING_VARS MAILTRAP_INBOX_ID"
