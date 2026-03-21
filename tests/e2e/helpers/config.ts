@@ -28,7 +28,6 @@ export const MAILTRAP_API_TOKEN = process.env.MAILTRAP_API_TOKEN || "";
 export const MAILTRAP_ACCOUNT_ID = process.env.MAILTRAP_ACCOUNT_ID || "";
 export const MAILTRAP_INBOX_ID = process.env.MAILTRAP_INBOX_ID || "";
 
-// Multi-tenant test constants
-export const TENANT2_INVITE_TOKEN = "e2e-test-tenant2-invite-0001";
+// Multi-tenant test user emails
 export const USER1_EMAIL = "user1@test.e2e";
 export const USER2_EMAIL = "user2@test.e2e";

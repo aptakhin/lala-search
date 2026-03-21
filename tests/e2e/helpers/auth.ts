@@ -22,17 +22,26 @@ export async function authenticateViaMagicLink(
 ): Promise<string> {
   const ctx = await playwrightRequest.newContext({ baseURL: agentUrl });
   try {
-    // Step 1: Request magic link
-    const requestResp = await ctx.post("/auth/request-link", {
-      data: { email },
-      timeout: REQUEST_TIMEOUT,
-    });
-    if (!requestResp.ok()) {
+    // Step 1: Request magic link (retry on SMTP rate-limit failures)
+    const maxRetries = 5;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      const requestResp = await ctx.post("/auth/request-link", {
+        data: { email },
+        timeout: REQUEST_TIMEOUT,
+      });
+      if (requestResp.ok()) break;
+
       const body = await requestResp.text();
-      throw new Error(
-        `POST /auth/request-link failed for ${email}: ` +
-          `HTTP ${requestResp.status()} — ${body}`,
+      if (attempt === maxRetries) {
+        throw new Error(
+          `POST /auth/request-link failed for ${email} after ${maxRetries} attempts: ` +
+            `HTTP ${requestResp.status()} — ${body}`,
+        );
+      }
+      console.log(
+        `[auth] request-link attempt ${attempt}/${maxRetries} failed for ${email}, retrying in 5s...`,
       );
+      await new Promise((r) => setTimeout(r, 5000));
     }
 
     // Step 2: Retrieve token from Mailtrap

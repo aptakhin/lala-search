@@ -26,8 +26,10 @@ pub struct AuthConfig {
     /// Invitation expiry in days
     pub invitation_expiry_days: u64,
     /// Email of the root/platform admin who owns the default tenant.
-    /// Only this email can self-register; all other users must be invited.
     pub root_admin_email: String,
+    /// Multi-tenant mode: any user can self-register (creates a new tenant).
+    /// Single-tenant mode: only the root admin can self-register.
+    pub multi_tenant: bool,
 }
 
 impl AuthConfig {
@@ -48,6 +50,9 @@ impl AuthConfig {
                 .unwrap_or(7),
             root_admin_email: env::var("LALA_ROOT_ADMIN_EMAIL")
                 .expect("LALA_ROOT_ADMIN_EMAIL must be set when authentication is enabled"),
+            multi_tenant: env::var("DEPLOYMENT_MODE")
+                .map(|m| m == "multi_tenant")
+                .unwrap_or(false),
         }
     }
 }
@@ -159,14 +164,15 @@ impl AuthService {
             .root_admin_email
             .eq_ignore_ascii_case(&magic_token.email);
 
-        // Only the root admin can self-register; everyone else needs an invite.
         let existing_user = self
             .db
             .get_user_by_email(&magic_token.email)
             .await
             .context("Failed to look up user")?;
 
-        if existing_user.is_none() && !is_root_admin {
+        // In single-tenant mode, only the root admin can self-register.
+        // In multi-tenant mode, any user can self-register (creates a new tenant).
+        if existing_user.is_none() && !is_root_admin && !self.config.multi_tenant {
             eprintln!(
                 "[AUTH] Self-registration blocked for {}: user must be invited",
                 anonymize_email(&magic_token.email)
@@ -176,8 +182,27 @@ impl AuthService {
             ));
         }
 
+        let is_new_user = existing_user.is_none();
+
+        let tenant_id = if is_new_user && !is_root_admin && self.config.multi_tenant {
+            // Multi-tenant open signup: create a new tenant for the user
+            let new_tenant_id = Uuid::now_v7();
+            let tenant_name = magic_token
+                .email
+                .split('@')
+                .next_back()
+                .unwrap_or("My Organization");
+            self.db
+                .create_tenant(new_tenant_id, tenant_name)
+                .await
+                .context("Failed to create tenant for new user")?;
+            new_tenant_id
+        } else {
+            magic_token.tenant_id.unwrap_or(default_tenant_id)
+        };
+
         let user = self
-            .get_or_create_user(&magic_token.email, default_tenant_id)
+            .get_or_create_user(&magic_token.email, tenant_id)
             .await?;
 
         // Ensure root admin is always Owner of the default tenant.
@@ -188,7 +213,13 @@ impl AuthService {
                 .context("Failed to assign root admin to default tenant")?;
         }
 
-        let tenant_id = magic_token.tenant_id.unwrap_or(default_tenant_id);
+        // In multi-tenant open signup, new non-root users become Owner of their tenant.
+        if is_new_user && !is_root_admin && self.config.multi_tenant {
+            self.db
+                .add_org_membership(tenant_id, user.user_id, UserRole::Owner, None)
+                .await
+                .context("Failed to assign owner role to new tenant")?;
+        }
 
         let session_token = self
             .create_user_session(user.user_id, tenant_id, user_agent, ip_address)

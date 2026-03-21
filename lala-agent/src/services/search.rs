@@ -37,7 +37,7 @@ impl SearchClient {
             .set_searchable_attributes(searchable_attrs)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to set searchable attributes: {e}"))?;
-        task.wait_for_completion(&self.client, None, None)
+        task.wait_for_completion(&self.client, None, Some(std::time::Duration::from_secs(30)))
             .await
             .map_err(|e| anyhow::anyhow!("Searchable attributes task failed: {e}"))?;
 
@@ -46,7 +46,7 @@ impl SearchClient {
             .set_filterable_attributes(filterable_attrs)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to set filterable attributes: {e}"))?;
-        task.wait_for_completion(&self.client, None, None)
+        task.wait_for_completion(&self.client, None, Some(std::time::Duration::from_secs(30)))
             .await
             .map_err(|e| anyhow::anyhow!("Filterable attributes task failed: {e}"))?;
 
@@ -55,7 +55,7 @@ impl SearchClient {
             .set_sortable_attributes(sortable_attrs)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to set sortable attributes: {e}"))?;
-        task.wait_for_completion(&self.client, None, None)
+        task.wait_for_completion(&self.client, None, Some(std::time::Duration::from_secs(30)))
             .await
             .map_err(|e| anyhow::anyhow!("Sortable attributes task failed: {e}"))?;
 
@@ -295,9 +295,13 @@ mod tests {
             .add_documents(&doc_jsons, Some("id"))
             .await
             .expect("Failed to index");
-        task.wait_for_completion(&client.client, None, None)
-            .await
-            .expect("Indexing task failed");
+        task.wait_for_completion(
+            &client.client,
+            None,
+            Some(std::time::Duration::from_secs(30)),
+        )
+        .await
+        .expect("Indexing task failed");
 
         let results = client
             .list_by_domain("example.com", None, 10)

@@ -126,43 +126,34 @@ echo ""
 echo "Step 3: Setting up test environment..."
 cd "$PROJECT_ROOT"
 
-# The PostgreSQL schema is applied automatically via /docker-entrypoint-initdb.d/.
-# For E2E tests, we use the same database with different tenant IDs.
-
-# Create test tenants
+# Ensure the default tenant exists (used by single-tenant tests and as
+# the root admin's home tenant in multi-tenant mode).
+# The agent's `ensure_default_tenant()` also does this on startup, but
+# we do it here so the cleanup query below doesn't fail on a fresh DB.
 TENANT1_ID="00000000-0000-0000-0000-000000000001"
-TENANT2_ID="00000000-0000-0000-0000-000000000002"
 
-echo "Ensuring test tenants exist..."
+echo "Ensuring default tenant exists..."
 docker compose exec -T postgres psql -U lalasearch -d lalasearch -c "
-INSERT INTO tenants (tenant_id, name, created_at) VALUES ('$TENANT1_ID', 'Test Tenant', NOW()) ON CONFLICT DO NOTHING;
-INSERT INTO tenants (tenant_id, name, created_at) VALUES ('$TENANT2_ID', 'Test Tenant 2', NOW()) ON CONFLICT DO NOTHING;
+INSERT INTO tenants (tenant_id, name, created_at)
+VALUES ('$TENANT1_ID', 'Test Tenant', NOW())
+ON CONFLICT DO NOTHING;
 "
-echo -e "${GREEN}✓ Test tenants ready${NC}"
+echo -e "${GREEN}✓ Default tenant ready${NC}"
 
-# Clean test data for both tenants
+# Clean test data for the default tenant (single-tenant tests reuse it)
 echo "Cleaning test data..."
 docker compose exec -T postgres psql -U lalasearch -d lalasearch -c "
-DELETE FROM crawl_errors WHERE tenant_id IN ('$TENANT1_ID', '$TENANT2_ID');
-DELETE FROM crawl_queue WHERE tenant_id IN ('$TENANT1_ID', '$TENANT2_ID');
-DELETE FROM crawled_pages WHERE tenant_id IN ('$TENANT1_ID', '$TENANT2_ID');
-DELETE FROM allowed_domains WHERE tenant_id IN ('$TENANT1_ID', '$TENANT2_ID');
-DELETE FROM settings WHERE tenant_id IN ('$TENANT1_ID', '$TENANT2_ID');
-DELETE FROM robots_cache WHERE tenant_id IN ('$TENANT1_ID', '$TENANT2_ID');
+DELETE FROM crawl_errors WHERE tenant_id = '$TENANT1_ID';
+DELETE FROM crawl_queue WHERE tenant_id = '$TENANT1_ID';
+DELETE FROM crawled_pages WHERE tenant_id = '$TENANT1_ID';
+DELETE FROM allowed_domains WHERE tenant_id = '$TENANT1_ID';
+DELETE FROM settings WHERE tenant_id = '$TENANT1_ID';
+DELETE FROM robots_cache WHERE tenant_id = '$TENANT1_ID';
 " >/dev/null 2>&1 || true
 echo -e "${GREEN}✓ Test data cleaned${NC}"
 
-# Pre-seed invitation for user2 → tenant2
-# Token: "e2e-test-tenant2-invite-0001" (raw, unhashed)
-echo "Seeding tenant2 invitation for user2@test.e2e..."
-INVITE_TOKEN_HASH=$(node -e "const crypto = require('crypto'); console.log(crypto.createHash('sha256').update('e2e-test-tenant2-invite-0001').digest('hex'))")
-DUMMY_UUID="00000000-0000-0000-0000-000000000001"
-docker compose exec -T postgres psql -U lalasearch -d lalasearch -c "
-DELETE FROM org_invitations WHERE token_hash = '$INVITE_TOKEN_HASH';
-INSERT INTO org_invitations (token_hash, tenant_id, email, role, invited_by, created_at, expires_at, accepted)
-VALUES ('$INVITE_TOKEN_HASH', '$TENANT2_ID', 'user2@test.e2e', 'owner', '$DUMMY_UUID', NOW(), NOW() + INTERVAL '1 day', false);
-"
-echo -e "${GREEN}✓ Tenant2 invitation seeded${NC}"
+# No auth seeding needed — users self-register via magic link.
+# In multi-tenant mode, new users auto-create their own tenant.
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -171,6 +162,12 @@ echo ""
 echo "Step 4: Starting agent (single-tenant mode)..."
 docker compose stop lala-agent 2>/dev/null || true
 docker compose rm -f lala-agent 2>/dev/null || true
+
+# Force recompilation: source is volume-mounted read-only, so clear cached
+# build artifacts to ensure the agent binary reflects the latest code.
+echo "Rebuilding lala-agent from source..."
+docker compose run --rm -T --no-deps lala-agent sh -c \
+    "rm -rf target/release/.fingerprint/lala-agent-* target/release/deps/lala_agent-* target/release/lala-agent && cargo build --release"
 
 DEPLOYMENT_MODE=single_tenant MAILTRAP_SMTP_HOST= \
     docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build lala-agent
