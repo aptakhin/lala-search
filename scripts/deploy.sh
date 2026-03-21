@@ -32,6 +32,7 @@
 #   SMTP_TLS             - SMTP TLS enabled (default: false)
 #   SMTP_FROM_EMAIL      - Sender email (default: noreply@$DEPLOY_HOST)
 #   SMTP_FROM_NAME       - Sender name (default: LalaSearch)
+#   DEPLOYMENT_MODE      - Deployment mode (default: single_tenant)
 #   IMAGE_TAG            - Docker image tag (default: latest)
 
 set -euo pipefail
@@ -64,6 +65,7 @@ SMTP_TLS="${SMTP_TLS:-false}"
 SMTP_FROM_EMAIL="${SMTP_FROM_EMAIL:-noreply@${DEPLOY_HOST}}"
 SMTP_FROM_NAME="${SMTP_FROM_NAME:-LalaSearch}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
+DEPLOYMENT_MODE="${DEPLOYMENT_MODE:-single_tenant}"
 REPO_RAW="https://raw.githubusercontent.com/aptakhin/lala-search/main"
 
 # ── Set up SSH ───────────────────────────────────────────────────────────────
@@ -149,7 +151,7 @@ ENV_CONTENT="$(cat <<ENVEOF
 
 # === Agent Configuration ===
 AGENT_MODE=all
-DEPLOYMENT_MODE=single_tenant
+DEPLOYMENT_MODE=${DEPLOYMENT_MODE}
 ENVIRONMENT=prod
 RUST_LOG=info
 
