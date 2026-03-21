@@ -59,6 +59,8 @@ services:
       - ./lala-agent/Cargo.toml:/app/Cargo.toml:ro
       - ./lala-agent/Cargo.lock:/app/Cargo.lock:ro
       - ./lala-agent/migrations:/app/migrations:ro
+      # Persist cargo build artifacts across runs to speed up pre-commit checks
+      - cargo-target:/app/target
     env_file:
       - .env
     environment:
@@ -182,6 +184,8 @@ volumes:
   meilisearch-data:
     driver: local
   seaweedfs-data:
+    driver: local
+  cargo-target:
     driver: local
 
 networks:

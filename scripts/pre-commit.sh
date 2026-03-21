@@ -66,19 +66,15 @@ if [ "$USE_DOCKER" = true ]; then
     # defined in docker-compose.yml.
     echo "Running fmt, clippy, and tests in lala-agent container..."
     docker compose run --rm lala-agent sh -c '
-        rustup component add rustfmt clippy > /dev/null 2>&1 && \
-        echo "1/4 Checking code formatting..." && \
+        echo "1/3 Checking code formatting..." && \
         cargo fmt --check && \
         echo "✓ Formatting check passed" && \
-        echo "2/4 Running clippy linter..." && \
+        echo "2/3 Running clippy linter..." && \
         cargo clippy -- -D warnings && \
         echo "✓ Clippy check passed" && \
-        echo "3/4 Running unit tests..." && \
-        cargo test --lib && \
-        echo "✓ Unit tests passed" && \
-        echo "4/4 Running storage-dependent tests..." && \
-        cargo test --lib -- --ignored && \
-        echo "✓ Storage-dependent tests passed"
+        echo "3/3 Running all tests (unit + storage-dependent)..." && \
+        cargo test --lib -- --include-ignored && \
+        echo "✓ All tests passed"
     '
 
     echo "✅ All pre-commit checks passed!"
@@ -91,7 +87,7 @@ echo "Running pre-commit checks for lala-agent..."
 cd "$PROJECT_ROOT/lala-agent"
 
 # Check formatting
-echo "1/4 Checking code formatting..."
+echo "1/3 Checking code formatting..."
 cargo fmt --check
 if [ $? -ne 0 ]; then
     echo "❌ Formatting check failed. Run 'cargo fmt' to fix."
@@ -100,7 +96,7 @@ fi
 echo "✓ Formatting check passed"
 
 # Run clippy
-echo "2/4 Running clippy linter..."
+echo "2/3 Running clippy linter..."
 cargo clippy -- -D warnings
 if [ $? -ne 0 ]; then
     echo "❌ Clippy found issues. Fix them before committing."
@@ -108,17 +104,8 @@ if [ $? -ne 0 ]; then
 fi
 echo "✓ Clippy check passed"
 
-# Run unit tests (fast, no external dependencies)
-echo "3/4 Running unit tests..."
-cargo test --lib
-if [ $? -ne 0 ]; then
-    echo "❌ Unit tests failed. Fix failing tests before committing."
-    exit 1
-fi
-echo "✓ Unit tests passed"
-
 # Start Docker services for storage-dependent tests
-echo "4/4 Running storage-dependent tests..."
+echo "3/3 Running all tests (unit + storage-dependent)..."
 start_infrastructure
 
 # Load environment variables from .env file for tests
@@ -127,12 +114,12 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
 fi
 
 cd "$PROJECT_ROOT/lala-agent"
-cargo test --lib -- --ignored
+cargo test --lib -- --include-ignored
 if [ $? -ne 0 ]; then
-    echo "❌ Storage-dependent tests failed."
+    echo "❌ Tests failed. Fix failing tests before committing."
     exit 1
 fi
-echo "✓ Storage-dependent tests passed"
+echo "✓ All tests passed"
 
 echo "✅ All pre-commit checks passed!"
 exit 0
