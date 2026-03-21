@@ -11,14 +11,14 @@
 #
 # Required environment variables (Settings → Environments → test → Variables):
 #
-#   SMTP_HOST               - Mailtrap sandbox SMTP host (sandbox.smtp.mailtrap.io)
-#   SMTP_USERNAME           - Mailtrap inbox SMTP username
+#   MAILTRAP_SMTP_HOST      - Mailtrap sandbox SMTP host (sandbox.smtp.mailtrap.io)
+#   MAILTRAP_SMTP_USERNAME  - Mailtrap inbox SMTP username
 #   MAILTRAP_ACCOUNT_ID     - Mailtrap account ID
 #   MAILTRAP_INBOX_ID       - Mailtrap inbox ID
 #
 # Required environment secrets (Settings → Environments → test → Secrets):
 #
-#   SMTP_PASSWORD           - Mailtrap inbox SMTP password
+#   MAILTRAP_SMTP_PASSWORD  - Mailtrap inbox SMTP password
 #   MAILTRAP_API_TOKEN      - Mailtrap API token (for Playwright to read emails)
 #
 # ──────────────────────────────────────────────────────────────────────
@@ -56,9 +56,9 @@ jobs:
 
       - name: Generate .env for Docker Compose
         env:
-          MAILTRAP_SMTP_HOST: ${{ vars.SMTP_HOST }}
-          MAILTRAP_SMTP_USERNAME: ${{ vars.SMTP_USERNAME }}
-          MAILTRAP_SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          MAILTRAP_SMTP_HOST: ${{ vars.MAILTRAP_SMTP_HOST }}
+          MAILTRAP_SMTP_USERNAME: ${{ vars.MAILTRAP_SMTP_USERNAME }}
+          MAILTRAP_SMTP_PASSWORD: ${{ secrets.MAILTRAP_SMTP_PASSWORD }}
           MAILTRAP_API_TOKEN: ${{ secrets.MAILTRAP_API_TOKEN }}
           MAILTRAP_ACCOUNT_ID: ${{ vars.MAILTRAP_ACCOUNT_ID }}
           MAILTRAP_INBOX_ID: ${{ vars.MAILTRAP_INBOX_ID }}
