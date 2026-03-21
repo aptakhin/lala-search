@@ -158,7 +158,7 @@ function formatBytes(bytes: number): string {
 interface User {
   user_id: string;
   email: string;
-  organizations?: Array<{ tenant_id: string; role: string }>;
+  organizations?: Array<{ tenant_id: string; name?: string; role: string }>;
 }
 
 interface RecentPage {
@@ -201,6 +201,7 @@ function onboardingPage() {
 
     // Search trial state
     searchQuery: '',
+    orgName: '',
 
     async init() {
       // Check authentication
@@ -211,6 +212,10 @@ function onboardingPage() {
           return;
         }
         this.user = await res.json();
+        const org = this.user?.organizations?.[0];
+        if (org?.name) {
+          this.orgName = org.name;
+        }
       } catch {
         window.location.href = '/signin';
         return;

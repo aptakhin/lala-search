@@ -2,7 +2,7 @@ import { fetchCurrentUser, fetchDeploymentMode } from '../lib/api';
 
 interface User {
   email: string;
-  organizations?: Array<{ tenant_id: string; role: string }>;
+  organizations?: Array<{ tenant_id: string; name?: string; role: string }>;
 }
 
 interface SearchResult {
@@ -18,6 +18,7 @@ function pageApp() {
   return {
     user: null as User | null,
     deploymentMode: null as string | null,
+    orgName: '',
     ready: false,
 
     async init() {
@@ -32,6 +33,10 @@ function pageApp() {
 
       if (user.status === 'fulfilled' && user.value) {
         this.user = user.value as unknown as User;
+        const org = this.user.organizations?.[0];
+        if (org?.name) {
+          this.orgName = org.name;
+        }
       }
 
       this.ready = true;

@@ -139,7 +139,9 @@
 
         <!-- Search Trial Section -->
         <div x-show="hasExistingDocs || (domainAdded && suggestedKeywords.length > 0)" class="dashboard-section" data-testid="onboarding-search-section">
-            <h3>Try Searching Your Content</h3>
+            <h3>
+                <span>Try Searching Your Content</span><span x-show="orgName" x-cloak> — <span x-text="orgName"></span></span>
+            </h3>
 
             <!-- Index History -->
             <div x-show="indexHistory.length > 0 && !domainAdded" style="margin-bottom: 15px;">

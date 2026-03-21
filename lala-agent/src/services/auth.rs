@@ -493,6 +493,14 @@ impl AuthService {
             .context("Failed to get user organizations")
     }
 
+    /// Get tenant name by ID.
+    pub async fn get_tenant_name(&self, tenant_id: Uuid) -> Result<Option<String>> {
+        self.db
+            .get_tenant_name(tenant_id)
+            .await
+            .context("Failed to get tenant name")
+    }
+
     /// Get user by ID.
     pub async fn get_user_by_id(&self, user_id: Uuid) -> Result<Option<User>> {
         self.db

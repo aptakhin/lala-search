@@ -12,7 +12,9 @@
     <div class="container" x-data="searchApp()" x-init="init()">
         <!-- Search Section -->
         <div class="search-section">
-            <label class="search-label">Enter your search query:</label>
+            <label class="search-label">
+                <span>Enter your search query</span><span x-show="orgName" x-cloak> — searching within <strong x-text="orgName"></strong></span>:
+            </label>
             <div class="search-input-group">
                 <textarea
                     x-model="query"

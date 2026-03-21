@@ -329,14 +329,20 @@ async fn me_handler(
             )
         })?;
 
-    let org_infos: Vec<OrgInfo> = orgs
-        .into_iter()
-        .map(|m| OrgInfo {
+    let mut org_infos = Vec::with_capacity(orgs.len());
+    for m in orgs {
+        let name = state
+            .auth_service
+            .get_tenant_name(m.tenant_id)
+            .await
+            .unwrap_or(None)
+            .unwrap_or_default();
+        org_infos.push(OrgInfo {
             tenant_id: m.tenant_id.to_string(),
-            name: String::new(), // TODO: fetch tenant names
+            name,
             role: m.role.as_str().to_string(),
-        })
-        .collect();
+        });
+    }
 
     Ok(Json(MeResponse {
         user_id: auth_user.user_id.to_string(),
@@ -408,14 +414,20 @@ async fn list_organizations_handler(
             )
         })?;
 
-    let org_infos: Vec<OrgInfo> = orgs
-        .into_iter()
-        .map(|m| OrgInfo {
+    let mut org_infos = Vec::with_capacity(orgs.len());
+    for m in orgs {
+        let name = state
+            .auth_service
+            .get_tenant_name(m.tenant_id)
+            .await
+            .unwrap_or(None)
+            .unwrap_or_default();
+        org_infos.push(OrgInfo {
             tenant_id: m.tenant_id.to_string(),
-            name: String::new(), // TODO: fetch tenant names
+            name,
             role: m.role.as_str().to_string(),
-        })
-        .collect();
+        });
+    }
 
     let count = org_infos.len();
     Ok(Json(ListOrgsResponse {
@@ -562,10 +574,15 @@ async fn invite_user_handler(
         )
     })?;
 
-    let tenant_id_str = tenant_id.to_string();
+    let tenant_name = state
+        .auth_service
+        .get_tenant_name(tenant_id)
+        .await
+        .unwrap_or(None)
+        .unwrap_or_else(|| tenant_id.to_string());
     let invite = InviteRequest {
         tenant_id,
-        tenant_name: &tenant_id_str, // TODO: fetch actual tenant name
+        tenant_name: &tenant_name,
         email: &payload.email,
         role,
         inviter: &auth_user,
