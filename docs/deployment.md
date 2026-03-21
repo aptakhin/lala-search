@@ -179,7 +179,10 @@ export SMTP_USERNAME=postmaster@example.com
 export SMTP_PASSWORD=your-smtp-password
 export SMTP_TLS=true
 export SMTP_FROM_EMAIL=noreply@example.com
-export IMAGE_TAG=0.3.0  # or "latest"
+export IMAGE_TAG=0.3.0  # optional shared tag for agent + web
+# or set them independently:
+# export AGENT_IMAGE_TAG=0.3.0
+# export WEB_IMAGE_TAG=0.3.1
 
 ./scripts/deploy.sh
 ```
@@ -219,11 +222,15 @@ docker compose -f docker-compose.prod.yml up -d
 
 Data is preserved in Docker volumes across updates.
 
-To pin a specific version instead of `latest`:
+To pin a specific version instead of `latest`, set the image tag environment variables before starting or updating:
 
-```yaml
-# In docker-compose.prod.yml
-image: ghcr.io/aptakhin/lala-search/lala-agent:0.3.0
+```bash
+export IMAGE_TAG=0.3.0
+# or override a single service:
+export AGENT_IMAGE_TAG=0.3.0
+export WEB_IMAGE_TAG=0.3.1
+
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
 ```
 
 ## Backups

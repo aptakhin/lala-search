@@ -34,7 +34,9 @@
 #   SMTP_FROM_EMAIL      - Sender email (default: noreply@$DEPLOY_HOST)
 #   SMTP_FROM_NAME       - Sender name (default: LalaSearch)
 #   DEPLOYMENT_MODE      - Deployment mode (default: single_tenant)
-#   IMAGE_TAG            - Docker image tag (default: latest)
+#   IMAGE_TAG            - Shared Docker image tag for agent/web (default: latest)
+#   AGENT_IMAGE_TAG      - Docker image tag for lala-agent (default: IMAGE_TAG or latest)
+#   WEB_IMAGE_TAG        - Docker image tag for lala-web (default: IMAGE_TAG or latest)
 #   SKIP_DNS_CHECK       - Set to "true" to skip DNS verification (default: false)
 
 set -euo pipefail
@@ -67,6 +69,8 @@ SMTP_TLS="${SMTP_TLS:-false}"
 SMTP_FROM_EMAIL="${SMTP_FROM_EMAIL:-noreply@${DEPLOY_HOST}}"
 SMTP_FROM_NAME="${SMTP_FROM_NAME:-LalaSearch}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
+AGENT_IMAGE_TAG="${AGENT_IMAGE_TAG:-$IMAGE_TAG}"
+WEB_IMAGE_TAG="${WEB_IMAGE_TAG:-$IMAGE_TAG}"
 DEPLOYMENT_MODE="${DEPLOYMENT_MODE:-single_tenant}"
 REPO_RAW="https://raw.githubusercontent.com/aptakhin/lala-search/main"
 
@@ -135,7 +139,8 @@ ssh_cmd() {
 
 echo "==> Deploying LalaSearch to ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PORT}"
 echo "    Remote directory: ${DEPLOY_DIR}"
-echo "    Image tag: ${IMAGE_TAG}"
+echo "    Agent image tag: ${AGENT_IMAGE_TAG}"
+echo "    Web image tag: ${WEB_IMAGE_TAG}"
 echo "    Domain: ${DEPLOY_DOMAIN}"
 echo "    TLS: ${ENABLE_TLS}"
 
@@ -211,6 +216,8 @@ ENV_CONTENT="$(cat <<ENVEOF
 
 # === Agent Configuration ===
 AGENT_MODE=all
+AGENT_IMAGE_TAG=${AGENT_IMAGE_TAG}
+WEB_IMAGE_TAG=${WEB_IMAGE_TAG}
 DEPLOYMENT_MODE=${DEPLOYMENT_MODE}
 ENVIRONMENT=prod
 RUST_LOG=info
@@ -255,21 +262,7 @@ ENVEOF
 # Write via SSH stdin to avoid password chars being interpreted by the shell
 echo "$ENV_CONTENT" | ssh_cmd "cat > ${DEPLOY_DIR}/.env.prod"
 
-# ── Step 4: Pin image tag in compose file if not 'latest' ───────────────────
-
-if [[ "$IMAGE_TAG" != "latest" ]]; then
-    echo "==> Pinning images to tag: ${IMAGE_TAG}"
-    ssh_cmd bash -s -- "$DEPLOY_DIR" "$IMAGE_TAG" <<'REMOTE_PIN'
-set -euo pipefail
-DEPLOY_DIR="$1"
-TAG="$2"
-cd "$DEPLOY_DIR"
-sed -i "s|ghcr.io/aptakhin/lala-search/lala-agent:latest|ghcr.io/aptakhin/lala-search/lala-agent:${TAG}|g" docker-compose.prod.yml
-sed -i "s|ghcr.io/aptakhin/lala-search/lala-web:latest|ghcr.io/aptakhin/lala-search/lala-web:${TAG}|g" docker-compose.prod.yml
-REMOTE_PIN
-fi
-
-# ── Step 5: Initialize Let's Encrypt certificate (if HTTPS) ──────────────────
+# ── Step 4: Initialize Let's Encrypt certificate (if HTTPS) ──────────────────
 
 if [[ "$ENABLE_TLS" == "true" ]]; then
     echo "==> Initializing Let's Encrypt for ${DEPLOY_DOMAIN}..."
@@ -288,7 +281,7 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml pull
 REMOTE_TLS
 fi
 
-# ── Step 6: Start the full stack ─────────────────────────────────────────────
+# ── Step 5: Start the full stack ─────────────────────────────────────────────
 
 echo "==> Starting the stack..."
 
@@ -301,7 +294,7 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml pull
 docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
 REMOTE_UP
 
-# ── Step 7: Wait for health and verify ───────────────────────────────────────
+# ── Step 6: Wait for health and verify ───────────────────────────────────────
 
 echo "==> Waiting for services to become healthy..."
 
@@ -336,7 +329,7 @@ echo "Version:"
 curl -sf http://localhost:3000/version || echo "(agent API not reachable on localhost)"
 REMOTE_VERIFY
 
-# ── Step 8: Set up cron to reload nginx after cert renewal (if TLS) ──────────
+# ── Step 7: Set up cron to reload nginx after cert renewal (if TLS) ──────────
 
 if [[ "$ENABLE_TLS" == "true" ]]; then
     echo "==> Setting up nginx reload cron for cert renewal..."

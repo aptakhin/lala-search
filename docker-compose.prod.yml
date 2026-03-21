@@ -50,7 +50,7 @@ services:
 
   # LalaSearch Agent - Web crawler and search API
   lala-agent:
-    image: ghcr.io/aptakhin/lala-search/lala-agent:latest
+    image: ghcr.io/aptakhin/lala-search/lala-agent:${AGENT_IMAGE_TAG:-latest}
     container_name: lalasearch-agent
     ports:
       - "127.0.0.1:3000:3000"  # API on localhost only (use reverse proxy for public access)
@@ -80,7 +80,7 @@ services:
 
   # LalaSearch Web Frontend (nginx with Let's Encrypt TLS)
   lala-web:
-    image: ghcr.io/aptakhin/lala-search/lala-web:latest
+    image: ghcr.io/aptakhin/lala-search/lala-web:${WEB_IMAGE_TAG:-latest}
     container_name: lalasearch-web
     ports:
       - "80:80"
