@@ -197,11 +197,12 @@ async fn request_link_handler(
         .request_magic_link(&payload.email)
         .await
         .map_err(|e| {
+            eprintln!("[AUTH] Failed to send magic link: {:#}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(RequestLinkResponse {
                     success: false,
-                    message: format!("Failed to send magic link: {:#}", e),
+                    message: "Unable to send magic link. Please try again later.".to_string(),
                 }),
             )
         })?;
