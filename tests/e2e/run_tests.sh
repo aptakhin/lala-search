@@ -121,15 +121,19 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 3: Set up test environment
+# Step 3: Run migrations and set up test environment
 # ---------------------------------------------------------------------------
 echo "Step 3: Setting up test environment..."
 cd "$PROJECT_ROOT"
 
+# On a fresh DB the schema doesn't exist yet. Run migrations via the agent
+# binary so all tables are created before we try to insert test data.
+echo "Running database migrations..."
+docker compose run --rm -T lala-agent sh -c "cargo run --release -- migrate"
+echo -e "${GREEN}✓ Migrations applied${NC}"
+
 # Ensure the default tenant exists (used by single-tenant tests and as
 # the root admin's home tenant in multi-tenant mode).
-# The agent's `ensure_default_tenant()` also does this on startup, but
-# we do it here so the cleanup query below doesn't fail on a fresh DB.
 TENANT1_ID="00000000-0000-0000-0000-000000000001"
 
 echo "Ensuring default tenant exists..."
