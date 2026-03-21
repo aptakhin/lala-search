@@ -66,6 +66,11 @@ if [ "$USE_DOCKER" = true ]; then
     # defined in docker-compose.yml.
     echo "Running fmt, clippy, and tests in lala-agent container..."
     docker compose run --rm lala-agent sh -c '
+        # Source is volume-mounted read-only, so cargo cannot update mtimes.
+        # Clear cached fingerprints to force recompilation against the latest code.
+        rm -rf target/debug/.fingerprint/lala-agent-* \
+               target/debug/deps/lala_agent-* \
+               target/debug/lala-agent 2>/dev/null || true
         echo "1/3 Checking code formatting..." && \
         cargo fmt --check && \
         echo "✓ Formatting check passed" && \

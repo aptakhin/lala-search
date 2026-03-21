@@ -183,56 +183,19 @@ impl AuthService {
         }
 
         let is_new_user = existing_user.is_none();
+        let is_open_signup = is_new_user && !is_root_admin && self.config.multi_tenant;
 
-        let user = if is_new_user && !is_root_admin && self.config.multi_tenant {
-            // Multi-tenant open signup: create a new tenant for the user
-            let new_tenant_id = Uuid::now_v7();
-            let tenant_name = magic_token
-                .email
-                .split('@')
-                .next_back()
-                .unwrap_or("My Organization");
-            self.db
-                .create_tenant(new_tenant_id, tenant_name)
-                .await
-                .context("Failed to create tenant for new user")?;
-
-            let user = self
-                .get_or_create_user(&magic_token.email, new_tenant_id)
-                .await?;
-
-            self.db
-                .add_org_membership(new_tenant_id, user.user_id, UserRole::Owner, None)
-                .await
-                .context("Failed to assign owner role to new tenant")?;
-
-            user
+        let user = if is_open_signup {
+            self.create_user_with_new_tenant(&magic_token.email).await?
         } else {
-            let tenant_id = magic_token.tenant_id.unwrap_or(default_tenant_id);
-            let user = self
-                .get_or_create_user(&magic_token.email, tenant_id)
-                .await?;
-
-            if is_root_admin {
-                self.db
-                    .add_org_membership(default_tenant_id, user.user_id, UserRole::Owner, None)
-                    .await
-                    .context("Failed to assign root admin to default tenant")?;
-            }
-
-            user
+            let tid = magic_token.tenant_id.unwrap_or(default_tenant_id);
+            self.resolve_or_create_user(&magic_token.email, tid, is_root_admin, default_tenant_id)
+                .await?
         };
 
-        // Resolve session tenant: use the user's first org membership
-        let orgs = self
-            .db
-            .get_user_orgs(user.user_id)
-            .await
-            .context("Failed to get user organizations")?;
-        let tenant_id = orgs
-            .first()
-            .map(|m| m.tenant_id)
-            .unwrap_or(default_tenant_id);
+        let tenant_id = self
+            .resolve_session_tenant(user.user_id, default_tenant_id)
+            .await?;
 
         let session_token = self
             .create_user_session(user.user_id, tenant_id, user_agent, ip_address)
@@ -249,6 +212,61 @@ impl AuthService {
         );
 
         Ok((session_token, user, tenant_id))
+    }
+
+    /// Multi-tenant open signup: create a new tenant and make the user its Owner.
+    async fn create_user_with_new_tenant(&self, email: &str) -> Result<User> {
+        let new_tenant_id = Uuid::now_v7();
+        let tenant_name = email.split('@').next_back().unwrap_or("My Organization");
+
+        self.db
+            .create_tenant(new_tenant_id, tenant_name)
+            .await
+            .context("Failed to create tenant for new user")?;
+
+        let user = self.get_or_create_user(email, new_tenant_id).await?;
+
+        self.db
+            .add_org_membership(new_tenant_id, user.user_id, UserRole::Owner, None)
+            .await
+            .context("Failed to assign owner role to new tenant")?;
+
+        Ok(user)
+    }
+
+    /// Resolve an existing user or create one on the given tenant.
+    /// If the user is the root admin, ensure they own the default tenant.
+    async fn resolve_or_create_user(
+        &self,
+        email: &str,
+        tenant_id: Uuid,
+        is_root_admin: bool,
+        default_tenant_id: Uuid,
+    ) -> Result<User> {
+        let user = self.get_or_create_user(email, tenant_id).await?;
+
+        if is_root_admin {
+            self.db
+                .add_org_membership(default_tenant_id, user.user_id, UserRole::Owner, None)
+                .await
+                .context("Failed to assign root admin to default tenant")?;
+        }
+
+        Ok(user)
+    }
+
+    /// Pick the user's first org membership as their session tenant.
+    async fn resolve_session_tenant(&self, user_id: Uuid, default_tenant_id: Uuid) -> Result<Uuid> {
+        let orgs = self
+            .db
+            .get_user_orgs(user_id)
+            .await
+            .context("Failed to get user organizations")?;
+
+        Ok(orgs
+            .first()
+            .map(|m| m.tenant_id)
+            .unwrap_or(default_tenant_id))
     }
 
     /// Get an existing user by email, or create a new one.
