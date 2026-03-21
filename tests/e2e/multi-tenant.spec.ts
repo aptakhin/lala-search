@@ -56,6 +56,13 @@ test.describe("TestAgentConnectivity", () => {
     expect(data).toHaveProperty("version");
     expect(data.deployment_mode).toBe("multi_tenant");
   });
+
+  test("auth routes are mounted in multi-tenant mode", async ({ request }) => {
+    const response = await request.get("/auth/me", {
+      timeout: REQUEST_TIMEOUT,
+    });
+    expect(response.status()).toBe(401);
+  });
 });
 
 // ---------------------------------------------------------------------------

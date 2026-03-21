@@ -72,6 +72,22 @@ wait_for_service() {
     return 1
 }
 
+assert_auth_routes_ready() {
+    local url="$1"
+    echo -n "Checking authentication routes... "
+    local status
+    status="$(curl -s -o /dev/null -w "%{http_code}" "$url" || true)"
+    if [ "$status" = "401" ]; then
+        echo -e "${GREEN}OK${NC}"
+        return 0
+    fi
+
+    echo -e "${RED}FAILED${NC}"
+    echo -e "${RED}Expected GET $url to return HTTP 401, got HTTP ${status:-000}.${NC}"
+    echo "Authentication routes are not ready; check lala-agent startup logs."
+    return 1
+}
+
 wait_for_postgres() {
     local elapsed=0
     echo "Waiting for PostgreSQL to be ready..."
@@ -228,8 +244,13 @@ docker compose stop lala-agent 2>/dev/null || true
 docker compose rm -f lala-agent 2>/dev/null || true
 
 DEPLOYMENT_MODE=multi_tenant \
+MAILTRAP_SMTP_HOST="$MAILTRAP_SMTP_HOST" \
+MAILTRAP_SMTP_PORT="${MAILTRAP_SMTP_PORT:-2525}" \
+MAILTRAP_SMTP_USERNAME="$MAILTRAP_SMTP_USERNAME" \
+MAILTRAP_SMTP_PASSWORD="$MAILTRAP_SMTP_PASSWORD" \
     docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build lala-agent
 wait_for_service "LalaSearch Agent (multi-tenant)" "$AGENT_URL/version" || exit 1
+assert_auth_routes_ready "$AGENT_URL/auth/me" || exit 1
 echo ""
 
 echo "Step 8: Running multi-tenant E2E tests (multi-tenant.spec.ts)..."
