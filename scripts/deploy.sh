@@ -88,7 +88,18 @@ SKIP_DNS_CHECK="${SKIP_DNS_CHECK:-false}"
 if [[ "$ENABLE_TLS" == "true" && "$SKIP_DNS_CHECK" != "true" ]]; then
     echo "==> Verifying DNS for ${DEPLOY_DOMAIN}..."
 
-    resolved_ip="$(dig +short "$DEPLOY_DOMAIN" A 2>/dev/null | tail -1)"
+    if command -v dig &>/dev/null; then
+        resolved_ip="$(dig +short "$DEPLOY_DOMAIN" A 2>/dev/null | tail -1 || true)"
+    elif command -v nslookup &>/dev/null; then
+        # nslookup fallback (Windows). Extract first IPv4 address after the "Name:" line.
+        # Handles both single-IP ("Address: 1.2.3.4") and multi-IP (indented "1.2.3.4") formats.
+        resolved_ip="$(nslookup "$DEPLOY_DOMAIN" 2>/dev/null \
+            | awk '/^Name:/ {found=1; next} found && match($0, /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/) {print substr($0, RSTART, RLENGTH); exit}' || true)"
+    else
+        echo "Error: neither 'dig' nor 'nslookup' found (needed for DNS verification)." >&2
+        echo "Set SKIP_DNS_CHECK=true to skip." >&2
+        exit 1
+    fi
     if [[ -z "$resolved_ip" ]]; then
         echo "Error: DNS lookup for ${DEPLOY_DOMAIN} returned no A record." >&2
         echo "Let's Encrypt requires the domain to resolve to your server." >&2
