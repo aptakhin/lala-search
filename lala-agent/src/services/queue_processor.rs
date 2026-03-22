@@ -37,6 +37,10 @@ pub struct QueueProcessor {
     tenant_id: Option<String>,
 }
 
+fn tenant_has_capacity_for_discovered_links(usage_bytes: i64, max_bytes: i64) -> bool {
+    usage_bytes < max_bytes
+}
+
 impl QueueProcessor {
     /// Create a new queue processor
     pub fn new(db_client: Arc<DbClient>, config: QueueConfig) -> Self {
@@ -332,12 +336,50 @@ impl QueueProcessor {
 
     /// Extract meet links from crawled content and enqueue them
     async fn enqueue_meet_links(&self, content: &str, entry: &CrawlQueueEntry) -> Result<()> {
+        if !self.can_enqueue_discovered_links().await {
+            return Ok(());
+        }
+
         let links = extract_links(content, &entry.url);
         for link in links {
             self.enqueue_link(&link, entry).await;
         }
 
         Ok(())
+    }
+
+    async fn can_enqueue_discovered_links(&self) -> bool {
+        let usage_bytes = match self.db_client.get_index_usage_bytes().await {
+            Ok(usage_bytes) => usage_bytes,
+            Err(e) => {
+                eprintln!(
+                    "Failed to get index usage before extracting discovered links for tenant {}: {}",
+                    self.db_client.tenant_id, e
+                );
+                return false;
+            }
+        };
+
+        let max_bytes = match self.db_client.get_index_capacity_bytes().await {
+            Ok(max_bytes) => max_bytes,
+            Err(e) => {
+                eprintln!(
+                    "Failed to get index capacity before extracting discovered links for tenant {}: {}",
+                    self.db_client.tenant_id, e
+                );
+                return false;
+            }
+        };
+
+        if !tenant_has_capacity_for_discovered_links(usage_bytes, max_bytes) {
+            println!(
+                "Skipping discovered links for tenant {} because indexed usage {} reached max {}",
+                self.db_client.tenant_id, usage_bytes, max_bytes
+            );
+            return false;
+        }
+
+        true
     }
 
     /// Enqueue a single link if it hasn't been crawled yet
@@ -753,6 +795,16 @@ fn extract_robots_meta_directives(html: &str) -> RobotsMetaDirectives {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_tenant_has_capacity_for_discovered_links_when_usage_below_limit() {
+        assert!(tenant_has_capacity_for_discovered_links(1024, 2048));
+    }
+
+    #[test]
+    fn test_tenant_has_capacity_for_discovered_links_when_usage_reaches_limit() {
+        assert!(!tenant_has_capacity_for_discovered_links(2048, 2048));
+    }
 
     #[test]
     fn test_extract_domain_standard_port_omitted() {
