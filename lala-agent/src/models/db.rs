@@ -35,6 +35,7 @@ pub struct CrawledPage {
     pub http_status: i32,
     pub content_hash: String,
     pub content_length: i32,
+    pub indexed_document_bytes: Option<i64>,
     pub robots_allowed: bool,
     pub error_message: Option<String>,
     pub crawl_count: i32,

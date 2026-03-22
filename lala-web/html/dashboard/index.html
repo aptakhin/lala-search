@@ -119,6 +119,41 @@
             </div>
         </div>
 
+        <div class="dashboard-section" data-testid="index-capacity-section">
+            <h3>Index Capacity</h3>
+            <div style="margin-bottom: 8px;">
+                Using <strong x-text="formatBytes(indexUsageBytes)"></strong>
+                of <strong x-text="formatBytes(indexMaxBytes)"></strong>
+                <span x-show="indexLimitReached" class="msg-error" style="display: inline-block; margin-left: 8px; padding: 2px 6px;">
+                    Capacity reached
+                </span>
+            </div>
+
+            <div x-show="indexCanEditMax" class="inline-form">
+                <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    x-model="indexCapacityInput"
+                    placeholder="Maximum bytes"
+                    data-testid="index-capacity-input"
+                >
+                <button
+                    @click="saveIndexCapacity()"
+                    :disabled="indexCapacitySaving"
+                    data-testid="index-capacity-save"
+                >
+                    <span x-show="!indexCapacitySaving">SAVE LIMIT</span>
+                    <span x-show="indexCapacitySaving"><span class="spinner"></span></span>
+                </button>
+                <span class="input-status-indicator" aria-live="polite">
+                    <span x-show="indexCapacitySaved && !indexCapacitySaving" class="input-status-indicator-success" x-cloak>
+                        &#10003;
+                    </span>
+                </span>
+            </div>
+        </div>
+
         <!-- Undo / Redo Bar -->
         <div x-show="undoable || redoable" class="undo-redo-bar" data-testid="undo-redo-bar">
             <button

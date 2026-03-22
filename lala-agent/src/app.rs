@@ -10,7 +10,7 @@
 use crate::models::action_history::{
     ActionType, EntityType, RollbackResponse, UndoRedoStateResponse,
 };
-use crate::models::auth::AuthUser;
+use crate::models::auth::{AuthUser, UserRole};
 use crate::models::db::CrawlQueueEntry;
 use crate::models::deployment::DeploymentMode;
 use crate::models::domain::{
@@ -19,7 +19,10 @@ use crate::models::domain::{
 use crate::models::onboarding::{RecentPageInfo, RecentPagesQuery, RecentPagesResponse};
 use crate::models::queue::{AddToQueueRequest, AddToQueueResponse};
 use crate::models::search::{SearchRequest, SearchResponse};
-use crate::models::settings::{CrawlingEnabledResponse, SetCrawlingEnabledRequest};
+use crate::models::settings::{
+    CrawlingEnabledResponse, IndexCapacityResponse, SetCrawlingEnabledRequest,
+    SetIndexCapacityRequest,
+};
 use crate::models::version::VersionResponse;
 use crate::routes::{auth_router, AuthApiDoc, AuthState};
 use crate::services::db::DbClient;
@@ -53,6 +56,7 @@ pub struct AppState {
     pub db_client: Arc<DbClient>,
     pub search_client: Option<Arc<SearchClient>>,
     pub deployment_mode: DeploymentMode,
+    pub default_tenant_id: Uuid,
     /// Required in multi-tenant mode: validates session cookies and resolves
     /// the authenticated user's tenant.
     pub auth_state: Option<AuthState>,
@@ -76,6 +80,12 @@ pub struct AppState {
 /// default `db_client` is returned without authentication.
 pub struct TenantDb(pub Arc<DbClient>);
 
+pub struct TenantAccess {
+    pub user: Option<AuthUser>,
+    pub role: Option<UserRole>,
+    pub tenant_id: Uuid,
+}
+
 impl FromRequestParts<AppState> for TenantDb {
     type Rejection = (StatusCode, String);
 
@@ -95,6 +105,61 @@ impl FromRequestParts<AppState> for TenantDb {
 
         // Multi-tenant: validate session and resolve tenant
         resolve_multi_tenant_db(parts, state).await.map(TenantDb)
+    }
+}
+
+impl FromRequestParts<AppState> for TenantAccess {
+    type Rejection = (StatusCode, String);
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        if state.auth_state.is_none() {
+            return Ok(Self {
+                user: None,
+                role: None,
+                tenant_id: state.default_tenant_id,
+            });
+        }
+
+        let auth_user = validate_session(parts, state).await?;
+        let tenant_id = if state.deployment_mode == DeploymentMode::MultiTenant {
+            resolve_tenant_override(parts, &auth_user, state).await?
+        } else {
+            state.default_tenant_id
+        };
+
+        let role = if tenant_id == auth_user.tenant_id {
+            Some(auth_user.role)
+        } else {
+            let membership = state
+                .auth_state
+                .as_ref()
+                .expect("auth_state must be set when auth is enabled")
+                .auth_service
+                .check_membership(tenant_id, auth_user.user_id)
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Membership check error: {e}"),
+                    )
+                })?
+                .ok_or_else(|| {
+                    (
+                        StatusCode::FORBIDDEN,
+                        "You are not a member of this organization".to_string(),
+                    )
+                })?;
+            Some(membership.role)
+        };
+
+        Ok(Self {
+            user: Some(auth_user),
+            role,
+            tenant_id,
+        })
     }
 }
 
@@ -219,6 +284,15 @@ async fn resolve_tenant_override(
     Ok(requested_id)
 }
 
+fn can_edit_index_capacity(access: &TenantAccess, state: &AppState) -> bool {
+    match &access.user {
+        None => access.tenant_id == state.default_tenant_id,
+        Some(_) => {
+            access.tenant_id == state.default_tenant_id && access.role == Some(UserRole::Owner)
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Route handlers
 // ---------------------------------------------------------------------------
@@ -242,6 +316,7 @@ pub async fn add_to_queue_handler(
         .host_str()
         .ok_or((StatusCode::BAD_REQUEST, "URL has no host".to_string()))?
         .to_string();
+    let url_path = parsed_url.path().to_string();
 
     let is_allowed = db.is_domain_allowed(&domain).await.map_err(|e| {
         (
@@ -255,6 +330,40 @@ pub async fn add_to_queue_handler(
             StatusCode::FORBIDDEN,
             format!("Domain '{domain}' is not in the allowed domains list"),
         ));
+    }
+
+    let page_exists = db
+        .crawled_page_exists(&domain, &url_path)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to check existing crawled page: {e}"),
+            )
+        })?;
+
+    if !page_exists {
+        let usage_bytes = db.get_index_usage_bytes().await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to get indexed usage: {e}"),
+            )
+        })?;
+        let max_bytes = db.get_index_capacity_bytes().await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to get indexed capacity: {e}"),
+            )
+        })?;
+
+        if usage_bytes >= max_bytes {
+            return Err((
+                StatusCode::CONFLICT,
+                format!(
+                    "Indexed document capacity reached for this tenant ({usage_bytes}/{max_bytes} bytes). Existing URLs can still be updated."
+                ),
+            ));
+        }
     }
 
     let now = Utc::now();
@@ -559,6 +668,110 @@ pub async fn set_tenant_name_handler(
     Ok(Json(serde_json::json!({ "success": true, "name": name })))
 }
 
+pub async fn get_index_capacity_handler(
+    TenantDb(db): TenantDb,
+    access: TenantAccess,
+    State(state): State<AppState>,
+) -> Result<Json<IndexCapacityResponse>, (StatusCode, String)> {
+    let usage_bytes = db.get_index_usage_bytes().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {e}"),
+        )
+    })?;
+    let max_bytes = db.get_index_capacity_bytes().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {e}"),
+        )
+    })?;
+
+    Ok(Json(IndexCapacityResponse {
+        usage_bytes,
+        max_bytes,
+        limit_reached: usage_bytes >= max_bytes,
+        can_edit_max: can_edit_index_capacity(&access, &state),
+        action_id: None,
+    }))
+}
+
+pub async fn set_index_capacity_handler(
+    TenantDb(db): TenantDb,
+    access: TenantAccess,
+    State(state): State<AppState>,
+    Json(payload): Json<SetIndexCapacityRequest>,
+) -> Result<Json<IndexCapacityResponse>, (StatusCode, String)> {
+    if !can_edit_index_capacity(&access, &state) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only the default tenant owner can change indexed capacity".to_string(),
+        ));
+    }
+
+    if payload.max_bytes <= 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "max_bytes must be greater than zero".to_string(),
+        ));
+    }
+
+    let old_max_bytes = db.get_index_capacity_bytes().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {e}"),
+        )
+    })?;
+
+    db.set_index_capacity_bytes(payload.max_bytes)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Database error: {e}"),
+            )
+        })?;
+
+    let before_state =
+        serde_json::json!({"key": "index_capacity_bytes", "value": old_max_bytes.to_string()});
+    let after_state = serde_json::json!({
+        "key": "index_capacity_bytes",
+        "value": payload.max_bytes.to_string(),
+    });
+
+    let action_id = db
+        .record_action(
+            EntityType::Setting,
+            ActionType::Edit,
+            "index_capacity_bytes",
+            None,
+            Some(&before_state),
+            Some(&after_state),
+            &format!(
+                "Changed indexed capacity from {} to {} bytes",
+                old_max_bytes, payload.max_bytes
+            ),
+            None,
+        )
+        .await
+        .ok()
+        .map(|r| r.action_id.to_string());
+
+    let usage_bytes = db.get_index_usage_bytes().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {e}"),
+        )
+    })?;
+
+    Ok(Json(IndexCapacityResponse {
+        usage_bytes,
+        max_bytes: payload.max_bytes,
+        limit_reached: usage_bytes >= payload.max_bytes,
+        can_edit_max: true,
+        action_id,
+    }))
+}
+
 pub async fn recent_crawled_pages_handler(
     TenantDb(db): TenantDb,
     State(state): State<AppState>,
@@ -741,6 +954,14 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/admin/settings/tenant-name", get(get_tenant_name_handler))
         .route("/admin/settings/tenant-name", put(set_tenant_name_handler))
+        .route(
+            "/admin/settings/index-capacity",
+            get(get_index_capacity_handler),
+        )
+        .route(
+            "/admin/settings/index-capacity",
+            put(set_index_capacity_handler),
+        )
         .route("/admin/action-history/state", get(undo_redo_state_handler))
         .route("/admin/action-history/undo", post(undo_last_handler))
         .route("/admin/action-history/redo", post(redo_last_handler))

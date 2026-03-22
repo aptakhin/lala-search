@@ -316,34 +316,14 @@ impl QueueProcessor {
         crawled_page: &CrawledPage,
         content: &str,
     ) -> Result<()> {
-        let title = extract_title(content);
-        let clean_content = remove_html_tags(content);
-
-        let excerpt = if clean_content.len() > 500 {
-            format!("{}...", &clean_content[..500])
-        } else {
-            clean_content.clone()
-        };
-
-        // Include tenant_id to prevent cross-tenant collisions
-        let doc_id = match &self.tenant_id {
-            Some(tid) => format!("{:x}", md5::compute(format!("{}{}", tid, entry.url))),
-            None => format!("{:x}", md5::compute(entry.url.as_bytes())),
-        };
-
-        let indexed_doc = IndexedDocument {
-            id: doc_id,
-            tenant_id: self.tenant_id.clone(),
-            url: entry.url.clone(),
-            domain: entry.domain.clone(),
-            title,
-            content: clean_content,
-            excerpt,
-            crawled_at: crawled_page.last_crawled_at.timestamp(),
-            http_status: crawled_page.http_status,
-        };
+        let indexed_doc = self.build_indexed_document(entry, crawled_page, content);
+        let indexed_document_bytes = serde_json::to_vec(&indexed_doc)?.len() as i64;
 
         search_client.index_document(&indexed_doc).await?;
+
+        let mut updated_page = crawled_page.clone();
+        updated_page.indexed_document_bytes = Some(indexed_document_bytes);
+        self.db_client.upsert_crawled_page(&updated_page).await?;
 
         println!("Indexed document for: {}", entry.url);
 
@@ -399,6 +379,30 @@ impl QueueProcessor {
             return;
         }
 
+        match self.db_client.get_index_usage_bytes().await {
+            Ok(usage_bytes) => match self.db_client.get_index_capacity_bytes().await {
+                Ok(max_bytes) if usage_bytes >= max_bytes => {
+                    println!(
+                        "Skipping new URL for tenant {} because indexed usage {} reached max {}: {}",
+                        self.db_client.tenant_id, usage_bytes, max_bytes, link
+                    );
+                    return;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!(
+                        "Failed to get index capacity while scheduling {}: {}",
+                        link, e
+                    );
+                    return;
+                }
+            },
+            Err(e) => {
+                eprintln!("Failed to get index usage while scheduling {}: {}", link, e);
+                return;
+            }
+        }
+
         let now = Utc::now();
         let new_entry = CrawlQueueEntry {
             queue_id: Uuid::now_v7(),
@@ -418,6 +422,40 @@ impl QueueProcessor {
         }
 
         println!("Enqueued meet link: {}", link);
+    }
+
+    fn build_indexed_document(
+        &self,
+        entry: &CrawlQueueEntry,
+        crawled_page: &CrawledPage,
+        content: &str,
+    ) -> IndexedDocument {
+        let title = extract_title(content);
+        let clean_content = remove_html_tags(content);
+
+        let excerpt = if clean_content.len() > 500 {
+            format!("{}...", &clean_content[..500])
+        } else {
+            clean_content.clone()
+        };
+
+        // Include tenant_id to prevent cross-tenant collisions
+        let doc_id = match &self.tenant_id {
+            Some(tid) => format!("{:x}", md5::compute(format!("{}{}", tid, entry.url))),
+            None => format!("{:x}", md5::compute(entry.url.as_bytes())),
+        };
+
+        IndexedDocument {
+            id: doc_id,
+            tenant_id: self.tenant_id.clone(),
+            url: entry.url.clone(),
+            domain: entry.domain.clone(),
+            title,
+            content: clean_content,
+            excerpt,
+            crawled_at: crawled_page.last_crawled_at.timestamp(),
+            http_status: crawled_page.http_status,
+        }
     }
 
     /// Upload content to S3 storage (REQUIRED operation)
@@ -509,6 +547,7 @@ impl QueueProcessor {
             http_status,
             content_hash,
             content_length,
+            indexed_document_bytes: existing_page.and_then(|page| page.indexed_document_bytes),
             robots_allowed: result.allowed_by_robots,
             error_message: result.error.clone(),
             crawl_count,

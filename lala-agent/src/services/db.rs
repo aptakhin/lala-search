@@ -10,6 +10,8 @@ use sqlx::postgres::PgPool;
 use sqlx::Row;
 use uuid::Uuid;
 
+const INDEX_CAPACITY_SETTING_KEY: &str = "index_capacity_bytes";
+
 /// PostgreSQL database client for managing crawl queue and crawled pages.
 ///
 /// Each client is scoped to a `tenant_id`. All tenant-specific queries filter by this ID.
@@ -258,9 +260,9 @@ impl DbClient {
             "INSERT INTO crawled_pages
              (page_id, tenant_id, domain, url_path, url, storage_id, storage_compression,
               last_crawled_at, next_crawl_at, crawl_frequency_hours, http_status,
-              content_hash, content_length, robots_allowed, error_message, crawl_count,
-              created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+              content_hash, content_length, indexed_document_bytes, robots_allowed,
+              error_message, crawl_count, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
              ON CONFLICT (tenant_id, domain, url_path) DO UPDATE SET
                 storage_id = EXCLUDED.storage_id,
                 storage_compression = EXCLUDED.storage_compression,
@@ -270,6 +272,7 @@ impl DbClient {
                 http_status = EXCLUDED.http_status,
                 content_hash = EXCLUDED.content_hash,
                 content_length = EXCLUDED.content_length,
+                indexed_document_bytes = EXCLUDED.indexed_document_bytes,
                 robots_allowed = EXCLUDED.robots_allowed,
                 error_message = EXCLUDED.error_message,
                 crawl_count = EXCLUDED.crawl_count,
@@ -288,6 +291,7 @@ impl DbClient {
         .bind(page.http_status)
         .bind(&page.content_hash)
         .bind(page.content_length)
+        .bind(page.indexed_document_bytes)
         .bind(page.robots_allowed)
         .bind(page.error_message.as_deref())
         .bind(page.crawl_count)
@@ -322,8 +326,8 @@ impl DbClient {
         let row = sqlx::query(
             "SELECT page_id, tenant_id, domain, url_path, url, storage_id, storage_compression,
                     last_crawled_at, next_crawl_at, crawl_frequency_hours, http_status,
-                    content_hash, content_length, robots_allowed, error_message, crawl_count,
-                    created_at, updated_at
+                    content_hash, content_length, indexed_document_bytes, robots_allowed,
+                    error_message, crawl_count, created_at, updated_at
              FROM crawled_pages
              WHERE tenant_id = $1 AND domain = $2 AND url_path = $3",
         )
@@ -350,6 +354,7 @@ impl DbClient {
                 http_status: r.get("http_status"),
                 content_hash: r.get("content_hash"),
                 content_length: r.get("content_length"),
+                indexed_document_bytes: r.get("indexed_document_bytes"),
                 robots_allowed: r.get("robots_allowed"),
                 error_message: r.get("error_message"),
                 crawl_count: r.get("crawl_count"),
@@ -434,6 +439,45 @@ impl DbClient {
     pub async fn set_crawling_enabled(&self, enabled: bool) -> Result<()> {
         let value = if enabled { "true" } else { "false" };
         self.set_setting("crawling_enabled", value).await
+    }
+
+    /// Get the indexed document usage for the current tenant.
+    pub async fn get_index_usage_bytes(&self) -> Result<i64> {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(SUM(indexed_document_bytes), 0)::BIGINT
+             FROM crawled_pages
+             WHERE tenant_id = $1 AND indexed_document_bytes IS NOT NULL",
+        )
+        .bind(self.tenant_id)
+        .fetch_one(&self.pool)
+        .await
+        .context("Failed to get indexed document usage")
+    }
+
+    /// Get the maximum indexed document capacity for the current tenant.
+    pub async fn get_index_capacity_bytes(&self) -> Result<i64> {
+        match self.get_setting(INDEX_CAPACITY_SETTING_KEY).await? {
+            Some(value) => value.parse().with_context(|| {
+                format!(
+                    "Failed to parse tenant setting {}={} as i64",
+                    INDEX_CAPACITY_SETTING_KEY, value
+                )
+            }),
+            None => Ok(std::env::var("TENANT_INDEX_CAPACITY_BYTES")
+                .expect("TENANT_INDEX_CAPACITY_BYTES must be set")
+                .parse()
+                .expect("TENANT_INDEX_CAPACITY_BYTES must be a valid number")),
+        }
+    }
+
+    /// Store the maximum indexed document capacity for the current tenant.
+    pub async fn set_index_capacity_bytes(&self, max_bytes: i64) -> Result<()> {
+        if max_bytes <= 0 {
+            bail!("index capacity must be greater than zero");
+        }
+
+        self.set_setting(INDEX_CAPACITY_SETTING_KEY, &max_bytes.to_string())
+            .await
     }
 
     /// Get recently crawled pages for a domain, ordered by last_crawled_at descending.
@@ -975,7 +1019,10 @@ mod tests {
     #[ignore]
     async fn test_get_setting_returns_none_for_null_value() {
         let client = create_test_client().await;
-        let test_key = format!("test_setting_null_{}", chrono::Utc::now().timestamp_millis());
+        let test_key = format!(
+            "test_setting_null_{}",
+            chrono::Utc::now().timestamp_millis()
+        );
 
         sqlx::query(
             "INSERT INTO settings (tenant_id, setting_key, setting_value, updated_at)
@@ -1026,6 +1073,100 @@ mod tests {
 
     #[tokio::test]
     #[ignore]
+    async fn test_index_capacity_usage_sums_indexed_text_bytes() {
+        let client = create_test_client().await;
+
+        unsafe { std::env::set_var("TENANT_INDEX_CAPACITY_BYTES", "10000") };
+
+        let test_domain = format!(
+            "test-usage-{}.example.invalid",
+            chrono::Utc::now().timestamp_millis()
+        );
+        let now = Utc::now();
+
+        let first_page = CrawledPage {
+            page_id: Uuid::now_v7(),
+            tenant_id: client.tenant_id,
+            domain: test_domain.clone(),
+            url_path: "/first".to_string(),
+            url: format!("https://{}/first", test_domain),
+            storage_id: None,
+            storage_compression: CompressionType::None,
+            last_crawled_at: now,
+            next_crawl_at: now + chrono::Duration::hours(24),
+            crawl_frequency_hours: 24,
+            http_status: 200,
+            content_hash: "first".to_string(),
+            content_length: 9000,
+            indexed_document_bytes: Some(1200),
+            robots_allowed: true,
+            error_message: None,
+            crawl_count: 1,
+            created_at: now,
+            updated_at: now,
+        };
+        let second_page = CrawledPage {
+            page_id: Uuid::now_v7(),
+            tenant_id: client.tenant_id,
+            domain: test_domain.clone(),
+            url_path: "/second".to_string(),
+            url: format!("https://{}/second", test_domain),
+            content_hash: "second".to_string(),
+            content_length: 14000,
+            indexed_document_bytes: Some(3400),
+            ..first_page.clone()
+        };
+
+        client
+            .upsert_crawled_page(&first_page)
+            .await
+            .expect("insert first page");
+        client
+            .upsert_crawled_page(&second_page)
+            .await
+            .expect("insert second page");
+
+        let usage = client
+            .get_index_usage_bytes()
+            .await
+            .expect("get index usage");
+        assert_eq!(usage, 4600);
+
+        let max_bytes = client
+            .get_index_capacity_bytes()
+            .await
+            .expect("get index capacity");
+        assert_eq!(max_bytes, 10000);
+
+        client
+            .set_index_capacity_bytes(2048)
+            .await
+            .expect("set index capacity override");
+
+        let overridden = client
+            .get_index_capacity_bytes()
+            .await
+            .expect("get overridden capacity");
+        assert_eq!(overridden, 2048);
+
+        client
+            .delete_crawled_page(&test_domain, "/first")
+            .await
+            .expect("cleanup first page");
+        client
+            .delete_crawled_page(&test_domain, "/second")
+            .await
+            .expect("cleanup second page");
+        sqlx::query("DELETE FROM settings WHERE tenant_id = $1 AND setting_key = $2")
+            .bind(client.tenant_id)
+            .bind(INDEX_CAPACITY_SETTING_KEY)
+            .execute(client.pool())
+            .await
+            .ok();
+    }
+
+    #[tokio::test]
+    #[ignore]
     async fn test_get_recent_crawled_pages_returns_pages_sorted_by_crawled_at() {
         let client = create_test_client().await;
 
@@ -1049,6 +1190,7 @@ mod tests {
             http_status: 200,
             content_hash: "abc123".to_string(),
             content_length: 5000,
+            indexed_document_bytes: Some(4200),
             robots_allowed: true,
             error_message: None,
             crawl_count: 1,

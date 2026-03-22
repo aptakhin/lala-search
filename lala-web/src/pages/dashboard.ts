@@ -44,6 +44,21 @@ interface ActionRecord {
   rolled_back_at: string | null;
 }
 
+interface IndexCapacityResponse {
+  usage_bytes: number;
+  max_bytes: number;
+  limit_reached: boolean;
+  can_edit_max: boolean;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 * 1024 * 1024)
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+}
+
 function adminFetch(
   tenantId: string,
   url: string,
@@ -73,6 +88,15 @@ function dashboardPage() {
     tenantNameValue: '',
     tenantNameSaving: false,
     tenantNameSaved: false,
+
+    // Index capacity
+    indexUsageBytes: 0,
+    indexMaxBytes: 0,
+    indexLimitReached: false,
+    indexCanEditMax: false,
+    indexCapacityInput: '',
+    indexCapacitySaving: false,
+    indexCapacitySaved: false,
 
     // Org switcher
     selectedOrg: null as Organization | null,
@@ -112,6 +136,7 @@ function dashboardPage() {
     async reloadDashboard() {
       await this.loadUndoRedoState();
       await this.loadTenantName();
+      await this.loadIndexCapacity();
       window.dispatchEvent(new CustomEvent('org-switched'));
     },
 
@@ -149,6 +174,7 @@ function dashboardPage() {
       this.ready = true;
       await this.loadUndoRedoState();
       await this.loadTenantName();
+      await this.loadIndexCapacity();
 
       document.addEventListener('keydown', (e: KeyboardEvent) => {
         if (!(e.ctrlKey || e.metaKey)) return;
@@ -172,6 +198,22 @@ function dashboardPage() {
           const data = await res.json();
           this.tenantNameValue = data.name || '';
         }
+      } catch {
+        // Non-critical
+      }
+    },
+
+    async loadIndexCapacity() {
+      try {
+        const res = await this.adminFetch('/api/admin/settings/index-capacity');
+        if (!res.ok) return;
+
+        const data = (await res.json()) as IndexCapacityResponse;
+        this.indexUsageBytes = data.usage_bytes || 0;
+        this.indexMaxBytes = data.max_bytes || 0;
+        this.indexLimitReached = !!data.limit_reached;
+        this.indexCanEditMax = !!data.can_edit_max;
+        this.indexCapacityInput = String(data.max_bytes || 0);
       } catch {
         // Non-critical
       }
@@ -206,6 +248,33 @@ function dashboardPage() {
         // silently fail
       } finally {
         this.tenantNameSaving = false;
+      }
+    },
+
+    async saveIndexCapacity() {
+      const maxBytes = Number(this.indexCapacityInput);
+      if (!Number.isFinite(maxBytes) || maxBytes <= 0) return;
+
+      this.indexCapacitySaving = true;
+      this.indexCapacitySaved = false;
+
+      try {
+        const res = await this.adminFetch('/api/admin/settings/index-capacity', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ max_bytes: Math.floor(maxBytes) }),
+        });
+        if (res.ok) {
+          await this.loadIndexCapacity();
+          this.indexCapacitySaved = true;
+          setTimeout(() => {
+            this.indexCapacitySaved = false;
+          }, 2000);
+        }
+      } catch {
+        // silently fail
+      } finally {
+        this.indexCapacitySaving = false;
       }
     },
 
@@ -280,6 +349,7 @@ function dashboardPage() {
     },
 
     formatDate,
+    formatBytes,
   };
 }
 

@@ -155,6 +155,7 @@ async fn run_serve() {
         db_client,
         search_client,
         deployment_mode,
+        default_tenant_id,
         auth_state,
     };
     let app = create_router(state);
@@ -367,7 +368,9 @@ mod tests {
         AddDomainRequest, AddDomainResponse, DeleteDomainResponse, ListDomainsResponse,
     };
     use lala_agent::models::queue::{AddToQueueRequest, AddToQueueResponse};
-    use lala_agent::models::settings::{CrawlingEnabledResponse, SetCrawlingEnabledRequest};
+    use lala_agent::models::settings::{
+        CrawlingEnabledResponse, IndexCapacityResponse, SetCrawlingEnabledRequest,
+    };
     use lala_agent::models::version::VersionResponse;
     use lala_agent::services::db::DbClient;
     use tower::ServiceExt;
@@ -392,6 +395,7 @@ mod tests {
             db_client,
             search_client: None,
             deployment_mode: DeploymentMode::SingleTenant,
+            default_tenant_id,
             auth_state: None,
         };
         create_router(state)
@@ -949,6 +953,168 @@ mod tests {
         assert!(response_data.enabled);
     }
 
+    #[tokio::test]
+    #[ignore] // Requires PostgreSQL
+    async fn test_add_to_queue_blocks_new_url_when_index_capacity_is_reached() {
+        use chrono::Utc;
+        use lala_agent::models::db::CrawledPage;
+        use lala_agent::models::storage::CompressionType;
+
+        unsafe { env::set_var("TENANT_INDEX_CAPACITY_BYTES", "1000") };
+
+        let app = create_test_app().await;
+        let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://lalasearch:lalasearch@127.0.0.1:5432/lalasearch".to_string()
+        });
+        let pool = PgPool::connect(&database_url)
+            .await
+            .expect("Failed to connect to PostgreSQL");
+        let default_tenant_id: Uuid = env::var("DEFAULT_TENANT_ID")
+            .unwrap_or_else(|_| "00000000-0000-0000-0000-000000000001".to_string())
+            .parse()
+            .expect("DEFAULT_TENANT_ID must be a valid UUID");
+        let client = DbClient::new(pool, default_tenant_id);
+
+        let test_domain = format!("test-cap-{}.example.com", Utc::now().timestamp_millis());
+        client
+            .insert_allowed_domain(&test_domain, "test", None)
+            .await
+            .expect("insert domain");
+
+        let now = Utc::now();
+        let existing_page = CrawledPage {
+            page_id: Uuid::now_v7(),
+            tenant_id: client.tenant_id,
+            domain: test_domain.clone(),
+            url_path: "/existing".to_string(),
+            url: format!("https://{}/existing", test_domain),
+            storage_id: None,
+            storage_compression: CompressionType::None,
+            last_crawled_at: now,
+            next_crawl_at: now + chrono::Duration::hours(24),
+            crawl_frequency_hours: 24,
+            http_status: 200,
+            content_hash: "existing".to_string(),
+            content_length: 8000,
+            indexed_document_bytes: Some(1000),
+            robots_allowed: true,
+            error_message: None,
+            crawl_count: 1,
+            created_at: now,
+            updated_at: now,
+        };
+        client
+            .upsert_crawled_page(&existing_page)
+            .await
+            .expect("insert existing page");
+
+        let request_body = AddToQueueRequest {
+            url: format!("https://{}/new", test_domain),
+            priority: 1,
+        };
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/queue/add")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+
+        client
+            .delete_crawled_page(&test_domain, "/existing")
+            .await
+            .expect("delete existing page");
+        client
+            .hard_delete_allowed_domain(&test_domain)
+            .await
+            .expect("delete domain");
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires PostgreSQL
+    async fn test_get_index_capacity_returns_usage_and_edit_flag() {
+        use chrono::Utc;
+        use lala_agent::models::db::CrawledPage;
+        use lala_agent::models::storage::CompressionType;
+
+        unsafe { env::set_var("TENANT_INDEX_CAPACITY_BYTES", "4096") };
+
+        let app = create_test_app().await;
+        let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://lalasearch:lalasearch@127.0.0.1:5432/lalasearch".to_string()
+        });
+        let pool = PgPool::connect(&database_url)
+            .await
+            .expect("Failed to connect to PostgreSQL");
+        let default_tenant_id: Uuid = env::var("DEFAULT_TENANT_ID")
+            .unwrap_or_else(|_| "00000000-0000-0000-0000-000000000001".to_string())
+            .parse()
+            .expect("DEFAULT_TENANT_ID must be a valid UUID");
+        let client = DbClient::new(pool, default_tenant_id);
+
+        let test_domain = format!("test-usage-{}.example.com", Utc::now().timestamp_millis());
+        let now = Utc::now();
+        let page = CrawledPage {
+            page_id: Uuid::now_v7(),
+            tenant_id: client.tenant_id,
+            domain: test_domain.clone(),
+            url_path: "/page".to_string(),
+            url: format!("https://{}/page", test_domain),
+            storage_id: None,
+            storage_compression: CompressionType::None,
+            last_crawled_at: now,
+            next_crawl_at: now + chrono::Duration::hours(24),
+            crawl_frequency_hours: 24,
+            http_status: 200,
+            content_hash: "page".to_string(),
+            content_length: 5000,
+            indexed_document_bytes: Some(1536),
+            robots_allowed: true,
+            error_message: None,
+            crawl_count: 1,
+            created_at: now,
+            updated_at: now,
+        };
+        client
+            .upsert_crawled_page(&page)
+            .await
+            .expect("insert page");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/admin/settings/index-capacity")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let response_data: IndexCapacityResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(response_data.usage_bytes, 1536);
+        assert_eq!(response_data.max_bytes, 4096);
+        assert!(response_data.can_edit_max);
+        assert!(!response_data.limit_reached);
+
+        client
+            .delete_crawled_page(&test_domain, "/page")
+            .await
+            .expect("delete page");
+    }
+
     // -----------------------------------------------------------------------
     // Multi-tenant search tests
     // -----------------------------------------------------------------------
@@ -998,6 +1164,7 @@ mod tests {
             db_client,
             search_client: None,
             deployment_mode: DeploymentMode::MultiTenant,
+            default_tenant_id,
             auth_state: Some(auth_state),
         };
         create_router(state)
