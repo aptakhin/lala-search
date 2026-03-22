@@ -17,6 +17,7 @@ AGENT_URL="http://localhost:3000"
 MAX_WAIT=120  # seconds to wait for services
 E2E_RUN_ID="${E2E_RUN_ID:-$(date +%s)}"
 USER1_EMAIL="user1-${E2E_RUN_ID}@test.e2e"
+USER2_EMAIL="user2-${E2E_RUN_ID}@test.e2e"
 
 # Load .env from project root (only sets vars that are not already exported)
 if [ -f "$PROJECT_ROOT/.env" ]; then
@@ -112,6 +113,190 @@ wait_for_mailpit() {
     wait_for_service "Mailpit" "http://localhost:8025/api/v1/info"
 }
 
+cleanup_current_run_test_data() {
+    echo "Cleaning current-run multi-tenant auth test data..."
+    docker compose exec -T postgres psql -U lalasearch -d lalasearch <<SQL >/dev/null
+WITH test_users AS (
+    SELECT user_id
+    FROM users
+    WHERE email IN ('$USER1_EMAIL', '$USER2_EMAIL')
+),
+test_tenants AS (
+    SELECT DISTINCT tenant_id
+    FROM org_memberships
+    WHERE user_id IN (SELECT user_id FROM test_users)
+)
+DELETE FROM action_history
+WHERE tenant_id IN (SELECT tenant_id FROM test_tenants);
+
+WITH test_users AS (
+    SELECT user_id
+    FROM users
+    WHERE email IN ('$USER1_EMAIL', '$USER2_EMAIL')
+),
+test_tenants AS (
+    SELECT DISTINCT tenant_id
+    FROM org_memberships
+    WHERE user_id IN (SELECT user_id FROM test_users)
+)
+DELETE FROM crawl_errors
+WHERE tenant_id IN (SELECT tenant_id FROM test_tenants);
+
+WITH test_users AS (
+    SELECT user_id
+    FROM users
+    WHERE email IN ('$USER1_EMAIL', '$USER2_EMAIL')
+),
+test_tenants AS (
+    SELECT DISTINCT tenant_id
+    FROM org_memberships
+    WHERE user_id IN (SELECT user_id FROM test_users)
+)
+DELETE FROM crawl_queue
+WHERE tenant_id IN (SELECT tenant_id FROM test_tenants);
+
+WITH test_users AS (
+    SELECT user_id
+    FROM users
+    WHERE email IN ('$USER1_EMAIL', '$USER2_EMAIL')
+),
+test_tenants AS (
+    SELECT DISTINCT tenant_id
+    FROM org_memberships
+    WHERE user_id IN (SELECT user_id FROM test_users)
+)
+DELETE FROM crawled_pages
+WHERE tenant_id IN (SELECT tenant_id FROM test_tenants);
+
+WITH test_users AS (
+    SELECT user_id
+    FROM users
+    WHERE email IN ('$USER1_EMAIL', '$USER2_EMAIL')
+),
+test_tenants AS (
+    SELECT DISTINCT tenant_id
+    FROM org_memberships
+    WHERE user_id IN (SELECT user_id FROM test_users)
+)
+DELETE FROM allowed_domains
+WHERE tenant_id IN (SELECT tenant_id FROM test_tenants);
+
+WITH test_users AS (
+    SELECT user_id
+    FROM users
+    WHERE email IN ('$USER1_EMAIL', '$USER2_EMAIL')
+),
+test_tenants AS (
+    SELECT DISTINCT tenant_id
+    FROM org_memberships
+    WHERE user_id IN (SELECT user_id FROM test_users)
+)
+DELETE FROM robots_cache
+WHERE tenant_id IN (SELECT tenant_id FROM test_tenants);
+
+WITH test_users AS (
+    SELECT user_id
+    FROM users
+    WHERE email IN ('$USER1_EMAIL', '$USER2_EMAIL')
+),
+test_tenants AS (
+    SELECT DISTINCT tenant_id
+    FROM org_memberships
+    WHERE user_id IN (SELECT user_id FROM test_users)
+)
+DELETE FROM settings
+WHERE tenant_id IN (SELECT tenant_id FROM test_tenants);
+
+WITH test_users AS (
+    SELECT user_id
+    FROM users
+    WHERE email IN ('$USER1_EMAIL', '$USER2_EMAIL')
+),
+test_tenants AS (
+    SELECT DISTINCT tenant_id
+    FROM org_memberships
+    WHERE user_id IN (SELECT user_id FROM test_users)
+)
+DELETE FROM org_invitations
+WHERE tenant_id IN (SELECT tenant_id FROM test_tenants)
+   OR email IN ('$USER1_EMAIL', '$USER2_EMAIL')
+   OR invited_by IN (SELECT user_id FROM test_users);
+
+WITH test_users AS (
+    SELECT user_id
+    FROM users
+    WHERE email IN ('$USER1_EMAIL', '$USER2_EMAIL')
+),
+test_tenants AS (
+    SELECT DISTINCT tenant_id
+    FROM org_memberships
+    WHERE user_id IN (SELECT user_id FROM test_users)
+)
+DELETE FROM sessions
+WHERE tenant_id IN (SELECT tenant_id FROM test_tenants)
+   OR user_id IN (SELECT user_id FROM test_users);
+
+WITH test_users AS (
+    SELECT user_id
+    FROM users
+    WHERE email IN ('$USER1_EMAIL', '$USER2_EMAIL')
+),
+test_tenants AS (
+    SELECT DISTINCT tenant_id
+    FROM org_memberships
+    WHERE user_id IN (SELECT user_id FROM test_users)
+)
+DELETE FROM magic_link_tokens
+WHERE tenant_id IN (SELECT tenant_id FROM test_tenants)
+   OR email IN ('$USER1_EMAIL', '$USER2_EMAIL');
+
+DELETE FROM magic_link_send_attempts
+WHERE email IN ('$USER1_EMAIL', '$USER2_EMAIL');
+
+WITH test_users AS (
+    SELECT user_id
+    FROM users
+    WHERE email IN ('$USER1_EMAIL', '$USER2_EMAIL')
+),
+test_tenants AS (
+    SELECT DISTINCT tenant_id
+    FROM org_memberships
+    WHERE user_id IN (SELECT user_id FROM test_users)
+)
+DELETE FROM org_memberships
+WHERE tenant_id IN (SELECT tenant_id FROM test_tenants)
+   OR user_id IN (SELECT user_id FROM test_users);
+
+WITH test_users AS (
+    SELECT user_id
+    FROM users
+    WHERE email IN ('$USER1_EMAIL', '$USER2_EMAIL')
+),
+test_tenants AS (
+    SELECT DISTINCT tenant_id
+    FROM tenants
+    WHERE tenant_id IN (
+        SELECT tenant_id
+        FROM org_memberships
+        WHERE user_id IN (SELECT user_id FROM test_users)
+    )
+)
+UPDATE tenants
+SET deleted_at = now()
+WHERE tenant_id IN (SELECT tenant_id FROM test_tenants);
+
+DELETE FROM users
+WHERE email IN ('$USER1_EMAIL', '$USER2_EMAIL');
+SQL
+    echo -e "${GREEN}✓ Current-run auth test data cleaned${NC}"
+}
+
+cleanup_on_exit() {
+    cleanup_current_run_test_data || true
+}
+
+trap cleanup_on_exit EXIT
+
 # ---------------------------------------------------------------------------
 # Step 1: Check Docker Compose availability
 # ---------------------------------------------------------------------------
@@ -184,6 +369,8 @@ DELETE FROM settings WHERE tenant_id = '$TENANT1_ID';
 DELETE FROM robots_cache WHERE tenant_id = '$TENANT1_ID';
 " >/dev/null 2>&1 || true
 echo -e "${GREEN}✓ Test data cleaned${NC}"
+
+cleanup_current_run_test_data
 
 # No auth seeding needed — users self-register via magic link.
 # In multi-tenant mode, new users auto-create their own tenant.

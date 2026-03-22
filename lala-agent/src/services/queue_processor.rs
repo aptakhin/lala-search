@@ -112,7 +112,7 @@ impl QueueProcessor {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error processing queue entry: {}", e);
+                    eprintln!("Error processing queue entry: {:#}", e);
                     sleep(self.poll_interval).await;
                 }
             }

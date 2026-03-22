@@ -387,16 +387,15 @@ impl DbClient {
 
     /// Get a setting value by key
     pub async fn get_setting(&self, key: &str) -> Result<Option<String>> {
-        let row = sqlx::query(
+        sqlx::query_scalar::<_, Option<String>>(
             "SELECT setting_value FROM settings WHERE tenant_id = $1 AND setting_key = $2",
         )
         .bind(self.tenant_id)
         .bind(key)
         .fetch_optional(&self.pool)
         .await
-        .with_context(|| format!("Failed to get setting: {key}"))?;
-
-        Ok(row.and_then(|r| r.get("setting_value")))
+        .with_context(|| format!("Failed to get setting: {key}"))
+        .map(|value| value.flatten())
     }
 
     /// Set a setting value by key (upsert)
@@ -964,6 +963,35 @@ mod tests {
         assert_eq!(result.unwrap(), Some("test_value".to_string()));
 
         // Cleanup
+        sqlx::query("DELETE FROM settings WHERE tenant_id = $1 AND setting_key = $2")
+            .bind(client.tenant_id)
+            .bind(&test_key)
+            .execute(client.pool())
+            .await
+            .ok();
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_get_setting_returns_none_for_null_value() {
+        let client = create_test_client().await;
+        let test_key = format!("test_setting_null_{}", chrono::Utc::now().timestamp_millis());
+
+        sqlx::query(
+            "INSERT INTO settings (tenant_id, setting_key, setting_value, updated_at)
+             VALUES ($1, $2, NULL, now())
+             ON CONFLICT (tenant_id, setting_key) DO UPDATE SET setting_value = NULL, updated_at = now()",
+        )
+        .bind(client.tenant_id)
+        .bind(&test_key)
+        .execute(client.pool())
+        .await
+        .expect("insert null setting");
+
+        let result = client.get_setting(&test_key).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), None);
+
         sqlx::query("DELETE FROM settings WHERE tenant_id = $1 AND setting_key = $2")
             .bind(client.tenant_id)
             .bind(&test_key)
