@@ -148,8 +148,24 @@ ssh_cmd bash -s -- "$METRICS_DEPLOY_DIR" <<'REMOTE_VERIFY'
 set -euo pipefail
 METRICS_DEPLOY_DIR="$1"
 cd "$METRICS_DEPLOY_DIR"
-docker compose --env-file .env.metrics -f docker-compose.metrics.yml ps
-docker compose --env-file .env.metrics -f docker-compose.metrics.yml logs --tail=30 alloy
+
+for i in $(seq 1 12); do
+    status="$(docker inspect --format='{{.State.Status}} {{if .State.Restarting}}restarting{{end}}' lalasearch-vm-metrics 2>/dev/null || echo "not_found")"
+    if [[ "$status" == "running " || "$status" == "running" ]]; then
+        docker compose --env-file .env.metrics -f docker-compose.metrics.yml ps
+        docker compose --env-file .env.metrics -f docker-compose.metrics.yml logs --tail=30 alloy
+        exit 0
+    fi
+
+    if [[ $i -eq 12 ]]; then
+        echo "Error: lalasearch-vm-metrics did not reach a stable running state." >&2
+        docker compose --env-file .env.metrics -f docker-compose.metrics.yml ps >&2
+        docker compose --env-file .env.metrics -f docker-compose.metrics.yml logs --tail=60 alloy >&2
+        exit 1
+    fi
+
+    sleep 5
+done
 REMOTE_VERIFY
 
 echo ""

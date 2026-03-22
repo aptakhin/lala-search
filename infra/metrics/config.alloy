@@ -24,9 +24,9 @@ prometheus.remote_write "grafana_cloud" {
   }
 
   external_labels = {
-    vm_instance = sys.env("VM_METRICS_INSTANCE")
-    environment = sys.env("VM_METRICS_ENVIRONMENT")
-    service     = "lalasearch-vm"
+    vm_instance = sys.env("VM_METRICS_INSTANCE"),
+    environment = sys.env("VM_METRICS_ENVIRONMENT"),
+    service     = "lalasearch-vm",
   }
 }
 
@@ -53,10 +53,10 @@ loki.source.docker "logs" {
   host          = "unix:///var/run/docker.sock"
   targets       = discovery.docker.logs.targets
   labels        = {
-    source      = "docker"
-    vm_instance = sys.env("VM_METRICS_INSTANCE")
-    environment = sys.env("VM_METRICS_ENVIRONMENT")
-    service     = "lalasearch-vm"
+    source      = "docker",
+    vm_instance = sys.env("VM_METRICS_INSTANCE"),
+    environment = sys.env("VM_METRICS_ENVIRONMENT"),
+    service     = "lalasearch-vm",
   }
   relabel_rules = discovery.relabel.logs.rules
   forward_to    = [loki.write.grafana_cloud.receiver]
