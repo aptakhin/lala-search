@@ -37,6 +37,10 @@ GitHub Actions sets `LALA_PATCH_VERSION` to the pipeline run number:
 
 Final version example: `0.1.1234` (where 1234 is the pipeline run number)
 
+When the publish workflow builds Docker images from a release tag, it also pushes
+an image tag that matches this computed build version (for example `0.1.1234`),
+in addition to release aliases such as `0.1.0`, `0.1`, and `latest`.
+
 See [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) and [`.github/workflows/e2e.yml`](../.github/workflows/e2e.yml).
 
 ## Updating Versions

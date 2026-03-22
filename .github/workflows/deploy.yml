@@ -37,7 +37,7 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: 'Docker image tag to deploy (e.g., 0.3.0 or latest)'
+        description: 'Docker image tag to deploy (e.g., 0.3.1234, 0.3.0, or latest)'
         required: false
         default: 'latest'
 
