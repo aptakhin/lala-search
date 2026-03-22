@@ -120,6 +120,8 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
 fi
 
 cd "$PROJECT_ROOT/lala-agent"
+echo "    Applying database migrations..."
+cargo run --release -- migrate
 cargo test --lib -- --include-ignored
 if [ $? -ne 0 ]; then
     echo "❌ Tests failed. Fix failing tests before committing."
