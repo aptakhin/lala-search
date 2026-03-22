@@ -29,6 +29,8 @@ All features follow: **Analyze → Red → Green → Refactor → (repeat)**
 
 Optional: when work is collaboratively produced by multiple coding agents, the commit message may include `Co-authored-by:` trailers so results can be compared later. Only add co-author trailers when they are intentional for that task.
 
+After the commit is created, run `./tests/e2e/run_tests.sh` and report whether the E2E run passed, failed, or was blocked.
+
 
 On Windows, the script runs all checks inside Docker automatically.
 
@@ -95,6 +97,8 @@ All dependencies must be open source. Avoid: ScyllaDB (proprietary since Dec 202
 2. Update relevant `docs/` files
 3. `cargo fmt`
 4. Commit
+5. Run `./tests/e2e/run_tests.sh`
+6. Report the E2E status
 
 ## Project Structure
 
@@ -130,6 +134,7 @@ cargo test --test '*'               # Integration tests
 cargo fmt                           # Format
 cargo clippy -- -D warnings         # Lint
 ./scripts/pre-commit.sh             # Pre-commit (auto Docker on Windows)
+./tests/e2e/run_tests.sh           # Run E2E after commit and report status
 lala-agent migrate                  # Apply database migrations
 lala-agent serve                    # Start HTTP server (default)
 ```
