@@ -74,13 +74,14 @@ echo "$DEPLOY_SSH_KEY" > "$SSH_KEY_FILE"
 chmod 600 "$SSH_KEY_FILE"
 
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o BatchMode=yes -p "$DEPLOY_PORT" -i "$SSH_KEY_FILE")
+SCP_OPTS=(-o StrictHostKeyChecking=accept-new -o BatchMode=yes -P "$DEPLOY_PORT" -i "$SSH_KEY_FILE")
 
 ssh_cmd() {
     ssh "${SSH_OPTS[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" "$@"
 }
 
 scp_cmd() {
-    scp "${SSH_OPTS[@]}" "$@"
+    scp "${SCP_OPTS[@]}" "$@"
 }
 
 echo "==> Installing VM metrics to ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PORT}"
