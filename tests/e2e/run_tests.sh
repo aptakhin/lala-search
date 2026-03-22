@@ -390,6 +390,7 @@ docker compose run --rm -T --no-deps lala-agent sh -c \
     "rm -rf target/release/.fingerprint/lala-agent-* target/release/deps/lala_agent-* target/release/lala-agent && cargo build --release"
 
 DEPLOYMENT_MODE=single_tenant \
+TENANT_INDEX_CAPACITY_BYTES=104857600 \
 E2E_SMTP_HOST= \
     docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build lala-agent
 wait_for_service "LalaSearch Agent (single-tenant)" "$AGENT_URL/version" || exit 1
@@ -432,6 +433,7 @@ docker compose stop lala-agent 2>/dev/null || true
 docker compose rm -f lala-agent 2>/dev/null || true
 
 DEPLOYMENT_MODE=multi_tenant \
+TENANT_INDEX_CAPACITY_BYTES=104857600 \
 E2E_SMTP_HOST=mailpit \
 E2E_SMTP_PORT=1025 \
 E2E_SMTP_USERNAME= \

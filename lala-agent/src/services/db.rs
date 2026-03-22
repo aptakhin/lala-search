@@ -464,9 +464,9 @@ impl DbClient {
                 )
             }),
             None => Ok(std::env::var("TENANT_INDEX_CAPACITY_BYTES")
-                .expect("TENANT_INDEX_CAPACITY_BYTES must be set")
+                .context("TENANT_INDEX_CAPACITY_BYTES must be set")?
                 .parse()
-                .expect("TENANT_INDEX_CAPACITY_BYTES must be a valid number")),
+                .context("TENANT_INDEX_CAPACITY_BYTES must be a valid number")?),
         }
     }
 
