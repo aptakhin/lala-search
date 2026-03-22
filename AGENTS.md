@@ -100,6 +100,17 @@ All dependencies must be open source. Avoid: ScyllaDB (proprietary since Dec 202
 5. Run `./tests/e2e/run_tests.sh`
 6. Report the E2E status
 
+## Docs Index
+
+Read these first when changing the corresponding area, and keep them updated whenever behavior changes:
+
+- `docs/overview.md` - high-level architecture and product flow
+- `docs/api.md` - HTTP endpoints and request/response behavior
+- `docs/multi-tenancy.md` - tenant isolation and deployment model
+- `docs/crawl-pipeline.md` - queue processing, tenant workers, capacity rules, link discovery, and robots handling
+- `docs/deployment.md` - production deployment behavior and operations
+- `docs/docker.md` - local Docker workflow and service layout
+
 ## Project Structure
 
 ```text

@@ -126,6 +126,8 @@ docker compose -f docker-compose.prod.yml up -d
 
 See [docs/deployment.md](docs/deployment.md) for the full guide including HTTPS setup, backups, and troubleshooting.
 
+For queue processing, tenant workers, discovered-link rules, and robots handling, see [docs/crawl-pipeline.md](docs/crawl-pipeline.md).
+
 ### Option 2: Local Development
 
 #### Prerequisites
