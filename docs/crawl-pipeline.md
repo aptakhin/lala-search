@@ -83,9 +83,17 @@ Links with `rel="nofollow"` are excluded during HTML extraction.
 Before fetching page content, LalaSearch:
 
 1. Derives the site robots URL from the target URL.
-2. Fetches `robots.txt`.
+2. Loads `robots.txt` from an in-memory cache when still fresh, otherwise fetches it again.
 3. Parses it for the configured user-agent.
 4. Checks whether the target URL is allowed.
+
+`robots.txt` cache behavior:
+
+- cache key is the robots URL for the target origin
+- default refresh interval is 30 minutes
+- the crawler does not refetch more often than every 30 minutes
+- `Cache-Control: max-age=...` and `Expires` may extend the cache lifetime
+- cache lifetime is capped at 24 hours
 
 If `robots.txt` disallows the URL:
 
