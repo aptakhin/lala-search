@@ -433,11 +433,7 @@ impl QueueProcessor {
         let title = extract_title(content);
         let clean_content = remove_html_tags(content);
 
-        let excerpt = if clean_content.len() > 500 {
-            format!("{}...", &clean_content[..500])
-        } else {
-            clean_content.clone()
-        };
+        let excerpt = build_excerpt(&clean_content);
 
         // Include tenant_id to prevent cross-tenant collisions
         let doc_id = match &self.tenant_id {
@@ -618,6 +614,13 @@ fn extract_title(html: &str) -> Option<String> {
     None
 }
 
+fn build_excerpt(clean_content: &str) -> String {
+    match clean_content.char_indices().nth(500) {
+        Some((byte_index, _)) => format!("{}...", &clean_content[..byte_index]),
+        None => clean_content.to_string(),
+    }
+}
+
 /// Extract all links from HTML content, filtering out nofollow links.
 /// Uses the `scraper` crate for safe HTML parsing with proper UTF-8 handling.
 /// Resolves relative URLs against `base_url` and returns absolute URLs.
@@ -789,6 +792,15 @@ mod tests {
         let html = "<html><body><h1>Welcome to My Site</h1></body></html>";
         let result = extract_title(html);
         assert_eq!(result, Some("Welcome to My Site".to_string()));
+    }
+
+    #[test]
+    fn test_build_excerpt_multibyte_content_shorter_than_500_characters_returns_full_text() {
+        let content = "и".repeat(300);
+
+        let excerpt = build_excerpt(&content);
+
+        assert_eq!(excerpt, content);
     }
 
     #[test]
