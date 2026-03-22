@@ -68,6 +68,7 @@ services:
       - DATABASE_URL=postgres://lalasearch:lalasearch@postgres:5432/lalasearch
       - MEILISEARCH_HOST=meilisearch:7700
       - S3_ENDPOINT=http://seaweedfs:8333
+      - TENANT_INDEX_CAPACITY_BYTES=${TENANT_INDEX_CAPACITY_BYTES}
     depends_on:
       postgres:
         condition: service_healthy
