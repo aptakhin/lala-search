@@ -152,6 +152,8 @@ pub struct MagicLinkSendThrottle {
     pub last_attempt_at: DateTime<Utc>,
     pub blocked_until: Option<DateTime<Utc>>,
     pub attempt_count: i32,
+    pub total_unverified_attempt_count: i32,
+    pub permanently_blocked_at: Option<DateTime<Utc>>,
 }
 
 /// Decision for whether another magic link email may be sent.
@@ -160,6 +162,7 @@ pub enum MagicLinkSendDecision {
     Allow,
     Cooldown { retry_after_seconds: u64 },
     Blocked { retry_after_seconds: u64 },
+    PermanentlyBlocked,
 }
 
 impl MagicLinkSendThrottle {
@@ -169,7 +172,14 @@ impl MagicLinkSendThrottle {
         cooldown: chrono::Duration,
         max_attempts: i32,
         window: chrono::Duration,
+        permanent_block_after_attempts: i32,
     ) -> MagicLinkSendDecision {
+        if self.permanently_blocked_at.is_some()
+            || self.total_unverified_attempt_count >= permanent_block_after_attempts
+        {
+            return MagicLinkSendDecision::PermanentlyBlocked;
+        }
+
         let window_expires_at = self.first_attempt_at + window;
         if now >= window_expires_at {
             return MagicLinkSendDecision::Allow;
@@ -541,6 +551,8 @@ mod tests {
             last_attempt_at: now - chrono::Duration::seconds(61),
             blocked_until: Some(now + chrono::Duration::minutes(11)),
             attempt_count: 5,
+            total_unverified_attempt_count: 5,
+            permanently_blocked_at: None,
         };
 
         assert_eq!(
@@ -549,10 +561,36 @@ mod tests {
                 chrono::Duration::seconds(60),
                 5,
                 chrono::Duration::minutes(15),
+                10,
             ),
             MagicLinkSendDecision::Blocked {
                 retry_after_seconds: 660,
             }
+        );
+    }
+
+    #[test]
+    fn test_magic_link_send_throttle_permanently_blocks_after_ten_unverified_attempts() {
+        let now = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let throttle = MagicLinkSendThrottle {
+            email: "test@example.com".to_string(),
+            first_attempt_at: now - chrono::Duration::minutes(20),
+            last_attempt_at: now - chrono::Duration::minutes(16),
+            blocked_until: None,
+            attempt_count: 1,
+            total_unverified_attempt_count: 10,
+            permanently_blocked_at: Some(now - chrono::Duration::seconds(1)),
+        };
+
+        assert_eq!(
+            throttle.evaluate_send(
+                now,
+                chrono::Duration::seconds(60),
+                5,
+                chrono::Duration::minutes(15),
+                10,
+            ),
+            MagicLinkSendDecision::PermanentlyBlocked
         );
     }
 }

@@ -31,6 +31,8 @@ pub struct AuthConfig {
     pub magic_link_max_send_attempts: i32,
     /// Window size for counting magic link send attempts.
     pub magic_link_send_window_minutes: u64,
+    /// Permanently block an email after this many unverified magic link sends.
+    pub magic_link_permanent_block_after_attempts: i32,
     /// Email of the root/platform admin who owns the default tenant.
     pub root_admin_email: String,
     /// Multi-tenant mode: any user can self-register (creates a new tenant).
@@ -66,6 +68,12 @@ impl AuthConfig {
                 .expect("MAGIC_LINK_SEND_WINDOW_MINUTES must be set")
                 .parse()
                 .expect("MAGIC_LINK_SEND_WINDOW_MINUTES must be a valid number"),
+            magic_link_permanent_block_after_attempts: env::var(
+                "MAGIC_LINK_PERMANENT_BLOCK_AFTER_ATTEMPTS",
+            )
+            .expect("MAGIC_LINK_PERMANENT_BLOCK_AFTER_ATTEMPTS must be set")
+            .parse()
+            .expect("MAGIC_LINK_PERMANENT_BLOCK_AFTER_ATTEMPTS must be a valid number"),
             root_admin_email: env::var("LALA_ROOT_ADMIN_EMAIL")
                 .expect("LALA_ROOT_ADMIN_EMAIL must be set when authentication is enabled"),
             multi_tenant: env::var("DEPLOYMENT_MODE")
@@ -93,23 +101,22 @@ pub struct InviteRequest<'a> {
 
 #[derive(Debug)]
 pub struct MagicLinkRateLimitError {
-    pub retry_after_seconds: u64,
-    pub blocked: bool,
+    pub retry_after_seconds: Option<u64>,
+    pub blocked_permanently: bool,
 }
 
 impl fmt::Display for MagicLinkRateLimitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.blocked {
+        if self.blocked_permanently {
             write!(
                 f,
-                "Too many magic link requests. Try again in {} seconds.",
-                self.retry_after_seconds
+                "This email address has been blocked after too many unverified magic link requests."
             )
         } else {
             write!(
                 f,
                 "Please wait {} seconds before requesting another magic link.",
-                self.retry_after_seconds
+                self.retry_after_seconds.unwrap_or(1)
             )
         }
     }
@@ -162,6 +169,7 @@ impl AuthService {
                 cooldown,
                 self.config.magic_link_max_send_attempts,
                 window,
+                self.config.magic_link_permanent_block_after_attempts,
             )
             .await
             .with_context(|| {
@@ -180,8 +188,8 @@ impl AuthService {
                     retry_after_seconds
                 );
                 return Err(MagicLinkRateLimitError {
-                    retry_after_seconds,
-                    blocked: false,
+                    retry_after_seconds: Some(retry_after_seconds),
+                    blocked_permanently: false,
                 }
                 .into());
             }
@@ -194,8 +202,19 @@ impl AuthService {
                     retry_after_seconds
                 );
                 return Err(MagicLinkRateLimitError {
-                    retry_after_seconds,
-                    blocked: true,
+                    retry_after_seconds: Some(retry_after_seconds),
+                    blocked_permanently: false,
+                }
+                .into());
+            }
+            MagicLinkSendDecision::PermanentlyBlocked => {
+                eprintln!(
+                    "[AUTH] Magic link send permanently blocked for {} after too many unverified attempts",
+                    anonymize_email(email)
+                );
+                return Err(MagicLinkRateLimitError {
+                    retry_after_seconds: None,
+                    blocked_permanently: true,
                 }
                 .into());
             }
@@ -256,6 +275,16 @@ impl AuthService {
             .mark_magic_link_used(&token_hash)
             .await
             .context("Failed to mark token as used")?;
+
+        self.db
+            .reset_magic_link_send_attempts(&canonicalize_email_for_rate_limit(&magic_token.email))
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to reset magic link send throttle for {}",
+                    anonymize_email(&magic_token.email)
+                )
+            })?;
 
         let is_root_admin = self
             .config
@@ -827,6 +856,7 @@ mod tests {
         unsafe { env::set_var("MAGIC_LINK_SEND_COOLDOWN_SECONDS", "60") };
         unsafe { env::set_var("MAGIC_LINK_MAX_SEND_ATTEMPTS", "5") };
         unsafe { env::set_var("MAGIC_LINK_SEND_WINDOW_MINUTES", "15") };
+        unsafe { env::set_var("MAGIC_LINK_PERMANENT_BLOCK_AFTER_ATTEMPTS", "10") };
         unsafe { env::remove_var("LALA_ROOT_ADMIN_EMAIL") };
         AuthConfig::from_env();
     }

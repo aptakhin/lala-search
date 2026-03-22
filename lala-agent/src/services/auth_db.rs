@@ -300,13 +300,15 @@ impl AuthDbClient {
         cooldown: chrono::Duration,
         max_attempts: i32,
         window: chrono::Duration,
+        permanent_block_after_attempts: i32,
     ) -> Result<MagicLinkSendDecision> {
         let mut tx = self.pool.begin().await.with_context(|| {
             format!("Failed to start magic link throttle transaction for {email}")
         })?;
 
         let existing = sqlx::query(
-            "SELECT email, first_attempt_at, last_attempt_at, blocked_until, attempt_count
+            "SELECT email, first_attempt_at, last_attempt_at, blocked_until, attempt_count,
+                    total_unverified_attempt_count, permanently_blocked_at
              FROM magic_link_send_attempts
              WHERE email = $1
              FOR UPDATE",
@@ -322,11 +324,21 @@ impl AuthDbClient {
             last_attempt_at: r.get("last_attempt_at"),
             blocked_until: r.get("blocked_until"),
             attempt_count: r.get("attempt_count"),
+            total_unverified_attempt_count: r.get("total_unverified_attempt_count"),
+            permanently_blocked_at: r.get("permanently_blocked_at"),
         });
 
         let decision = existing
             .as_ref()
-            .map(|throttle| throttle.evaluate_send(now, cooldown, max_attempts, window))
+            .map(|throttle| {
+                throttle.evaluate_send(
+                    now,
+                    cooldown,
+                    max_attempts,
+                    window,
+                    permanent_block_after_attempts,
+                )
+            })
             .unwrap_or(MagicLinkSendDecision::Allow);
 
         if decision != MagicLinkSendDecision::Allow {
@@ -336,34 +348,66 @@ impl AuthDbClient {
             return Ok(decision);
         }
 
-        let (first_attempt_at, attempt_count, blocked_until) = match existing {
+        let (
+            first_attempt_at,
+            attempt_count,
+            total_unverified_attempt_count,
+            permanently_blocked_at,
+            blocked_until,
+        ) = match existing {
             Some(throttle) if now < throttle.first_attempt_at + window => {
                 let next_attempt_count = throttle.attempt_count + 1;
+                let total_unverified_attempt_count = throttle.total_unverified_attempt_count + 1;
                 let window_expires_at = throttle.first_attempt_at + window;
                 (
                     throttle.first_attempt_at,
                     next_attempt_count,
+                    total_unverified_attempt_count,
+                    (total_unverified_attempt_count >= permanent_block_after_attempts)
+                        .then_some(now),
                     (next_attempt_count >= max_attempts).then_some(window_expires_at),
                 )
             }
-            _ => (now, 1, (max_attempts <= 1).then_some(now + window)),
+            Some(throttle) => {
+                let total_unverified_attempt_count = throttle.total_unverified_attempt_count + 1;
+                (
+                    now,
+                    1,
+                    total_unverified_attempt_count,
+                    (total_unverified_attempt_count >= permanent_block_after_attempts)
+                        .then_some(now),
+                    (max_attempts <= 1).then_some(now + window),
+                )
+            }
+            None => (
+                now,
+                1,
+                1,
+                (permanent_block_after_attempts <= 1).then_some(now),
+                (max_attempts <= 1).then_some(now + window),
+            ),
         };
 
         sqlx::query(
             "INSERT INTO magic_link_send_attempts
-             (email, first_attempt_at, last_attempt_at, blocked_until, attempt_count)
-             VALUES ($1, $2, $3, $4, $5)
+             (email, first_attempt_at, last_attempt_at, blocked_until, attempt_count,
+              total_unverified_attempt_count, permanently_blocked_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT (email) DO UPDATE SET
                 first_attempt_at = EXCLUDED.first_attempt_at,
                 last_attempt_at = EXCLUDED.last_attempt_at,
                 blocked_until = EXCLUDED.blocked_until,
-                attempt_count = EXCLUDED.attempt_count",
+                attempt_count = EXCLUDED.attempt_count,
+                total_unverified_attempt_count = EXCLUDED.total_unverified_attempt_count,
+                permanently_blocked_at = EXCLUDED.permanently_blocked_at",
         )
         .bind(email)
         .bind(first_attempt_at)
         .bind(now)
         .bind(blocked_until)
         .bind(attempt_count)
+        .bind(total_unverified_attempt_count)
+        .bind(permanently_blocked_at)
         .execute(&mut *tx)
         .await
         .with_context(|| format!("Failed to store magic link throttle state for {email}"))?;
@@ -373,6 +417,17 @@ impl AuthDbClient {
             .with_context(|| format!("Failed to commit magic link throttle state for {email}"))?;
 
         Ok(MagicLinkSendDecision::Allow)
+    }
+
+    /// Clear magic link throttle state after a successful verification.
+    pub async fn reset_magic_link_send_attempts(&self, email: &str) -> Result<()> {
+        sqlx::query("DELETE FROM magic_link_send_attempts WHERE email = $1")
+            .bind(email)
+            .execute(&self.pool)
+            .await
+            .with_context(|| format!("Failed to reset magic link throttle state for {email}"))?;
+
+        Ok(())
     }
 
     /// Get a magic link token.

@@ -990,6 +990,7 @@ mod tests {
         env::set_var("MAGIC_LINK_SEND_COOLDOWN_SECONDS", "60");
         env::set_var("MAGIC_LINK_MAX_SEND_ATTEMPTS", "5");
         env::set_var("MAGIC_LINK_SEND_WINDOW_MINUTES", "15");
+        env::set_var("MAGIC_LINK_PERMANENT_BLOCK_AFTER_ATTEMPTS", "10");
         let auth_config = AuthConfig::from_env();
         let auth_state = AuthState::new(auth_db, email_service, auth_config, default_tenant_id);
 

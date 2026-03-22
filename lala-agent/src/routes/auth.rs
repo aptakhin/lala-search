@@ -201,13 +201,16 @@ async fn request_link_handler(
                     StatusCode::TOO_MANY_REQUESTS,
                     Json(RequestLinkResponse {
                         success: false,
-                        message: if rate_limit.blocked {
+                        message: if rate_limit.blocked_permanently {
+                            "This email address has been blocked after too many unverified magic link requests. Please contact an administrator."
+                                .to_string()
+                        } else if rate_limit.retry_after_seconds.is_some() {
+                            "Please wait before requesting another magic link.".to_string()
+                        } else {
                             "Too many magic link requests for this email. Please try again later."
                                 .to_string()
-                        } else {
-                            "Please wait before requesting another magic link.".to_string()
                         },
-                        retry_after_seconds: Some(rate_limit.retry_after_seconds),
+                        retry_after_seconds: rate_limit.retry_after_seconds,
                     }),
                 ));
             }

@@ -27,7 +27,7 @@ Response:
 
 **Note**: The response is intentionally vague to prevent email enumeration. The email will only be sent if the user exists or if auto-registration is enabled.
 
-**Resend protection**: The backend enforces a per-email resend cooldown and blocks further sends after too many attempts inside the throttle window.
+**Resend protection**: The backend enforces a per-email resend cooldown, temporarily blocks sends after too many requests inside the short window, and permanently blocks an email after too many unverified magic-link sends until an administrator clears it.
 
 Rate-limited response:
 ```json
@@ -35,6 +35,15 @@ Rate-limited response:
   "success": false,
   "message": "Please wait before requesting another magic link.",
   "retry_after_seconds": 60
+}
+```
+
+Permanent-block response:
+```json
+{
+  "success": false,
+  "message": "This email address has been blocked after too many unverified magic link requests. Please contact an administrator.",
+  "retry_after_seconds": null
 }
 ```
 
@@ -49,6 +58,7 @@ SMTP_FROM_EMAIL=noreply@yourdomain.com
 MAGIC_LINK_SEND_COOLDOWN_SECONDS=60
 MAGIC_LINK_MAX_SEND_ATTEMPTS=5
 MAGIC_LINK_SEND_WINDOW_MINUTES=15
+MAGIC_LINK_PERMANENT_BLOCK_AFTER_ATTEMPTS=10
 ```
 
 ### Verify magic link
