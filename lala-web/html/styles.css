@@ -439,6 +439,12 @@ footer {
     flex-wrap: wrap;
 }
 
+.inline-form input,
+.inline-form select,
+.inline-form button {
+    min-height: 32px;
+}
+
 .inline-form input {
     padding: 6px 8px;
     border: 2px solid #999999;
@@ -446,6 +452,11 @@ footer {
     font-size: 12px;
     flex: 1;
     min-width: 200px;
+}
+
+.inline-form button {
+    padding: 6px 14px;
+    font-size: 12px;
 }
 
 .search-inline-form {
