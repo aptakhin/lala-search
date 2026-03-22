@@ -45,7 +45,7 @@
         </div>
 
         <!-- Tenant-Scoped Search -->
-        <div x-data="dashboardSearch()" @org-switched.window="clearSearch()" class="dashboard-section" data-testid="dashboard-search">
+        <div x-data="dashboardSearch()" x-init="init()" @org-switched.window="clearSearch()" class="dashboard-section" data-testid="dashboard-search">
             <h3>Search</h3>
             <div class="inline-form search-inline-form">
                 <textarea

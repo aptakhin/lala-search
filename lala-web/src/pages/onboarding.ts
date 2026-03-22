@@ -171,7 +171,13 @@ interface RecentPage {
   keywords?: string[];
 }
 
-function onboardingPage() {
+function buildDashboardSearchUrl(query: string): string {
+  const url = new URL('/dashboard', window.location.origin);
+  url.searchParams.set('q', query);
+  return url.pathname + url.search;
+}
+
+export function onboardingPage() {
   let tenantNameTimer: ReturnType<typeof setTimeout> | null = null;
 
   return {
@@ -337,8 +343,9 @@ function onboardingPage() {
     },
 
     goToSearch() {
-      if (!this.searchQuery.trim()) return;
-      window.location.href = '/dashboard';
+      const query = this.searchQuery.trim();
+      if (!query) return;
+      window.location.href = buildDashboardSearchUrl(query);
     },
 
     suggestDomain() {
@@ -513,4 +520,6 @@ function onboardingPage() {
   };
 }
 
-window.onboardingPage = onboardingPage;
+if (typeof window !== 'undefined') {
+  window.onboardingPage = onboardingPage;
+}

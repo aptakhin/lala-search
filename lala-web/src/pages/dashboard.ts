@@ -479,7 +479,7 @@ interface SearchResult {
   snippet?: string;
 }
 
-function dashboardSearch() {
+export function dashboardSearch() {
   return {
     query: '',
     results: [] as SearchResult[],
@@ -490,6 +490,17 @@ function dashboardSearch() {
     currentOffset: 0,
     limit: 10,
     platform: getClientPlatform(),
+
+    init() {
+      const params = new URLSearchParams(window.location.search);
+      const query = params.get('q')?.trim();
+      if (!query) {
+        return;
+      }
+
+      this.query = query;
+      void this.search();
+    },
 
     getTenantId(): string {
       return (this as unknown as AlpineScope).$data.tenantId as string;
@@ -510,22 +521,28 @@ function dashboardSearch() {
     },
 
     async search() {
-      if (!this.query.trim()) {
+      const query = this.query.trim();
+      if (!query) {
         this.error = 'Please enter a search query.';
         return;
       }
 
+      this.query = query;
       this.isLoading = true;
       this.error = null;
       this.currentOffset = 0;
       this.hasSearched = true;
+
+      const url = new URL(window.location.href);
+      url.searchParams.set('q', query);
+      window.history.replaceState({}, '', url.toString());
 
       try {
         const res = await adminFetch(this.getTenantId(), '/api/search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            query: this.query,
+            query,
             limit: this.limit,
             offset: this.currentOffset,
           }),
@@ -556,6 +573,7 @@ function dashboardSearch() {
       this.hasSearched = false;
       this.error = null;
       this.currentOffset = 0;
+      window.history.replaceState({}, document.title, window.location.pathname);
     },
 
     nextPage() {
@@ -605,7 +623,9 @@ function dashboardSearch() {
   };
 }
 
-window.dashboardPage = dashboardPage;
-window.inviteSection = inviteSection;
-window.domainsSection = domainsSection;
-window.dashboardSearch = dashboardSearch;
+if (typeof window !== 'undefined') {
+  window.dashboardPage = dashboardPage;
+  window.inviteSection = inviteSection;
+  window.domainsSection = domainsSection;
+  window.dashboardSearch = dashboardSearch;
+}
