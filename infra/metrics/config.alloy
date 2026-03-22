@@ -1,0 +1,31 @@
+prometheus.exporter.unix "vm" {
+  rootfs_path = "/host/root"
+  procfs_path = "/host/proc"
+  sysfs_path  = "/host/sys"
+
+  disable_collectors = ["ipvs"]
+}
+
+prometheus.scrape "vm" {
+  targets        = prometheus.exporter.unix.vm.targets
+  job_name       = "integrations/node_exporter"
+  scrape_interval = "15s"
+  forward_to     = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = env("GRAFANA_CLOUD_PROMETHEUS_URL")
+
+    basic_auth {
+      username = env("GRAFANA_CLOUD_PROMETHEUS_USERNAME")
+      password = env("GRAFANA_CLOUD_PROMETHEUS_PASSWORD")
+    }
+  }
+
+  external_labels = {
+    vm_instance = env("VM_METRICS_INSTANCE")
+    environment = env("VM_METRICS_ENVIRONMENT")
+    service     = "lalasearch-vm"
+  }
+}

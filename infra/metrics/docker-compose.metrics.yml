@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Aleksandr Ptakhin
+#
+# VM metrics stack for Grafana Cloud / hosted Prometheus remote_write.
+# Usage:
+#   docker compose --env-file .env.metrics -f docker-compose.metrics.yml up -d
+
+services:
+  alloy:
+    image: grafana/alloy:${ALLOY_IMAGE_TAG:-latest}
+    container_name: lalasearch-vm-metrics
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    env_file:
+      - .env.metrics
+    volumes:
+      - ./config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+      - /:/host/root:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+    ports:
+      - "127.0.0.1:12345:12345"
+    restart: unless-stopped
+
+volumes:
+  alloy-data:
+    driver: local

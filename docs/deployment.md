@@ -187,6 +187,25 @@ export IMAGE_TAG=0.3.0  # optional shared tag for agent + web
 ./scripts/deploy.sh
 ```
 
+## VM Metrics
+
+Host-level Linux VM metrics can be installed separately from the main app stack with [`scripts/install-vm-metrics.sh`](../scripts/install-vm-metrics.sh).
+
+This keeps observability infrastructure independent from application deployment while reusing the same SSH environment variables:
+
+```bash
+export DEPLOY_HOST=203.0.113.10
+export DEPLOY_USER=root
+export DEPLOY_SSH_KEY="$(cat ~/.ssh/deploy_key)"
+export GRAFANA_CLOUD_PROMETHEUS_URL=https://prometheus-prod-XX-prod-YY.grafana.net/api/prom/push
+export GRAFANA_CLOUD_PROMETHEUS_USERNAME=1234567
+export GRAFANA_CLOUD_PROMETHEUS_PASSWORD=glc_XXXXXXXXXXXXXXXX
+
+./scripts/install-vm-metrics.sh
+```
+
+See [docs/vm-metrics.md](vm-metrics.md) for the full setup.
+
 ### GitHub Actions: `.github/workflows/deploy.yml`
 
 Runs automatically after the Publish Docker Images workflow completes, or manually via `workflow_dispatch`.

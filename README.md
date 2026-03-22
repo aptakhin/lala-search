@@ -33,6 +33,7 @@ lalasearch/
 │   ├── overview.md                # Project vision and architecture
 │   ├── api.md                     # API reference with curl examples
 │   ├── deployment.md              # Production deployment guide (Linux VM)
+│   ├── vm-metrics.md              # Host VM metrics via Grafana Alloy
 │   ├── docker.md                  # Docker setup and usage guide
 │   ├── versioning.md              # Version management
 │   └── multi-tenancy.md           # Multi-tenancy architecture
