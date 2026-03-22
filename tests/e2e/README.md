@@ -1,6 +1,6 @@
 # E2E System Tests
 
-End-to-end tests for the complete LalaSearch system, using [Playwright](https://playwright.dev/) for API testing.
+End-to-end tests for the complete LalaSearch system, using [Playwright](https://playwright.dev/) for API testing and a local [Mailpit](https://mailpit.axllent.org/) inbox for auth emails.
 
 ## Isolated Test Environment
 
@@ -20,7 +20,7 @@ This means you can run E2E tests while actively developing without data conflict
 - Crawling settings persistence
 - Search endpoint
 - Full pipeline: queue → crawl → index → search
-- Multi-tenant data isolation (when Mailtrap is configured)
+- Multi-tenant data isolation with local SMTP capture
 
 ## Requirements
 
@@ -42,7 +42,7 @@ This script will:
 3. Create test tenants and clean test data
 4. Install dependencies with npm
 5. Run single-tenant E2E tests with Playwright
-6. (Optional) Run multi-tenant E2E tests if Mailtrap is configured
+6. Run multi-tenant E2E tests using the local Mailpit inbox
 
 ### Option 2: Manual
 
@@ -58,7 +58,7 @@ npx playwright test
 # Run only single-tenant tests
 npx playwright test system.spec.ts
 
-# Run only multi-tenant tests (requires Mailtrap env vars)
+# Run only multi-tenant tests
 npx playwright test multi-tenant.spec.ts
 ```
 
@@ -79,8 +79,14 @@ npx playwright test multi-tenant.spec.ts
 **Connection refused**
 - Ensure Docker Compose stack is running
 - Verify agent is listening on port 3000
+- Verify Mailpit is listening on port 8025
 
 **Search returns no results**
 - Wait longer (crawling takes time)
 - Check if domain is actually allowed
 - Verify Meilisearch is running and healthy
+
+**Magic-link email not found**
+- Check Mailpit UI: `http://localhost:8025`
+- Verify agent SMTP settings point to `mailpit:1025`
+- Ensure the test run is using unique email addresses

@@ -10,12 +10,7 @@
  *
  * Prerequisites (set up by run_tests.sh):
  *   - Agent running with DEPLOYMENT_MODE=multi_tenant
- *   - Mailtrap credentials for email interception
- *
- * Environment variables required:
- *   MAILTRAP_API_TOKEN   — Mailtrap API token
- *   MAILTRAP_ACCOUNT_ID  — Mailtrap account ID
- *   MAILTRAP_INBOX_ID    — Mailtrap inbox ID
+ *   - Mailpit running for SMTP capture and inbox inspection
  */
 
 import { test, expect } from "@playwright/test";
@@ -26,7 +21,7 @@ import {
   USER1_EMAIL,
   USER2_EMAIL,
 } from "./helpers/config";
-import { clearMailtrapInbox } from "./helpers/mailtrap";
+import { clearInbox } from "./helpers/inbox";
 import { authenticateViaMagicLink } from "./helpers/auth";
 import {
   addAllowedDomain,
@@ -74,10 +69,8 @@ test.describe("Multi-tenant authenticated tests", () => {
   // User1 (root admin) gets the default tenant.
   // User2 (new user) auto-creates their own tenant.
   test.beforeAll(async () => {
-    await clearMailtrapInbox();
+    await clearInbox();
     user1Session = await authenticateViaMagicLink(USER1_EMAIL);
-    // Mailtrap free tier rate-limits emails; wait between signups
-    await new Promise((r) => setTimeout(r, 5000));
     user2Session = await authenticateViaMagicLink(USER2_EMAIL);
   });
 

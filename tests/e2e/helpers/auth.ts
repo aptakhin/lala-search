@@ -7,12 +7,12 @@
 
 import { request as playwrightRequest } from "@playwright/test";
 import { AGENT_URL, REQUEST_TIMEOUT } from "./config";
-import { getMagicLinkToken } from "./mailtrap";
+import { getMagicLinkToken } from "./inbox";
 
 /**
  * Full magic-link authentication flow:
- *   1. POST /auth/request-link  → agent sends email via SMTP → Mailtrap captures it
- *   2. Poll Mailtrap API until email with magic-link token arrives
+ *   1. POST /auth/request-link  → agent sends email via SMTP → Mailpit captures it
+ *   2. Poll Mailpit API until email with magic-link token arrives
  *   3. GET /auth/verify/{token} (no redirect follow) → agent sets lala_session cookie
  *   4. Return the session token value
  */
@@ -22,29 +22,19 @@ export async function authenticateViaMagicLink(
 ): Promise<string> {
   const ctx = await playwrightRequest.newContext({ baseURL: agentUrl });
   try {
-    // Step 1: Request magic link (retry on SMTP rate-limit failures)
-    const maxRetries = 5;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      const requestResp = await ctx.post("/auth/request-link", {
-        data: { email },
-        timeout: REQUEST_TIMEOUT,
-      });
-      if (requestResp.ok()) break;
-
+    const requestResp = await ctx.post("/auth/request-link", {
+      data: { email },
+      timeout: REQUEST_TIMEOUT,
+    });
+    if (!requestResp.ok()) {
       const body = await requestResp.text();
-      if (attempt === maxRetries) {
-        throw new Error(
-          `POST /auth/request-link failed for ${email} after ${maxRetries} attempts: ` +
-            `HTTP ${requestResp.status()} — ${body}`,
-        );
-      }
-      console.log(
-        `[auth] request-link attempt ${attempt}/${maxRetries} failed for ${email}, retrying in 5s...`,
+      throw new Error(
+        `POST /auth/request-link failed for ${email}: ` +
+          `HTTP ${requestResp.status()} — ${body}`,
       );
-      await new Promise((r) => setTimeout(r, 5000));
     }
 
-    // Step 2: Retrieve token from Mailtrap
+    // Step 2: Retrieve token from Mailpit
     const token = await getMagicLinkToken(email);
 
     // Step 3: Verify token — agent returns 302 with Set-Cookie: lala_session=...

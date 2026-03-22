@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # End-to-End Test Runner for LalaSearch
-# Runs single-tenant tests, then multi-tenant tests.
-# Requires MAILTRAP_API_TOKEN, MAILTRAP_ACCOUNT_ID, and MAILTRAP_INBOX_ID
-# (set via environment or .env file in project root).
+# Runs single-tenant tests, then multi-tenant tests, using a local Mailpit inbox.
 
 set -euo pipefail
 
@@ -16,7 +14,9 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 AGENT_URL="http://localhost:3000"
-MAX_WAIT=60  # seconds to wait for services
+MAX_WAIT=120  # seconds to wait for services
+E2E_RUN_ID="${E2E_RUN_ID:-$(date +%s)}"
+USER1_EMAIL="user1-${E2E_RUN_ID}@test.e2e"
 
 # Load .env from project root (only sets vars that are not already exported)
 if [ -f "$PROJECT_ROOT/.env" ]; then
@@ -24,6 +24,9 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
     source "$PROJECT_ROOT/.env"
     set +a
 fi
+
+export E2E_RUN_ID
+export LALA_ROOT_ADMIN_EMAIL="$USER1_EMAIL"
 
 # Verify Node.js is available (required for Playwright tests)
 if ! command -v node &> /dev/null; then
@@ -105,6 +108,10 @@ wait_for_postgres() {
     return 1
 }
 
+wait_for_mailpit() {
+    wait_for_service "Mailpit" "http://localhost:8025/api/v1/info"
+}
+
 # ---------------------------------------------------------------------------
 # Step 1: Check Docker Compose availability
 # ---------------------------------------------------------------------------
@@ -121,7 +128,7 @@ echo -e "${GREEN}✓ Docker Compose is available${NC}"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 2: Start base Docker Compose services (without agent)
+# Step 2: Start base Docker Compose services and Mailpit
 # ---------------------------------------------------------------------------
 echo "Step 2: Checking Docker services..."
 cd "$PROJECT_ROOT"
@@ -134,6 +141,12 @@ if ! docker compose ps --status running | grep -q "lalasearch-postgres"; then
 else
     echo -e "${GREEN}✓ Base services are already running${NC}"
 fi
+
+if ! docker compose -f docker-compose.yml -f docker-compose.test.yml ps --status running | grep -q "lalasearch-mailpit"; then
+    echo -e "${YELLOW}Starting Mailpit...${NC}"
+    docker compose -f docker-compose.yml -f docker-compose.test.yml up -d mailpit --build
+fi
+wait_for_mailpit || exit 1
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -189,7 +202,8 @@ echo "Rebuilding lala-agent from source..."
 docker compose run --rm -T --no-deps lala-agent sh -c \
     "rm -rf target/release/.fingerprint/lala-agent-* target/release/deps/lala_agent-* target/release/lala-agent && cargo build --release"
 
-DEPLOYMENT_MODE=single_tenant MAILTRAP_SMTP_HOST= \
+DEPLOYMENT_MODE=single_tenant \
+E2E_SMTP_HOST= \
     docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build lala-agent
 wait_for_service "LalaSearch Agent (single-tenant)" "$AGENT_URL/version" || exit 1
 echo ""
@@ -225,29 +239,17 @@ echo ""
 # ---------------------------------------------------------------------------
 # Step 7: Phase 2 — Multi-tenant tests (required)
 # ---------------------------------------------------------------------------
-MISSING_VARS=""
-[ -z "${MAILTRAP_SMTP_HOST:-}" ] && MISSING_VARS="$MISSING_VARS MAILTRAP_SMTP_HOST"
-[ -z "${MAILTRAP_API_TOKEN:-}" ] && MISSING_VARS="$MISSING_VARS MAILTRAP_API_TOKEN"
-[ -z "${MAILTRAP_ACCOUNT_ID:-}" ] && MISSING_VARS="$MISSING_VARS MAILTRAP_ACCOUNT_ID"
-[ -z "${MAILTRAP_INBOX_ID:-}" ] && MISSING_VARS="$MISSING_VARS MAILTRAP_INBOX_ID"
-
-if [ -n "$MISSING_VARS" ]; then
-    echo -e "${RED}Error: Missing required environment variables:${MISSING_VARS}${NC}"
-    echo "  Multi-tenant tests require Mailtrap credentials."
-    echo "  Set these env vars and re-run this script."
-    exit 1
-fi
-
 echo "Step 7: Restarting agent in multi-tenant mode..."
 cd "$PROJECT_ROOT"
 docker compose stop lala-agent 2>/dev/null || true
 docker compose rm -f lala-agent 2>/dev/null || true
 
 DEPLOYMENT_MODE=multi_tenant \
-MAILTRAP_SMTP_HOST="$MAILTRAP_SMTP_HOST" \
-MAILTRAP_SMTP_PORT="${MAILTRAP_SMTP_PORT:-2525}" \
-MAILTRAP_SMTP_USERNAME="$MAILTRAP_SMTP_USERNAME" \
-MAILTRAP_SMTP_PASSWORD="$MAILTRAP_SMTP_PASSWORD" \
+E2E_SMTP_HOST=mailpit \
+E2E_SMTP_PORT=1025 \
+E2E_SMTP_USERNAME= \
+E2E_SMTP_PASSWORD= \
+E2E_SMTP_TLS=false \
     docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build lala-agent
 wait_for_service "LalaSearch Agent (multi-tenant)" "$AGENT_URL/version" || exit 1
 assert_auth_routes_ready "$AGENT_URL/auth/me" || exit 1
@@ -258,9 +260,7 @@ echo "======================================"
 echo ""
 
 cd "$SCRIPT_DIR"
-MAILTRAP_API_TOKEN="$MAILTRAP_API_TOKEN" \
-MAILTRAP_ACCOUNT_ID="$MAILTRAP_ACCOUNT_ID" \
-MAILTRAP_INBOX_ID="$MAILTRAP_INBOX_ID" \
+MAILPIT_API_BASE_URL="http://localhost:8025/api/v1" \
     npx playwright test multi-tenant.spec.ts
 MULTI_TENANT_RESULT=$?
 

@@ -5,6 +5,21 @@
 # Usage: docker compose -f docker-compose.yml -f docker-compose.test.yml up
 
 services:
+  mailpit:
+    image: axllent/mailpit:v1.28.2
+    container_name: lalasearch-mailpit
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8025/api/v1/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - lalasearch-network
+
   # Override agent with test environment
   lala-agent:
     environment:
@@ -15,15 +30,16 @@ services:
       # Deployment mode: single_tenant by default; set DEPLOYMENT_MODE=multi_tenant
       # in the environment to run the multi-tenant test phase
       - DEPLOYMENT_MODE=${DEPLOYMENT_MODE:-single_tenant}
-      # SMTP override: maps MAILTRAP_SMTP_* from .env to the container's SMTP_* vars.
-      # Phase 1 sets MAILTRAP_SMTP_HOST= in the shell to disable SMTP;
-      # Phase 2 uses the Mailtrap credentials from .env as-is.
-      - SMTP_HOST=${MAILTRAP_SMTP_HOST:-}
-      - SMTP_PORT=${MAILTRAP_SMTP_PORT:-2525}
-      - SMTP_USERNAME=${MAILTRAP_SMTP_USERNAME:-}
-      - SMTP_PASSWORD=${MAILTRAP_SMTP_PASSWORD:-}
-      - SMTP_TLS=true
+      # Route test emails to Mailpit only when the runner enables SMTP for that phase.
+      - SMTP_HOST=${E2E_SMTP_HOST:-}
+      - SMTP_PORT=${E2E_SMTP_PORT:-1025}
+      - SMTP_USERNAME=${E2E_SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${E2E_SMTP_PASSWORD:-}
+      - SMTP_TLS=${E2E_SMTP_TLS:-false}
       - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-noreply@test.e2e}
       - APP_BASE_URL=${APP_BASE_URL:-http://localhost:3000}
-      # Root admin email must match USER1_EMAIL in tests/e2e/helpers/config.ts
-      - LALA_ROOT_ADMIN_EMAIL=user1@test.e2e
+      - MAGIC_LINK_PERMANENT_BLOCK_AFTER_ATTEMPTS=${MAGIC_LINK_PERMANENT_BLOCK_AFTER_ATTEMPTS:-10}
+      - LALA_ROOT_ADMIN_EMAIL=${LALA_ROOT_ADMIN_EMAIL:-user1-local@test.e2e}
+    depends_on:
+      mailpit:
+        condition: service_healthy
