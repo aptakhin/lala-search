@@ -56,15 +56,37 @@ start_infrastructure() {
     echo "    PostgreSQL is ready."
 }
 
+run_frontend_checks() {
+    cd "$PROJECT_ROOT/lala-web"
+
+    echo "Running frontend checks..."
+    echo "1/3 Building lala-web..."
+    npm run build
+    echo "✓ Frontend build passed"
+
+    echo "2/3 Type-checking lala-web..."
+    npm run typecheck
+    echo "✓ Frontend typecheck passed"
+
+    echo "3/3 Running lala-web node tests..."
+    for test_file in tests/*.js; do
+        [ -e "$test_file" ] || continue
+        node "$test_file"
+    done
+    echo "✓ Frontend node tests passed"
+}
+
 # --- Docker mode: run all checks inside lala-agent container ---
 if [ "$USE_DOCKER" = true ]; then
     echo "Running pre-commit checks in Docker (via docker compose run)..."
     cd "$PROJECT_ROOT"
 
+    run_frontend_checks
+
     # docker compose run starts dependencies automatically (postgres, seaweedfs,
     # meilisearch) and waits for health checks via the depends_on conditions
     # defined in docker-compose.yml.
-    echo "Running fmt, clippy, and tests in lala-agent container..."
+    echo "Running lala-agent checks in Docker container..."
     docker compose run --rm lala-agent sh -c '
         # Source is volume-mounted read-only, so cargo cannot update mtimes.
         # Clear cached fingerprints to force recompilation against the latest code.
@@ -89,6 +111,9 @@ fi
 
 # --- Local mode: run checks with local Rust toolchain ---
 echo "Running pre-commit checks for lala-agent..."
+
+cd "$PROJECT_ROOT"
+run_frontend_checks
 
 cd "$PROJECT_ROOT/lala-agent"
 

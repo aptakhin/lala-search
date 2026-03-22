@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const WEB_ROOT = path.resolve(__dirname, '..');
+
+function webPath(...segments) {
+  return path.join(WEB_ROOT, ...segments);
+}
 
 function createContext(overrides = {}) {
   const context = {
@@ -78,7 +88,7 @@ async function testOnboardingGoToSearchIncludesQuery() {
     },
   });
 
-  loadBundle('./lala-web/html/js/onboarding.js', context);
+  loadBundle(webPath('html', 'js', 'onboarding.js'), context);
 
   const page = context.window.onboardingPage();
   page.searchQuery = 'rust ownership';
@@ -132,7 +142,7 @@ async function testDashboardSearchInitHydratesQueryAndFetchesResults() {
     },
   });
 
-  loadBundle('./lala-web/html/js/dashboard.js', context);
+  loadBundle(webPath('html', 'js', 'dashboard.js'), context);
 
   const search = context.window.dashboardSearch();
   search.$data = { tenantId: 'tenant-123' };
@@ -149,7 +159,7 @@ async function testDashboardSearchInitHydratesQueryAndFetchesResults() {
 }
 
 function testDashboardHtmlInitializesSearchComponent() {
-  const html = readFileSync('./lala-web/html/dashboard/index.html', 'utf8');
+  const html = readFileSync(webPath('html', 'dashboard', 'index.html'), 'utf8');
   assert.match(html, /x-data="dashboardSearch\(\)"\s+x-init="init\(\)"/);
 }
 
