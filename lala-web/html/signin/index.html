@@ -21,6 +21,7 @@
                     <input
                         type="email"
                         x-model="email"
+                        @input="onEmailInput()"
                         @keydown.enter="requestLink()"
                         placeholder="you@example.com"
                         data-testid="signin-email-input"
@@ -45,8 +46,11 @@
                 <p style="margin-top: 10px; font-size: 12px;">
                     The link expires in a few minutes. Check your spam folder if you don't see&nbsp;it.
                 </p>
-                <button @click="sent = false; email = ''" style="margin-top: 15px;">
-                    Send Another Link
+                <button @click="requestLink()" :disabled="sending" style="margin-top: 15px;">
+                    <span x-show="!sending">Send Another Link</span>
+                    <span x-show="sending">
+                        <span class="spinner"></span> SENDING...
+                    </span>
                 </button>
             </div>
         </div>

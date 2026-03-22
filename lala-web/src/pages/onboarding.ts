@@ -177,6 +177,12 @@ function buildDashboardSearchUrl(query: string): string {
   return url.pathname + url.search;
 }
 
+function buildDashboardUrlFromOnboarding(): string {
+  const url = new URL('/dashboard', window.location.origin);
+  url.searchParams.set('from', 'onboarding');
+  return url.pathname + url.search;
+}
+
 export function onboardingPage() {
   let tenantNameTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -512,7 +518,7 @@ export function onboardingPage() {
     },
 
     goToDashboard() {
-      window.location.href = '/dashboard';
+      window.location.href = buildDashboardUrlFromOnboarding();
     },
 
     formatBytes,

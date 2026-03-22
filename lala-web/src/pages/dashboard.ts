@@ -71,6 +71,11 @@ function adminFetch(
   return fetch(url, { ...options, credentials: 'include' });
 }
 
+function shouldStayOnDashboardWithoutDomains(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('from') === 'onboarding';
+}
+
 function dashboardPage() {
   let tenantNameTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -162,7 +167,10 @@ function dashboardPage() {
         const domainsRes = await this.adminFetch('/api/admin/allowed-domains');
         if (domainsRes.ok) {
           const data = await domainsRes.json();
-          if (!data.domains || data.domains.length === 0) {
+          if (
+            (!data.domains || data.domains.length === 0) &&
+            !shouldStayOnDashboardWithoutDomains()
+          ) {
             window.location.href = '/onboarding';
             return;
           }
