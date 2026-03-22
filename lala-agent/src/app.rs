@@ -344,15 +344,23 @@ pub async fn add_to_queue_handler(
 
     if !page_exists {
         let usage_bytes = db.get_index_usage_bytes().await.map_err(|e| {
+            eprintln!(
+                "[QUEUE] Failed to get indexed usage for tenant {}: {:#}",
+                db.tenant_id, e
+            );
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to get indexed usage: {e}"),
+                "Unable to queue this URL right now".to_string(),
             )
         })?;
         let max_bytes = db.get_index_capacity_bytes().await.map_err(|e| {
+            eprintln!(
+                "[QUEUE] Failed to get indexed capacity for tenant {}: {:#}",
+                db.tenant_id, e
+            );
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to get indexed capacity: {e}"),
+                "Unable to queue this URL right now".to_string(),
             )
         })?;
 
@@ -674,15 +682,23 @@ pub async fn get_index_capacity_handler(
     State(state): State<AppState>,
 ) -> Result<Json<IndexCapacityResponse>, (StatusCode, String)> {
     let usage_bytes = db.get_index_usage_bytes().await.map_err(|e| {
+        eprintln!(
+            "[SETTINGS] Failed to get indexed usage for tenant {}: {:#}",
+            db.tenant_id, e
+        );
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Database error: {e}"),
+            "Unable to load index capacity right now".to_string(),
         )
     })?;
     let max_bytes = db.get_index_capacity_bytes().await.map_err(|e| {
+        eprintln!(
+            "[SETTINGS] Failed to get indexed capacity for tenant {}: {:#}",
+            db.tenant_id, e
+        );
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Database error: {e}"),
+            "Unable to load index capacity right now".to_string(),
         )
     })?;
 
@@ -716,18 +732,26 @@ pub async fn set_index_capacity_handler(
     }
 
     let old_max_bytes = db.get_index_capacity_bytes().await.map_err(|e| {
+        eprintln!(
+            "[SETTINGS] Failed to get current indexed capacity for tenant {}: {:#}",
+            db.tenant_id, e
+        );
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Database error: {e}"),
+            "Unable to update index capacity right now".to_string(),
         )
     })?;
 
     db.set_index_capacity_bytes(payload.max_bytes)
         .await
         .map_err(|e| {
+            eprintln!(
+                "[SETTINGS] Failed to store indexed capacity for tenant {}: {:#}",
+                db.tenant_id, e
+            );
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Database error: {e}"),
+                "Unable to update index capacity right now".to_string(),
             )
         })?;
 
@@ -757,9 +781,13 @@ pub async fn set_index_capacity_handler(
         .map(|r| r.action_id.to_string());
 
     let usage_bytes = db.get_index_usage_bytes().await.map_err(|e| {
+        eprintln!(
+            "[SETTINGS] Failed to refresh indexed usage for tenant {}: {:#}",
+            db.tenant_id, e
+        );
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Database error: {e}"),
+            "Unable to update index capacity right now".to_string(),
         )
     })?;
 
