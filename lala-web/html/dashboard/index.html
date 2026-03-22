@@ -108,11 +108,13 @@
                     data-testid="tenant-name-input"
                     style="flex: 1;"
                 >
-                <span x-show="tenantNameSaving" style="color: #666666; font-size: 12px;">
-                    <span class="spinner" style="width: 14px; height: 14px; border-width: 2px;"></span>
-                </span>
-                <span x-show="tenantNameSaved && !tenantNameSaving" style="color: #006600; font-size: 14px; font-weight: bold;" x-cloak>
-                    &#10003;
+                <span class="input-status-indicator" aria-live="polite">
+                    <span x-show="tenantNameSaving" x-cloak>
+                        <span class="spinner" style="width: 14px; height: 14px; border-width: 2px;"></span>
+                    </span>
+                    <span x-show="tenantNameSaved && !tenantNameSaving" class="input-status-indicator-success" x-cloak>
+                        &#10003;
+                    </span>
                 </span>
             </div>
         </div>

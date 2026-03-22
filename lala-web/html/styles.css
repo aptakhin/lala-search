@@ -459,6 +459,27 @@ footer {
     font-size: 12px;
 }
 
+.input-status-indicator {
+    width: 20px;
+    min-width: 20px;
+    min-height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #666666;
+    font-size: 12px;
+}
+
+.input-status-indicator .spinner {
+    margin-right: 0;
+}
+
+.input-status-indicator-success {
+    color: #006600;
+    font-size: 14px;
+    font-weight: bold;
+}
+
 .search-inline-form {
     align-items: flex-start;
 }
