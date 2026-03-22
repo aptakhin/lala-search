@@ -144,6 +144,66 @@ impl MagicLinkToken {
     }
 }
 
+/// Per-email throttle state for magic link sends.
+#[derive(Debug, Clone)]
+pub struct MagicLinkSendThrottle {
+    pub email: String,
+    pub first_attempt_at: DateTime<Utc>,
+    pub last_attempt_at: DateTime<Utc>,
+    pub blocked_until: Option<DateTime<Utc>>,
+    pub attempt_count: i32,
+}
+
+/// Decision for whether another magic link email may be sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MagicLinkSendDecision {
+    Allow,
+    Cooldown { retry_after_seconds: u64 },
+    Blocked { retry_after_seconds: u64 },
+}
+
+impl MagicLinkSendThrottle {
+    pub fn evaluate_send(
+        &self,
+        now: DateTime<Utc>,
+        cooldown: chrono::Duration,
+        max_attempts: i32,
+        window: chrono::Duration,
+    ) -> MagicLinkSendDecision {
+        let window_expires_at = self.first_attempt_at + window;
+        if now >= window_expires_at {
+            return MagicLinkSendDecision::Allow;
+        }
+
+        if let Some(blocked_until) = self.blocked_until {
+            if now < blocked_until {
+                return MagicLinkSendDecision::Blocked {
+                    retry_after_seconds: seconds_until(now, blocked_until),
+                };
+            }
+        }
+
+        let cooldown_ends_at = self.last_attempt_at + cooldown;
+        if now < cooldown_ends_at {
+            return MagicLinkSendDecision::Cooldown {
+                retry_after_seconds: seconds_until(now, cooldown_ends_at),
+            };
+        }
+
+        if self.attempt_count >= max_attempts {
+            return MagicLinkSendDecision::Blocked {
+                retry_after_seconds: seconds_until(now, window_expires_at),
+            };
+        }
+
+        MagicLinkSendDecision::Allow
+    }
+}
+
+fn seconds_until(now: DateTime<Utc>, until: DateTime<Utc>) -> u64 {
+    (until - now).num_seconds().max(1) as u64
+}
+
 /// Organization membership record.
 #[derive(Debug, Clone)]
 pub struct OrgMembership {
@@ -218,6 +278,8 @@ pub struct CreateOrgRequest {
 pub struct RequestLinkResponse {
     pub success: bool,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_seconds: Option<u64>,
 }
 
 /// Response after verifying a magic link - includes session info.
@@ -468,5 +530,29 @@ mod tests {
             used: false,
         };
         assert!(!expired_token.is_valid());
+    }
+
+    #[test]
+    fn test_magic_link_send_throttle_blocks_after_five_attempts_in_window() {
+        let now = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let throttle = MagicLinkSendThrottle {
+            email: "test@example.com".to_string(),
+            first_attempt_at: now - chrono::Duration::minutes(4),
+            last_attempt_at: now - chrono::Duration::seconds(61),
+            blocked_until: Some(now + chrono::Duration::minutes(11)),
+            attempt_count: 5,
+        };
+
+        assert_eq!(
+            throttle.evaluate_send(
+                now,
+                chrono::Duration::seconds(60),
+                5,
+                chrono::Duration::minutes(15),
+            ),
+            MagicLinkSendDecision::Blocked {
+                retry_after_seconds: 660,
+            }
+        );
     }
 }

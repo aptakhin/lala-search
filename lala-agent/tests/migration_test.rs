@@ -67,6 +67,7 @@ async fn test_migrations_create_expected_tables() {
         "users",
         "sessions",
         "magic_link_tokens",
+        "magic_link_send_attempts",
         "org_memberships",
         "org_invitations",
         "crawled_pages",

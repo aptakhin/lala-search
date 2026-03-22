@@ -20,11 +20,23 @@ Response:
 ```json
 {
   "success": true,
-  "message": "If an account exists for this email, a magic link has been sent."
+  "message": "If an account exists for this email, a magic link has been sent.",
+  "retry_after_seconds": null
 }
 ```
 
 **Note**: The response is intentionally vague to prevent email enumeration. The email will only be sent if the user exists or if auto-registration is enabled.
+
+**Resend protection**: The backend enforces a per-email resend cooldown and blocks further sends after too many attempts inside the throttle window.
+
+Rate-limited response:
+```json
+{
+  "success": false,
+  "message": "Please wait before requesting another magic link.",
+  "retry_after_seconds": 60
+}
+```
 
 **Email setup required**: Configure SMTP settings in `.env`:
 ```bash
@@ -34,6 +46,9 @@ SMTP_USERNAME=             # empty for local Postfix
 SMTP_PASSWORD=             # empty for local Postfix
 SMTP_TLS=false             # true for external SMTP
 SMTP_FROM_EMAIL=noreply@yourdomain.com
+MAGIC_LINK_SEND_COOLDOWN_SECONDS=60
+MAGIC_LINK_MAX_SEND_ATTEMPTS=5
+MAGIC_LINK_SEND_WINDOW_MINUTES=15
 ```
 
 ### Verify magic link

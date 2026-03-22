@@ -987,6 +987,9 @@ mod tests {
             EmailService::new(email_config).expect("Failed to create test email service");
         let auth_db = AuthDbClient::new(pool);
         env::set_var("LALA_ROOT_ADMIN_EMAIL", "test-root@localhost");
+        env::set_var("MAGIC_LINK_SEND_COOLDOWN_SECONDS", "60");
+        env::set_var("MAGIC_LINK_MAX_SEND_ATTEMPTS", "5");
+        env::set_var("MAGIC_LINK_SEND_WINDOW_MINUTES", "15");
         let auth_config = AuthConfig::from_env();
         let auth_state = AuthState::new(auth_db, email_service, auth_config, default_tenant_id);
 

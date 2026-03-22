@@ -8,7 +8,7 @@ use crate::models::auth::{
     MessageResponse, OrgInfo, OrgMembersResponse, RequestLinkRequest, RequestLinkResponse,
     UserRole, VerifyLinkResponse,
 };
-use crate::services::auth::{AuthConfig, AuthService, InviteRequest};
+use crate::services::auth::{AuthConfig, AuthService, InviteRequest, MagicLinkRateLimitError};
 use crate::services::auth_db::AuthDbClient;
 use crate::services::auth_middleware::{
     clear_session_cookie, create_session_cookie, extract_session_token,
@@ -185,6 +185,7 @@ fn parse_tenant_id(tenant_id: &str) -> Result<Uuid, (StatusCode, Json<MessageRes
     request_body = RequestLinkRequest,
     responses(
         (status = 200, description = "Magic link sent successfully", body = RequestLinkResponse),
+        (status = 429, description = "Magic link resend is rate limited", body = RequestLinkResponse),
         (status = 500, description = "Internal server error", body = RequestLinkResponse)
     )
 )]
@@ -192,24 +193,41 @@ async fn request_link_handler(
     State(state): State<AuthState>,
     Json(payload): Json<RequestLinkRequest>,
 ) -> Result<Json<RequestLinkResponse>, (StatusCode, Json<RequestLinkResponse>)> {
-    state
-        .auth_service
-        .request_magic_link(&payload.email)
-        .await
-        .map_err(|e| {
+    match state.auth_service.request_magic_link(&payload.email).await {
+        Ok(()) => {}
+        Err(e) => {
+            if let Some(rate_limit) = e.downcast_ref::<MagicLinkRateLimitError>() {
+                return Err((
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(RequestLinkResponse {
+                        success: false,
+                        message: if rate_limit.blocked {
+                            "Too many magic link requests for this email. Please try again later."
+                                .to_string()
+                        } else {
+                            "Please wait before requesting another magic link.".to_string()
+                        },
+                        retry_after_seconds: Some(rate_limit.retry_after_seconds),
+                    }),
+                ));
+            }
+
             eprintln!("[AUTH] Failed to send magic link: {:#}", e);
-            (
+            return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(RequestLinkResponse {
                     success: false,
                     message: "Unable to send magic link. Please try again later.".to_string(),
+                    retry_after_seconds: None,
                 }),
-            )
-        })?;
+            ));
+        }
+    }
 
     Ok(Json(RequestLinkResponse {
         success: true,
         message: "If an account exists for this email, a magic link has been sent.".to_string(),
+        retry_after_seconds: None,
     }))
 }
 

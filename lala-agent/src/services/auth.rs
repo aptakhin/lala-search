@@ -3,7 +3,7 @@
 
 //! Authentication service for magic link and session management.
 
-use crate::models::auth::{AuthUser, OrgMembership, User, UserRole};
+use crate::models::auth::{AuthUser, MagicLinkSendDecision, OrgMembership, User, UserRole};
 use crate::services::auth_db::{
     AuthDbClient, CreateInvitationParams, CreateMagicLinkParams, CreateSessionParams,
 };
@@ -13,7 +13,7 @@ use anyhow::{anyhow, Context, Result};
 use hex;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-use std::env;
+use std::{env, error::Error, fmt};
 use uuid::Uuid;
 
 /// Configuration for the auth service.
@@ -25,6 +25,12 @@ pub struct AuthConfig {
     pub magic_link_expiry_minutes: u64,
     /// Invitation expiry in days
     pub invitation_expiry_days: u64,
+    /// Minimum time between magic link sends for the same email address.
+    pub magic_link_send_cooldown_seconds: u64,
+    /// Maximum sends allowed for one email address inside the throttle window.
+    pub magic_link_max_send_attempts: i32,
+    /// Window size for counting magic link send attempts.
+    pub magic_link_send_window_minutes: u64,
     /// Email of the root/platform admin who owns the default tenant.
     pub root_admin_email: String,
     /// Multi-tenant mode: any user can self-register (creates a new tenant).
@@ -48,6 +54,18 @@ impl AuthConfig {
                 .unwrap_or_else(|_| "7".to_string())
                 .parse()
                 .unwrap_or(7),
+            magic_link_send_cooldown_seconds: env::var("MAGIC_LINK_SEND_COOLDOWN_SECONDS")
+                .expect("MAGIC_LINK_SEND_COOLDOWN_SECONDS must be set")
+                .parse()
+                .expect("MAGIC_LINK_SEND_COOLDOWN_SECONDS must be a valid number"),
+            magic_link_max_send_attempts: env::var("MAGIC_LINK_MAX_SEND_ATTEMPTS")
+                .expect("MAGIC_LINK_MAX_SEND_ATTEMPTS must be set")
+                .parse()
+                .expect("MAGIC_LINK_MAX_SEND_ATTEMPTS must be a valid number"),
+            magic_link_send_window_minutes: env::var("MAGIC_LINK_SEND_WINDOW_MINUTES")
+                .expect("MAGIC_LINK_SEND_WINDOW_MINUTES must be set")
+                .parse()
+                .expect("MAGIC_LINK_SEND_WINDOW_MINUTES must be a valid number"),
             root_admin_email: env::var("LALA_ROOT_ADMIN_EMAIL")
                 .expect("LALA_ROOT_ADMIN_EMAIL must be set when authentication is enabled"),
             multi_tenant: env::var("DEPLOYMENT_MODE")
@@ -72,6 +90,32 @@ pub struct InviteRequest<'a> {
     pub role: UserRole,
     pub inviter: &'a AuthUser,
 }
+
+#[derive(Debug)]
+pub struct MagicLinkRateLimitError {
+    pub retry_after_seconds: u64,
+    pub blocked: bool,
+}
+
+impl fmt::Display for MagicLinkRateLimitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.blocked {
+            write!(
+                f,
+                "Too many magic link requests. Try again in {} seconds.",
+                self.retry_after_seconds
+            )
+        } else {
+            write!(
+                f,
+                "Please wait {} seconds before requesting another magic link.",
+                self.retry_after_seconds
+            )
+        }
+    }
+}
+
+impl Error for MagicLinkRateLimitError {}
 
 impl AuthService {
     /// Create a new auth service.
@@ -103,6 +147,60 @@ impl AuthService {
     /// Request a magic link for authentication.
     /// Sends an email with a link to verify and create a session.
     pub async fn request_magic_link(&self, email: &str) -> Result<()> {
+        let email = email.trim();
+        let throttle_email = canonicalize_email_for_rate_limit(email);
+        let now = chrono::Utc::now();
+        let cooldown =
+            chrono::Duration::seconds(self.config.magic_link_send_cooldown_seconds as i64);
+        let window = chrono::Duration::minutes(self.config.magic_link_send_window_minutes as i64);
+
+        match self
+            .db
+            .consume_magic_link_send_attempt(
+                &throttle_email,
+                now,
+                cooldown,
+                self.config.magic_link_max_send_attempts,
+                window,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to apply magic link send throttle for {}",
+                    anonymize_email(email)
+                )
+            })? {
+            MagicLinkSendDecision::Allow => {}
+            MagicLinkSendDecision::Cooldown {
+                retry_after_seconds,
+            } => {
+                eprintln!(
+                    "[AUTH] Magic link resend cooldown active for {}: retry_after={}s",
+                    anonymize_email(email),
+                    retry_after_seconds
+                );
+                return Err(MagicLinkRateLimitError {
+                    retry_after_seconds,
+                    blocked: false,
+                }
+                .into());
+            }
+            MagicLinkSendDecision::Blocked {
+                retry_after_seconds,
+            } => {
+                eprintln!(
+                    "[AUTH] Magic link send blocked for {} after too many attempts: retry_after={}s",
+                    anonymize_email(email),
+                    retry_after_seconds
+                );
+                return Err(MagicLinkRateLimitError {
+                    retry_after_seconds,
+                    blocked: true,
+                }
+                .into());
+            }
+        }
+
         let (raw_token, token_hash) = Self::generate_token();
 
         let expires_at = chrono::Utc::now()
@@ -684,6 +782,10 @@ impl AuthService {
     }
 }
 
+fn canonicalize_email_for_rate_limit(email: &str) -> String {
+    email.trim().to_ascii_lowercase()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -722,6 +824,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "LALA_ROOT_ADMIN_EMAIL must be set")]
     fn test_auth_config_panics_without_root_admin_email() {
+        unsafe { env::set_var("MAGIC_LINK_SEND_COOLDOWN_SECONDS", "60") };
+        unsafe { env::set_var("MAGIC_LINK_MAX_SEND_ATTEMPTS", "5") };
+        unsafe { env::set_var("MAGIC_LINK_SEND_WINDOW_MINUTES", "15") };
         unsafe { env::remove_var("LALA_ROOT_ADMIN_EMAIL") };
         AuthConfig::from_env();
     }
