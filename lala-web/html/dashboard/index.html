@@ -47,20 +47,20 @@
         <!-- Tenant-Scoped Search -->
         <div x-data="dashboardSearch()" @org-switched.window="clearSearch()" class="dashboard-section" data-testid="dashboard-search">
             <h3>Search</h3>
-            <div class="inline-form">
-                <input
-                    type="text"
+            <div class="inline-form search-inline-form">
+                <textarea
                     x-model="query"
-                    @keydown.enter="search()"
+                    @keydown="onQueryKeydown($event)"
                     placeholder="Search within this organization..."
                     data-testid="dashboard-search-input"
                     style="flex: 1;"
-                >
+                ></textarea>
                 <button @click="search()" :disabled="isLoading" data-testid="dashboard-search-button">
                     <span x-show="!isLoading">SEARCH</span>
                     <span x-show="isLoading"><span class="spinner"></span></span>
                 </button>
                 <button x-show="hasSearched" @click="clearSearch()" data-testid="dashboard-search-clear">CLEAR</button>
+                <div class="search-shortcut-hint" x-text="searchShortcutHint"></div>
             </div>
 
             <div x-show="error" class="msg-error" @click="error = null" style="cursor: pointer;" x-text="error"></div>

@@ -1,4 +1,9 @@
 import { fetchCurrentUser, fetchDeploymentMode, formatDate } from '../lib/api';
+import {
+  getClientPlatform,
+  getSearchShortcutAction,
+  getSearchShortcutHint,
+} from '../lib/search-input';
 
 interface User {
   user_id: string;
@@ -484,9 +489,24 @@ function dashboardSearch() {
     error: null as string | null,
     currentOffset: 0,
     limit: 10,
+    platform: getClientPlatform(),
 
     getTenantId(): string {
       return (this as unknown as AlpineScope).$data.tenantId as string;
+    },
+
+    get searchShortcutHint() {
+      return getSearchShortcutHint(this.platform);
+    },
+
+    onQueryKeydown(event: KeyboardEvent) {
+      const action = getSearchShortcutAction(this.platform, event);
+      if (action !== 'submit') {
+        return;
+      }
+
+      event.preventDefault();
+      this.search();
     },
 
     async search() {

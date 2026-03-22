@@ -1,4 +1,9 @@
 import { fetchCurrentUser, fetchDeploymentMode } from '../lib/api';
+import {
+  getClientPlatform,
+  getSearchShortcutAction,
+  getSearchShortcutHint,
+} from '../lib/search-input';
 
 interface SearchResult {
   document: {
@@ -44,6 +49,7 @@ function searchApp() {
     error: null as string | null,
     currentOffset: 0,
     limit: 10,
+    platform: getClientPlatform(),
 
     init() {
       const params = new URLSearchParams(window.location.search);
@@ -52,6 +58,20 @@ function searchApp() {
         this.query = q;
         this.search();
       }
+    },
+
+    get searchShortcutHint() {
+      return getSearchShortcutHint(this.platform);
+    },
+
+    onQueryKeydown(event: KeyboardEvent) {
+      const action = getSearchShortcutAction(this.platform, event);
+      if (action !== 'submit') {
+        return;
+      }
+
+      event.preventDefault();
+      this.search();
     },
 
     async search() {

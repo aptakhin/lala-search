@@ -18,7 +18,7 @@
             <div class="search-input-group">
                 <textarea
                     x-model="query"
-                    @keydown.enter="search()"
+                    @keydown="onQueryKeydown($event)"
                     placeholder="Type something to search..."
                     data-testid="search-input"
                 ></textarea>
@@ -30,6 +30,7 @@
                     </span>
                 </button>
             </div>
+            <div class="search-shortcut-hint" x-text="searchShortcutHint"></div>
             <button @click="clearSearch()" style="width: 100%; margin-bottom: 10px;" data-testid="search-clear-button">CLEAR</button>
         </div>
 

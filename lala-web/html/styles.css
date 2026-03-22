@@ -153,6 +153,12 @@ button:disabled {
     margin-bottom: 15px;
 }
 
+.search-shortcut-hint {
+    color: #666666;
+    font-size: 12px;
+    margin-bottom: 15px;
+}
+
 textarea {
     flex: 1;
     padding: 8px;
@@ -440,6 +446,23 @@ footer {
     font-size: 12px;
     flex: 1;
     min-width: 200px;
+}
+
+.search-inline-form {
+    align-items: flex-start;
+}
+
+.search-inline-form textarea {
+    flex: 1;
+    min-width: 200px;
+    min-height: 72px;
+    font-size: 12px;
+}
+
+.search-inline-form .search-shortcut-hint {
+    flex-basis: 100%;
+    margin-top: -4px;
+    margin-bottom: 0;
 }
 
 /* Data table (members, domains) */
