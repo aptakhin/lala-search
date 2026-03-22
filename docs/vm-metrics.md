@@ -6,13 +6,27 @@ This is intentionally separate from the main LalaSearch app stack so you can ins
 
 ## What it collects
 
-- CPU usage and load
+- CPU usage
 - Memory usage
-- Disk usage
-- Filesystem metrics
-- Network traffic
-- Basic host uptime and Linux host statistics
+- Disk space usage
+- Disk IO
+- Host identity metadata for dashboard variables
 - Docker container logs from the VM
+
+## Metrics allowlist
+
+To reduce Grafana Cloud metric volume, the Alloy config forwards only these metric names to Prometheus:
+
+- `node_cpu_seconds_total`
+- `node_memory_MemTotal_bytes`
+- `node_memory_MemAvailable_bytes`
+- `node_filesystem_size_bytes`
+- `node_filesystem_avail_bytes`
+- `node_disk_read_bytes_total`
+- `node_disk_written_bytes_total`
+- `node_uname_info`
+
+`node_uname_info` is only kept so dashboards can populate the `vm_instance` variable.
 
 ## Recommended hosted target
 

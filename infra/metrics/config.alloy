@@ -2,15 +2,24 @@ prometheus.exporter.unix "vm" {
   rootfs_path = "/host/root"
   procfs_path = "/host/proc"
   sysfs_path  = "/host/sys"
-
-  disable_collectors = ["ipvs"]
+  set_collectors = ["cpu", "meminfo", "filesystem", "diskstats", "uname"]
 }
 
 prometheus.scrape "vm" {
   targets        = prometheus.exporter.unix.vm.targets
   job_name       = "integrations/node_exporter"
   scrape_interval = "15s"
-  forward_to     = [prometheus.remote_write.grafana_cloud.receiver]
+  forward_to     = [prometheus.relabel.vm_allowlist.receiver]
+}
+
+prometheus.relabel "vm_allowlist" {
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+  rule {
+    action        = "keep"
+    source_labels = ["__name__"]
+    regex         = "node_cpu_seconds_total|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_filesystem_size_bytes|node_filesystem_avail_bytes|node_disk_read_bytes_total|node_disk_written_bytes_total|node_uname_info"
+  }
 }
 
 prometheus.remote_write "grafana_cloud" {
