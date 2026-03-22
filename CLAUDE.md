@@ -27,6 +27,8 @@ All features follow: **Analyze → Red → Green → Refactor → (repeat)**
 
 **Every completed task must end with a git commit. Never consider work done until it is committed!**
 
+Optional: when work is collaboratively produced by multiple coding agents, the commit message may include `Co-authored-by:` trailers so results can be compared later. Only add co-author trailers when they are intentional for that task.
+
 
 On Windows, the script runs all checks inside Docker automatically.
 
