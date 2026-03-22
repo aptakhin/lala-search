@@ -163,6 +163,36 @@ function testDashboardHtmlInitializesSearchComponent() {
   assert.match(html, /x-data="dashboardSearch\(\)"\s+x-init="init\(\)"/);
 }
 
+function testDashboardSearchButtonStaysEnabledWhileLoading() {
+  const html = readFileSync(webPath('html', 'dashboard', 'index.html'), 'utf8');
+  const searchButtonMatch = html.match(
+    /<button @click="search\(\)"[^>]*data-testid="dashboard-search-button"[^>]*>/,
+  );
+
+  assert.ok(searchButtonMatch, 'Expected dashboard search button to exist.');
+  assert.doesNotMatch(
+    searchButtonMatch[0],
+    /:disabled=/,
+    'Expected dashboard search button to stay enabled while loading.',
+  );
+}
+
+function testOnboardingSearchButtonStaysEnabled() {
+  const html = readFileSync(webPath('html', 'onboarding', 'index.html'), 'utf8');
+  const searchButtonMatch = html.match(
+    /<button\s+@click="goToSearch\(\)"[^>]*data-testid="onboarding-search-button"[^>]*>/,
+  );
+
+  assert.ok(searchButtonMatch, 'Expected onboarding search button to exist.');
+  assert.doesNotMatch(
+    searchButtonMatch[0],
+    /:disabled=/,
+    'Expected onboarding search button to stay enabled.',
+  );
+}
+
 await testOnboardingGoToSearchIncludesQuery();
 await testDashboardSearchInitHydratesQueryAndFetchesResults();
 testDashboardHtmlInitializesSearchComponent();
+testDashboardSearchButtonStaysEnabledWhileLoading();
+testOnboardingSearchButtonStaysEnabled();

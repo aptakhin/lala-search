@@ -55,7 +55,7 @@
                     data-testid="dashboard-search-input"
                     style="flex: 1;"
                 ></textarea>
-                <button @click="search()" :disabled="isLoading" data-testid="dashboard-search-button">
+                <button @click="search()" data-testid="dashboard-search-button">
                     <span x-show="!isLoading">SEARCH</span>
                     <span x-show="isLoading"><span class="spinner"></span></span>
                 </button>
