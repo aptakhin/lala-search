@@ -189,7 +189,7 @@ export IMAGE_TAG=0.3.0  # optional shared tag for agent + web
 
 ## VM Metrics
 
-Host-level Linux VM metrics can be installed separately from the main app stack with [`scripts/install-vm-metrics.sh`](../scripts/install-vm-metrics.sh).
+Host-level Linux VM metrics and Docker container logs can be installed separately from the main app stack with [`scripts/install-vm-metrics.sh`](../scripts/install-vm-metrics.sh).
 
 This keeps observability infrastructure independent from application deployment while reusing the same SSH environment variables:
 
@@ -200,6 +200,9 @@ export DEPLOY_SSH_KEY="$(cat ~/.ssh/deploy_key)"
 export GRAFANA_CLOUD_PROMETHEUS_URL=https://prometheus-prod-XX-prod-YY.grafana.net/api/prom/push
 export GRAFANA_CLOUD_PROMETHEUS_USERNAME=1234567
 export GRAFANA_CLOUD_PROMETHEUS_PASSWORD=glc_XXXXXXXXXXXXXXXX
+export GRAFANA_CLOUD_LOKI_URL=https://logs-prod-XXX.grafana.net/loki/api/v1/push
+export GRAFANA_CLOUD_LOKI_USERNAME=1234568
+export GRAFANA_CLOUD_LOKI_PASSWORD=glc_XXXXXXXXXXXXXXXX
 
 ./scripts/install-vm-metrics.sh
 ```

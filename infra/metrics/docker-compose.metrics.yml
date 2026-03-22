@@ -22,6 +22,7 @@ services:
       - /:/host/root:ro
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "127.0.0.1:12345:12345"
     restart: unless-stopped

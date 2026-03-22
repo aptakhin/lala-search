@@ -15,17 +15,60 @@ prometheus.scrape "vm" {
 
 prometheus.remote_write "grafana_cloud" {
   endpoint {
-    url = env("GRAFANA_CLOUD_PROMETHEUS_URL")
+    url = sys.env("GRAFANA_CLOUD_PROMETHEUS_URL")
 
     basic_auth {
-      username = env("GRAFANA_CLOUD_PROMETHEUS_USERNAME")
-      password = env("GRAFANA_CLOUD_PROMETHEUS_PASSWORD")
+      username = sys.env("GRAFANA_CLOUD_PROMETHEUS_USERNAME")
+      password = sys.env("GRAFANA_CLOUD_PROMETHEUS_PASSWORD")
     }
   }
 
   external_labels = {
-    vm_instance = env("VM_METRICS_INSTANCE")
-    environment = env("VM_METRICS_ENVIRONMENT")
+    vm_instance = sys.env("VM_METRICS_INSTANCE")
+    environment = sys.env("VM_METRICS_ENVIRONMENT")
     service     = "lalasearch-vm"
+  }
+}
+
+discovery.docker "logs" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "logs" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+}
+
+loki.source.docker "logs" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.logs.targets
+  labels        = {
+    source      = "docker"
+    vm_instance = sys.env("VM_METRICS_INSTANCE")
+    environment = sys.env("VM_METRICS_ENVIRONMENT")
+    service     = "lalasearch-vm"
+  }
+  relabel_rules = discovery.relabel.logs.rules
+  forward_to    = [loki.write.grafana_cloud.receiver]
+}
+
+loki.write "grafana_cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_LOKI_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_LOKI_USERNAME")
+      password = sys.env("GRAFANA_CLOUD_LOKI_PASSWORD")
+    }
   }
 }

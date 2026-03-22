@@ -1,6 +1,6 @@
 # VM Metrics with Grafana Cloud
 
-This project includes a separate VM metrics installer for Linux hosts. It deploys a small Docker Compose stack that runs Grafana Alloy on the server, scrapes host-level Linux metrics, and forwards them to a hosted Prometheus endpoint with `remote_write`.
+This project includes a separate VM observability installer for Linux hosts. It deploys a small Docker Compose stack that runs Grafana Alloy on the server, scrapes host-level Linux metrics, tails Docker container logs, and forwards both signals to Grafana Cloud.
 
 This is intentionally separate from the main LalaSearch app stack so you can install, update, or remove observability without changing the application deployment.
 
@@ -12,16 +12,20 @@ This is intentionally separate from the main LalaSearch app stack so you can ins
 - Filesystem metrics
 - Network traffic
 - Basic host uptime and Linux host statistics
+- Docker container logs from the VM
 
 ## Recommended hosted target
 
-Grafana Cloud's free hosted Prometheus tier is a good fit for this setup. Create a Linux Server integration or hosted Prometheus endpoint there, then copy the remote write values into environment variables before running the installer.
+Grafana Cloud's free hosted Prometheus and Loki tiers are a good fit for this setup. Create a Linux Server integration or hosted endpoints there, then copy the write values into environment variables before running the installer.
 
 Required values:
 
 - `GRAFANA_CLOUD_PROMETHEUS_URL`
 - `GRAFANA_CLOUD_PROMETHEUS_USERNAME`
 - `GRAFANA_CLOUD_PROMETHEUS_PASSWORD`
+- `GRAFANA_CLOUD_LOKI_URL`
+- `GRAFANA_CLOUD_LOKI_USERNAME`
+- `GRAFANA_CLOUD_LOKI_PASSWORD`
 
 ## Install
 
@@ -39,6 +43,9 @@ Export the Grafana Cloud credentials:
 export GRAFANA_CLOUD_PROMETHEUS_URL=https://prometheus-prod-XX-prod-YY.grafana.net/api/prom/push
 export GRAFANA_CLOUD_PROMETHEUS_USERNAME=1234567
 export GRAFANA_CLOUD_PROMETHEUS_PASSWORD=glc_XXXXXXXXXXXXXXXX
+export GRAFANA_CLOUD_LOKI_URL=https://logs-prod-XXX.grafana.net/loki/api/v1/push
+export GRAFANA_CLOUD_LOKI_USERNAME=1234568
+export GRAFANA_CLOUD_LOKI_PASSWORD=glc_XXXXXXXXXXXXXXXX
 ```
 
 Optional labels and install location:
@@ -55,6 +62,11 @@ The installer adds these labels to each sample:
 - `vm_instance=<VM_METRICS_INSTANCE>`
 - `environment=<VM_METRICS_ENVIRONMENT>`
 - `service=lalasearch-vm`
+
+For logs, Alloy also adds container metadata such as:
+
+- `container=<docker-container-name>`
+- `compose_service=<docker-compose-service-name>` when available
 
 Run the installer:
 
