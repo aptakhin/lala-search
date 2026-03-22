@@ -647,6 +647,74 @@ mod tests {
 
     #[tokio::test]
     #[ignore] // Requires PostgreSQL
+    async fn test_add_domain_enqueues_root_url_for_crawling() {
+        use chrono::Utc;
+
+        let app = create_test_app().await;
+        let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://lalasearch:lalasearch@127.0.0.1:5432/lalasearch".to_string()
+        });
+        let pool = PgPool::connect(&database_url)
+            .await
+            .expect("Failed to connect to PostgreSQL");
+        let default_tenant_id: Uuid = env::var("DEFAULT_TENANT_ID")
+            .unwrap_or_else(|_| "00000000-0000-0000-0000-000000000001".to_string())
+            .parse()
+            .expect("DEFAULT_TENANT_ID must be a valid UUID");
+
+        let test_domain = format!("test-seed-{}.example.com", Utc::now().timestamp_millis());
+        let seeded_url = format!("https://{test_domain}/");
+        let request_body = AddDomainRequest {
+            domain: test_domain.clone(),
+            notes: Some("Test domain for root crawl seeding".to_string()),
+        };
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/allowed-domains")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let queue_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM crawl_queue WHERE tenant_id = $1 AND url = $2",
+        )
+        .bind(default_tenant_id)
+        .bind(&seeded_url)
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to count seeded crawl queue entries");
+
+        assert_eq!(queue_count, 1, "Adding a domain should seed its root URL");
+
+        sqlx::query("DELETE FROM crawl_queue WHERE tenant_id = $1 AND url = $2")
+            .bind(default_tenant_id)
+            .bind(&seeded_url)
+            .execute(&pool)
+            .await
+            .expect("Failed to clean up seeded crawl queue entry");
+
+        let _cleanup = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/admin/allowed-domains/{}", test_domain))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires PostgreSQL
     async fn test_add_domain_empty_domain() {
         let app = create_test_app().await;
 

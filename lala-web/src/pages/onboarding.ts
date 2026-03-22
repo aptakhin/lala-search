@@ -400,23 +400,6 @@ export function onboardingPage() {
           return;
         }
 
-        // Step 2: Queue the root URL for crawling
-        const queueRes = await fetch('/api/queue/add', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({
-            url: 'https://' + this.selectedDomain + '/',
-            priority: 0,
-          }),
-        });
-
-        if (!queueRes.ok) {
-          const data = await queueRes.json();
-          this.addError = data.message || 'Failed to queue URL.';
-          return;
-        }
-
         this.domainAdded = true;
         this.startPolling();
       } catch {
