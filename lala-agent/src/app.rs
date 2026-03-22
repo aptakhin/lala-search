@@ -86,6 +86,90 @@ pub struct TenantAccess {
     pub tenant_id: Uuid,
 }
 
+fn allowed_domain_added_by(user: Option<&AuthUser>) -> &str {
+    user.map(|auth_user| auth_user.email.as_str())
+        .unwrap_or("api")
+}
+
+async fn queue_url_for_crawling(
+    db: &DbClient,
+    url: &str,
+    priority: i32,
+) -> Result<String, (StatusCode, String)> {
+    let parsed_url =
+        url::Url::parse(url).map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid URL: {e}")))?;
+
+    let domain = parsed_url
+        .host_str()
+        .ok_or((StatusCode::BAD_REQUEST, "URL has no host".to_string()))?
+        .to_string();
+    let url_path = parsed_url.path().to_string();
+
+    let page_exists = db
+        .crawled_page_exists(&domain, &url_path)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to check existing crawled page: {e}"),
+            )
+        })?;
+
+    if !page_exists {
+        let usage_bytes = db.get_index_usage_bytes().await.map_err(|e| {
+            eprintln!(
+                "[QUEUE] Failed to get indexed usage for tenant {}: {:#}",
+                db.tenant_id, e
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Unable to queue this URL right now".to_string(),
+            )
+        })?;
+        let max_bytes = db.get_index_capacity_bytes().await.map_err(|e| {
+            eprintln!(
+                "[QUEUE] Failed to get indexed capacity for tenant {}: {:#}",
+                db.tenant_id, e
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Unable to queue this URL right now".to_string(),
+            )
+        })?;
+
+        if usage_bytes >= max_bytes {
+            return Err((
+                StatusCode::CONFLICT,
+                format!(
+                    "Indexed document capacity reached for this tenant ({usage_bytes}/{max_bytes} bytes). Existing URLs can still be updated."
+                ),
+            ));
+        }
+    }
+
+    let now = Utc::now();
+    let entry = CrawlQueueEntry {
+        queue_id: Uuid::now_v7(),
+        tenant_id: db.tenant_id,
+        priority,
+        scheduled_at: now,
+        url: url.to_string(),
+        domain: domain.clone(),
+        last_attempt_at: None,
+        attempt_count: 0,
+        created_at: now,
+    };
+
+    db.insert_queue_entry(&entry).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {e}"),
+        )
+    })?;
+
+    Ok(domain)
+}
+
 impl FromRequestParts<AppState> for TenantDb {
     type Rejection = (StatusCode, String);
 
@@ -316,7 +400,6 @@ pub async fn add_to_queue_handler(
         .host_str()
         .ok_or((StatusCode::BAD_REQUEST, "URL has no host".to_string()))?
         .to_string();
-    let url_path = parsed_url.path().to_string();
 
     let is_allowed = db.is_domain_allowed(&domain).await.map_err(|e| {
         (
@@ -332,67 +415,7 @@ pub async fn add_to_queue_handler(
         ));
     }
 
-    let page_exists = db
-        .crawled_page_exists(&domain, &url_path)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to check existing crawled page: {e}"),
-            )
-        })?;
-
-    if !page_exists {
-        let usage_bytes = db.get_index_usage_bytes().await.map_err(|e| {
-            eprintln!(
-                "[QUEUE] Failed to get indexed usage for tenant {}: {:#}",
-                db.tenant_id, e
-            );
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Unable to queue this URL right now".to_string(),
-            )
-        })?;
-        let max_bytes = db.get_index_capacity_bytes().await.map_err(|e| {
-            eprintln!(
-                "[QUEUE] Failed to get indexed capacity for tenant {}: {:#}",
-                db.tenant_id, e
-            );
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Unable to queue this URL right now".to_string(),
-            )
-        })?;
-
-        if usage_bytes >= max_bytes {
-            return Err((
-                StatusCode::CONFLICT,
-                format!(
-                    "Indexed document capacity reached for this tenant ({usage_bytes}/{max_bytes} bytes). Existing URLs can still be updated."
-                ),
-            ));
-        }
-    }
-
-    let now = Utc::now();
-    let entry = CrawlQueueEntry {
-        queue_id: Uuid::now_v7(),
-        tenant_id: db.tenant_id,
-        priority: payload.priority,
-        scheduled_at: now,
-        url: payload.url.clone(),
-        domain: domain.clone(),
-        last_attempt_at: None,
-        attempt_count: 0,
-        created_at: now,
-    };
-
-    db.insert_queue_entry(&entry).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Database error: {e}"),
-        )
-    })?;
+    queue_url_for_crawling(db.as_ref(), &payload.url, payload.priority).await?;
 
     Ok(Json(AddToQueueResponse {
         success: true,
@@ -459,6 +482,7 @@ pub async fn search_handler(
 
 pub async fn add_domain_handler(
     TenantDb(db): TenantDb,
+    tenant_access: TenantAccess,
     Json(payload): Json<AddDomainRequest>,
 ) -> Result<Json<AddDomainResponse>, (StatusCode, String)> {
     if payload.domain.is_empty() {
@@ -468,7 +492,9 @@ pub async fn add_domain_handler(
         ));
     }
 
-    db.insert_allowed_domain(&payload.domain, "api", payload.notes.as_deref())
+    let added_by = allowed_domain_added_by(tenant_access.user.as_ref());
+
+    db.insert_allowed_domain(&payload.domain, added_by, payload.notes.as_deref())
         .await
         .map_err(|e| {
             (
@@ -477,9 +503,12 @@ pub async fn add_domain_handler(
             )
         })?;
 
+    let seeded_url = format!("https://{}/", payload.domain);
+    queue_url_for_crawling(db.as_ref(), &seeded_url, 0).await?;
+
     let after_state = serde_json::json!({
         "domain": payload.domain,
-        "added_by": "api",
+        "added_by": added_by,
         "notes": payload.notes,
     });
 
@@ -500,10 +529,38 @@ pub async fn add_domain_handler(
 
     Ok(Json(AddDomainResponse {
         success: true,
-        message: "Domain added to allowed list successfully".to_string(),
+        message: "Domain added to allowed list successfully and root URL queued for crawling"
+            .to_string(),
         domain: payload.domain,
         action_id,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::allowed_domain_added_by;
+    use crate::models::auth::{AuthUser, UserRole};
+    use uuid::Uuid;
+
+    #[test]
+    fn test_allowed_domain_added_by_returns_authenticated_email() {
+        let auth_user = AuthUser {
+            user_id: Uuid::new_v4(),
+            email: "owner@example.com".to_string(),
+            tenant_id: Uuid::new_v4(),
+            role: UserRole::Owner,
+        };
+
+        assert_eq!(
+            allowed_domain_added_by(Some(&auth_user)),
+            "owner@example.com"
+        );
+    }
+
+    #[test]
+    fn test_allowed_domain_added_by_falls_back_to_api_without_auth() {
+        assert_eq!(allowed_domain_added_by(None), "api");
+    }
 }
 
 pub async fn list_domains_handler(
